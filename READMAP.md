@@ -11,9 +11,10 @@ Status legend: ✅ done · 🔄 in-flight · 📐 designed (ready) · 💤 defer
 
 ## 1. Recommended global order
 
-1. **P00 — Provision the PDQ dev VM + baseline** (⛏️ not-started). Blocks everything: no VM = no
-   E2E. 3 blank disks, static IP, SSH+PowerShell, VMware Tools, clean snapshot; capture disk
-   `eui.*` ids; repoint `revert-vm.sh`/`snapshot-step.sh`/inventory off the windows-wsus placeholders.
+1. **P00 — Provision the PDQ dev VM** (🔄 VM up; disk-id capture key-gated). `pdq-dev` full-cloned
+   from the wsus clean baseline, MAC pinned → IP 192.168.0.181 (never run both VMs), booted SSH-ready,
+   memory-baseline snapshot taken, scripts/inventory repointed. **Remaining:** load the `hellbomb` SSH
+   key (Director), then capture the 3 disks' `eui.*` ids into `pdq.yml` and run the P01 proof.
 2. **P01 — Skeleton wiring proof** (⛏️). Compose green, both loaders resolve, `pdq` present no-op
    converges `changed=0`. First merge — proves the harness before any PDQ logic.
 3. **P02 — Disk provisioning** (⛏️) via `windows_disk_manager` (reused). E:/F:/G:.

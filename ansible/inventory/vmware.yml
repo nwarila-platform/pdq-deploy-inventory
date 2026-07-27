@@ -9,10 +9,10 @@
 # Auth: SSH key supplied by the controller's persistent ssh-agent; no key path or password
 # belongs in this file.
 #
-# NOTE (skeleton): ansible_host below is a PLACEHOLDER. The PDQ dev VM + its clean-baseline
-# snapshot (3 blank data disks: PDQDEPLOY/PDQINVENTORY/PDQSHARE) are not provisioned yet —
-# that is the first infra task (see _handoff/RESTART.md §Environment and READMAP). Update the
-# host/IP here and the VMX path in scripts/revert-vm.sh when the PDQ VM exists.
+# The PDQ dev VM (pdq-dev) is a full clone of the windows-wsus clean baseline
+# (pre-ansible-clean-ssh-ready), reusing its MAC + static IP 192.168.0.181. The wsus and pdq
+# dev VMs therefore MUST NOT run at the same time (same discipline as scripts/adopt-lab-vmx.py).
+# The role formats/relabels the 3 inherited blank data disks to PDQDEPLOY/PDQINVENTORY/PDQSHARE.
 #
 # =========================================================================================== #
 ---
@@ -21,7 +21,7 @@ all:
     pdq_servers:
       hosts:
         pdq-dev:
-          ansible_host: '192.168.0.182'   # PLACEHOLDER — set to the PDQ dev VM's static IP
+          ansible_host: '192.168.0.181'   # cloned from wsus baseline (shared IP; never run both VMs)
   vars:
     ansible_user: 'administrator'
     ansible_connection: 'ssh'

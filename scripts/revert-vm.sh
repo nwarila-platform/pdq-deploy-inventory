@@ -17,7 +17,7 @@
 set -euo pipefail
 
 VMRUN="/mnt/c/Program Files (x86)/VMware/VMware Workstation/vmrun.exe"
-VMX='D:\Documents\Virtual Machines\Windows Server 2025\Windows Server 2025.vmx'
+VMX='D:\Documents\Virtual Machines\pdq-dev\pdq-dev.vmx'
 BASELINE='pre-ansible-clean-ssh-ready'
 SNAPSHOT="${REVERT_TO:-${BASELINE}}"
 GUEST_HOST='192.168.0.181'
@@ -37,7 +37,7 @@ echo ">> Reverting to snapshot '${SNAPSHOT}' ..."
 
 # Revert may leave the VM powered off/suspended depending on snapshot type; a start on an
 # already-running VM errors harmlessly — tolerate it.
-if ! "${VMRUN}" list | grep -qF 'Windows Server 2025.vmx'; then
+if ! "${VMRUN}" list | grep -qF 'pdq-dev.vmx'; then
     echo ">> VM not running post-revert — starting (nogui) ..."
     "${VMRUN}" -T ws start "${VMX}" nogui || true
 fi

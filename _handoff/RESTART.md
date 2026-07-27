@@ -41,12 +41,16 @@ Backport to a `*-template` repo once operational. `terraform/` is a skeleton, **
 
 ## 4. Environment
 
-**Dev VM — DOES NOT EXIST YET (task P00).** Target contract: Windows Server 2025 in VMware
-Workstation, guest with a static IP, `administrator` + key-based SSH, OpenSSH `DefaultShell=PowerShell`,
-VMware Tools, and **three attached BLANK data disks** (→ E: `PDQDEPLOY` / F: `PDQINVENTORY` /
-G: `PDQSHARE`), fresh OS, no PDQ. Clean-baseline snapshot (running, memory). See `docs/VM-LIFECYCLE.md`.
-Until it exists, `ansible/inventory/vmware.yml` (IP) and `scripts/revert-vm.sh` (VMX path + snapshot)
-carry **placeholders** copied from windows-wsus — repoint them at P00.
+**Dev VM — PROVISIONED 2026-07-27 (P00).** `pdq-dev` at `D:\Documents\Virtual Machines\pdq-dev\pdq-dev.vmx`
+— a full clone of the windows-wsus `pre-ansible-clean-ssh-ready` snapshot (clean Windows Server 2025,
+OpenSSH `DefaultShell=PowerShell`, VMware Tools, **3 blank data disks**). Its MAC is pinned static
+(`00:0C:29:98:E2:69`, `uuid.action=keep`) so it reuses the wsus static IP **192.168.0.181** — therefore
+the wsus and pdq dev VMs **MUST NOT run simultaneously** (same discipline as `adopt-lab-vmx.py`). Clean
+memory-baseline snapshot `pre-ansible-clean-ssh-ready` taken (running → revert resumes instantly).
+Inventory + `revert-vm.sh`/`snapshot-step.sh` are repointed. **Remaining (key-gated):** capture the 3
+data disks' `Get-Disk` UniqueId (`eui.*`) into `ansible/playbooks/pdq.yml` (`deploy/inventory/share_disk_id`)
+— a full clone re-mints all `eui.*`, so the wsus ids do NOT carry over; capture on the live VM. The 3
+disks are still WSUS-named vmdks (blank; the role relabels at format) — cosmetic, optionally renamed later.
 
 **Controller** — WSL Ubuntu 24.04. pipx: `ansible-core 2.21.2`, `ansible-lint`, `yamllint` at
 `/root/.local/bin/`. Collections `ansible.windows`, `community.windows` (user scope). Transport is

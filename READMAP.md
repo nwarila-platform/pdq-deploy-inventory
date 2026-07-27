@@ -29,9 +29,14 @@ Status legend: ✅ done · 🔄 in-flight · 📐 designed (ready) · 💤 defer
    → `win_partition` → `win_format`, `force:false`, NTFS-only. **Live-proven on pdq-dev: formatted
    E:PDQDEPLOY/F:PDQINVENTORY/G:PDQSHARE NTFS (changed=3), idempotency re-run changed=0.** Fixed a latent
    02a traversal bug. **`windows_disk_manager` is now a complete framework disk-provisioning role.**
-   **NEXT: the pdq repoint** — bump `.framework-pin` to `≥1abfec4`, drop pdq's local `windows_disk_manager`
-   stopgap (compose-guard auto-refuses it once framework-tracked), reshape `pdq.yml` to the `disks:[]` list
-   (the 3 captured eui ids + labels + drive letters). That gives PDQ real 3-disk provisioning E:/F:/G:.
+   **pdq repoint ✅ DONE** `f979ad4` (2026-07-27): `.framework-pin` → `1abfec4`, local stopgap dropped,
+   `disks:[]` wired into `pdq.yml`. **Live-proven: compose framework windows_disk_manager → E:PDQDEPLOY /
+   F:PDQINVENTORY / G:PDQSHARE NTFS (changed=3), pdq validate+no-op, ok=36 failed=0.** **P02 disk
+   provisioning COMPLETE.** ⚠ **Open: the framework commits (WDM-01/02a/02b, pin 1abfec4) are LOCAL-ONLY
+   — not pushed to GitHub; CI / any non-local consumer needs them pushed (Director decision).**
+   **NEXT: the PDQ install spine — QUEUE P03+** (App Share on G: → service account → MSI installs →
+   Central Server → DB relocation → integration). The pdq role's transitional `deploy_disk_id`/etc. get
+   removed when it's reshaped to consume drive letters (a pdq-role cycle).
 4. **P03–P05 — App Share + service account** (⛏️). The integration substrate (one service user).
 5. **P06–P08 — Install both apps + Central Server + firewall** (⛏️). PDQ alive.
 6. **P09–P12 — DB relocation + repository + integration** (⛏️). The whole point: integrated AIO on

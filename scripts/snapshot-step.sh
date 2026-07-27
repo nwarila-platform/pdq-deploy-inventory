@@ -20,7 +20,7 @@
 set -euo pipefail
 
 VMRUN="/mnt/c/Program Files (x86)/VMware/VMware Workstation/vmrun.exe"
-VMX='D:\Documents\Virtual Machines\Windows Server 2025\Windows Server 2025.vmx'
+VMX='D:\Documents\Virtual Machines\pdq-dev\pdq-dev.vmx'
 BASELINE='pre-ansible-clean-ssh-ready'
 
 [ $# -eq 1 ] || { echo "usage: $0 <next-piece-id>   (e.g. $0 C06d)" >&2; exit 1; }

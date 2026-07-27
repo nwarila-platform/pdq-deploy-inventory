@@ -40,6 +40,13 @@ Status legend: ✅ done · 🔄 in-flight · 📐 designed (ready) · 💤 defer
 - **3-disk layout:** E: `PDQDEPLOY` (Deploy DB) / F: `PDQINVENTORY` (Inventory DB) / G: `PDQSHARE`
   (Deploy repository/App Share); NTFS 4 KiB (SQLite DBs, no SQL-engine cluster-size best practice
   to inherit — contrast WSUS's 64 KiB SUSDB).
+- **`windows_disk_manager` mirrors `linux_disk_manager`'s contract** (Director, 2026-07-27):
+  `platform` (vmware|proxmox|aws) + a **`disks: []` list**, each entry declaring `unique_id` OR
+  `function` (+ `drive_letter`, `label`, `allocation_unit`, `fstype`). VMware/Proxmox require a
+  **manual `unique_id`** list (no seamless authored-identity mechanism exists there); AWS uses the
+  EBS `function` tag resolved at run time (the `resolve_aws` path) — exactly `linux_disk_manager`'s
+  split. Reshapes the pdq playbook (and later wsus) to pass disks as a list; the consuming role then
+  keys off `drive_letter`, not disk ids.
 - **`windows_disk_manager`'s home is `ansible-framework/applications/windows_disk_manager`**
   (Director, 2026-07-27) — the Windows sibling of the framework's existing `linux_disk_manager`, NOT
   a per-repo role. App repos (pdq, wsus, future) **compose** it from the framework; none carry a

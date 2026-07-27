@@ -16,10 +16,11 @@ Status legend: ✅ done · 🔄 in-flight · 📐 designed (ready) · 💤 defer
    snapshot taken, scripts/inventory repointed, 3 disk `eui.*` ids captured into `pdq.yml`.
 2. **P01 — Skeleton wiring proof** (✅ 2026-07-27). Live-VM E2E green: `ok=23 changed=0 failed=0`;
    both loaders resolve, `pdq` validate passes, present no-op. Harness proven before any PDQ logic.
-3. **P02 — Disk provisioning** (⛏️ NEXT) — E:/F:/G:. **Design open:** `windows_disk_manager`
-   present is still only a platform guard (its disk-mutation pieces are the windows-wsus C15 arc,
-   in progress) — decide whether pdq waits on WDM maturing or the `pdq` role owns disk init like
-   wsus did. See §3.
+3. **P02 — Disk provisioning** (⛏️ NEXT, **framework work**) — E:/F:/G: via `windows_disk_manager`,
+   whose home is now the framework (see §2). The role currently only platform-guards everywhere; its
+   disk-mutation pieces must be built **in `ansible-framework`**, then pdq bumps `.framework-pin` and
+   drops its local stopgap copy. Sequencing/ownership (coordinate with windows-wsus C15) — Director
+   call pending.
 4. **P03–P05 — App Share + service account** (⛏️). The integration substrate (one service user).
 5. **P06–P08 — Install both apps + Central Server + firewall** (⛏️). PDQ alive.
 6. **P09–P12 — DB relocation + repository + integration** (⛏️). The whole point: integrated AIO on
@@ -39,8 +40,13 @@ Status legend: ✅ done · 🔄 in-flight · 📐 designed (ready) · 💤 defer
 - **3-disk layout:** E: `PDQDEPLOY` (Deploy DB) / F: `PDQINVENTORY` (Inventory DB) / G: `PDQSHARE`
   (Deploy repository/App Share); NTFS 4 KiB (SQLite DBs, no SQL-engine cluster-size best practice
   to inherit — contrast WSUS's 64 KiB SUSDB).
-- **Reuse `windows_disk_manager`** for disk provisioning (folded in from windows-wsus) — the `pdq`
-  role does no disk logic itself.
+- **`windows_disk_manager`'s home is `ansible-framework/applications/windows_disk_manager`**
+  (Director, 2026-07-27) — the Windows sibling of the framework's existing `linux_disk_manager`, NOT
+  a per-repo role. App repos (pdq, wsus, future) **compose** it from the framework; none carry a
+  copy. The `pdq` role does no disk logic itself. **Current stopgap:** pdq carries a LOCAL
+  `ansible/applications/windows_disk_manager` (copied from wsus) only because the framework does not
+  ship it yet AND pdq's `.framework-pin` (`6fde6f9`) predates even `linux_disk_manager`. To remove:
+  promote windows_disk_manager into the framework → bump `.framework-pin` → delete the local copy.
 - **Director reviews the changed role file before every merge (P4.5)**, in the locked format.
 - **Smallest vendor-doc-grounded steps**, one command per cycle, revert-first.
 

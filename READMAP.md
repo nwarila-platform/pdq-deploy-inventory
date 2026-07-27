@@ -21,11 +21,14 @@ Status legend: ✅ done · 🔄 in-flight · 📐 designed (ready) · 💤 defer
    (2026-07-27): the role is now the canonical framework home (v3.2.0 loader, `platform` vmware|aws +
    `disks:[]` contract, state-scoped validate guards, fail-closed present). Ran the full app-repo
    strict cycle (P2 Codex AGREE r5 → P3 → P4 live-VM proof matrix on `pdq-dev`, 2 defects repaired →
-   P4.5 approved), system codex `gpt-5.6-sol`. **NEXT: WDM-02** (disk mutation — resolve → init →
-   partition → format) in the framework, then the **pdq repoint**: bump `.framework-pin` to `≥6cfda6b`,
-   drop pdq's local `windows_disk_manager` stopgap (compose-guard auto-refuses it once framework-tracked),
-   reshape `pdq.yml` to the `disks:[]` list (the 3 captured eui ids). Real 3-disk provisioning proves
-   after WDM-02.
+   P4.5 approved), system codex `gpt-5.6-sol`. **WDM-02a ✅ MERGED** `197c5ca [audited 4111693]`
+   (2026-07-27): non-destructive resolve + online + **fail-closed safety classifier** (PRISTINE/OURS-by-
+   NTFS-label, else refuse; Director middle-path blank-safety), proven on the 3 real disks + 9 synthetic-
+   fact fixtures (P2 AGREE r6, P4 no defects). **NEXT: WDM-02b** (`win_initialize_disk` GPT) → 02c
+   (`win_partition`) → 02d (`win_format`, flips the pipeline green), then the **pdq repoint**: bump
+   `.framework-pin` to `≥197c5ca`, drop pdq's local `windows_disk_manager` stopgap (compose-guard auto-
+   refuses it once framework-tracked), reshape `pdq.yml` to the `disks:[]` list (the 3 captured eui ids).
+   Real 3-disk provisioning proves after WDM-02d.
 4. **P03–P05 — App Share + service account** (⛏️). The integration substrate (one service user).
 5. **P06–P08 — Install both apps + Central Server + firewall** (⛏️). PDQ alive.
 6. **P09–P12 — DB relocation + repository + integration** (⛏️). The whole point: integrated AIO on

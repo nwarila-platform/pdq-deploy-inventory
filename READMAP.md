@@ -41,15 +41,24 @@ Status legend: ✅ done · 🔄 in-flight · 📐 designed (ready) · 💤 defer
 - **Director reviews the changed role file before every merge (P4.5)**, in the locked format.
 - **Smallest vendor-doc-grounded steps**, one command per cycle, revert-first.
 
-## 3. Director-decision queue (open)
+## 3. Director-decision queue (researched 2026-07-27 → recommendations; Director to confirm)
 
-- ❓ **PDQ MSI source** — pin specific MSI versions/URLs, or always latest? (Affects P06/P07 +
-  idempotency + reproducibility.)
-- ❓ **Service account** — role-created **local** account (simple, self-contained) vs an
-  operator-supplied **domain** account (production-realistic). Skeleton assumes local `svc-pdq`.
-- ❓ **License delivery** — `-e`/vault at run time vs a committed encrypted vault file.
-- ❓ **DB relocation mechanism** — needs P0 research; PDQ's supported move procedure is not as
-  canonical as WSUS's. Confirm before P09/P10.
+Full grounding + citations: `docs/reference/pdq-automation.md`. **Headless install confirmed
+feasible** — MSI silent + PDQ CLI (`SetServiceMode`/`SetServiceCredentials`/`Settings`/`ConsoleUsers`)
++ registry (DB location) + `win_*`. No GUI needed.
+
+- 📐 **PDQ MSI source → PIN + self-host in the artifact bucket** (wazuh pattern). PDQ downloads are
+  form-gated (no static versioned URL); staging pinned MSIs in `<account-id>-ansible/applications/pdq/…`
+  with a checksum gate gives reproducible/offline/pinnable installs. Affects P06/P07.
+- 📐 **Service account → role-created LOCAL `svc-pdq`** for the Background Service User (self-contained
+  AIO; local admin + Log-On-as-Service + share R/W all work locally; overridable to domain). Target/scan
+  credentials to reach managed clients are a SEPARATE later concern, not the service user. Affects P05.
+- 📐 **License → `-e`/vault at runtime**, applied via the MSI `Licensekey=` property (`no_log`); never
+  committed. Affects P06/P07.
+- 📐 **DB relocation → registry `HKLM\SOFTWARE\Admin Arsenal\PDQ <app>\Settings\Database\FileName`**
+  (stop service → set → move → start). ⚠ **On-VM confirmation required at P09/P10**: community
+  guidance says only `Database.db` relocates while `-wal`/`-shm`/`log.db` stay in `%ProgramData%` —
+  the single biggest open technical risk. Confirm before trusting the relocation.
 
 ## 4. Deferred / parking lot
 

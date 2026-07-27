@@ -16,11 +16,16 @@ Status legend: ✅ done · 🔄 in-flight · 📐 designed (ready) · 💤 defer
    snapshot taken, scripts/inventory repointed, 3 disk `eui.*` ids captured into `pdq.yml`.
 2. **P01 — Skeleton wiring proof** (✅ 2026-07-27). Live-VM E2E green: `ok=23 changed=0 failed=0`;
    both loaders resolve, `pdq` validate passes, present no-op. Harness proven before any PDQ logic.
-3. **P02 — Disk provisioning** (⛏️ NEXT, **framework work**) — E:/F:/G: via `windows_disk_manager`,
-   whose home is now the framework (see §2). The role currently only platform-guards everywhere; its
-   disk-mutation pieces must be built **in `ansible-framework`**, then pdq bumps `.framework-pin` and
-   drops its local stopgap copy. Sequencing/ownership (coordinate with windows-wsus C15) — Director
-   call pending.
+3. **P02 — Disk provisioning** (framework work) — via `windows_disk_manager` in `ansible-framework`.
+   **WDM-01 (guard-only scaffold) ✅ MERGED** to framework `main` `6cfda6b [audited 5fc1f62]`
+   (2026-07-27): the role is now the canonical framework home (v3.2.0 loader, `platform` vmware|aws +
+   `disks:[]` contract, state-scoped validate guards, fail-closed present). Ran the full app-repo
+   strict cycle (P2 Codex AGREE r5 → P3 → P4 live-VM proof matrix on `pdq-dev`, 2 defects repaired →
+   P4.5 approved), system codex `gpt-5.6-sol`. **NEXT: WDM-02** (disk mutation — resolve → init →
+   partition → format) in the framework, then the **pdq repoint**: bump `.framework-pin` to `≥6cfda6b`,
+   drop pdq's local `windows_disk_manager` stopgap (compose-guard auto-refuses it once framework-tracked),
+   reshape `pdq.yml` to the `disks:[]` list (the 3 captured eui ids). Real 3-disk provisioning proves
+   after WDM-02.
 4. **P03–P05 — App Share + service account** (⛏️). The integration substrate (one service user).
 5. **P06–P08 — Install both apps + Central Server + firewall** (⛏️). PDQ alive.
 6. **P09–P12 — DB relocation + repository + integration** (⛏️). The whole point: integrated AIO on

@@ -6,10 +6,10 @@
 # merges config (passed as 'config') and runs validate.yml. windows_disk_manager has already
 # provisioned E:/F:/G: (PDQDEPLOY/PDQINVENTORY/PDQSHARE) when this runs — see ansible/playbooks/pdq.yml.
 #
-# SKELETON — the actual install spine is built one MS/PDQ-doc-grounded piece per cycle.
-# Reference install spine (single all-in-one Central Server host):
-#   App Share on G: (dir + SMB share + ACLs: BUILTIN\Users R&X, service account R/W)
-#   -> Background Service User (local admin, shared by Deploy + Inventory — integration prereq)
+# The install spine is built one MS/PDQ-doc-grounded piece per cycle.
+# Current implementation creates the App Share repository directory,
+# its explicit inherited NTFS ACEs, and its Administrators-only SMB share. Remaining spine:
+#   Background Service User (local admin, shared by Deploy + Inventory — integration prereq)
 #   -> install PDQ Inventory (MSI silent: Mode=Server ServerPort Licensekey /qn /norestart)
 #   -> install PDQ Deploy   (MSI silent, SAME service user + mode for integration)
 #   -> Central Server enable + firewall exception (TCP central_server.port, default 7337)
@@ -20,12 +20,52 @@
 ---
 #region ------ [ Main ] ---------------------------------------------------------------------- #
 
-- name: 'INFO | pdq present_windows not yet implemented (skeleton)'
-  ansible.builtin.debug:
-    msg: >-
-      pdq role skeleton reached present_windows.yml. Config merged and validated
-      (disks E:/F:/G:, license present, service account '{{ config.service_account.name | default('?') }}',
-      Central Server port {{ config.central_server.port | default('?') }}). Install spine is built
-      one piece per cycle — no PDQ operations are performed yet.
+- name: 'CONFIGURE | Create the PDQ Deploy App Share'
+  vars:
+    __share_drive__: '{{ config.data_disks.share.drive_letter }}'
+    __repo_path__: '{{ __share_drive__ ~ ":\\" ~ config.repository.dir_name }}'
+  block:
+    - name: 'CONFIGURE | Create the App Share repository directory'
+      ansible.windows.win_file:
+        path: '{{ __repo_path__ }}'
+        state: 'directory'
+
+    - name: 'CONFIGURE | Grant Users read and execute on the App Share'
+      ansible.windows.win_acl:
+        path: '{{ __repo_path__ }}'
+        user: 'BUILTIN\Users'
+        rights: 'ReadAndExecute'
+        type: 'allow'
+        state: 'present'
+        inherit: 'ContainerInherit, ObjectInherit'
+        propagation: 'None'
+
+    - name: 'CONFIGURE | Grant Administrators full control on the App Share'
+      ansible.windows.win_acl:
+        path: '{{ __repo_path__ }}'
+        user: 'BUILTIN\Administrators'
+        rights: 'FullControl'
+        type: 'allow'
+        state: 'present'
+        inherit: 'ContainerInherit, ObjectInherit'
+        propagation: 'None'
+
+    - name: 'CONFIGURE | Grant SYSTEM full control on the App Share'
+      ansible.windows.win_acl:
+        path: '{{ __repo_path__ }}'
+        user: 'NT AUTHORITY\SYSTEM'
+        rights: 'FullControl'
+        type: 'allow'
+        state: 'present'
+        inherit: 'ContainerInherit, ObjectInherit'
+        propagation: 'None'
+
+    - name: 'CONFIGURE | Publish the Administrators-only App Share'
+      ansible.windows.win_share:
+        name: '{{ config.repository.share_name }}'
+        path: '{{ __repo_path__ }}'
+        full: 'Administrators'
+        rule_action: 'set'
+        caching_mode: 'None'
 
 #endregion --- [ Main ] ---------------------------------------------------------------------- #

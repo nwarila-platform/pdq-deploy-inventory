@@ -31,15 +31,33 @@ Declared in the `pdq:` override dict (playbook / `-e`), read by the loader as `c
 | `service_account.password` | `config.service_account.password` | conditional | For a role-created local account; via `-e`/vault, never committed |
 | `central_server.port` | `config.central_server.port` | no (default `7337`) | Central Server TCP port; a firewall exception is created for it |
 | `data_disks.*` | `config.data_disks.*` | no (defaults) | Drive letters / labels / allocation units (see `defaults/main.yml`) |
+| `repository.dir_name` | `config.repository.dir_name` | no (default `AppRepo`) | Repository directory on `config.data_disks.share.drive_letter` |
+| `repository.share_name` | `config.repository.share_name` | no (default `AppRepo`) | SMB share name for the repository |
 
 `validate.yml` fails the play closed if the three disk ids or drive letters collide, or if
 `license_key` / `service_account.name` are empty.
 
+## App Share
+
+The role derives the repository path from the dedicated share disk and repository directory:
+`<config.data_disks.share.drive_letter>:\<config.repository.dir_name>` (by default
+`G:\AppRepo`). It creates three explicit allow ACEs on that directory, inherited by child
+folders and files:
+
+- `BUILTIN\Users`: `ReadAndExecute`
+- `BUILTIN\Administrators`: `FullControl`
+- `NT AUTHORITY\SYSTEM`: `FullControl`
+
+The SMB share is published with `Administrators` as its only full-access share principal,
+using a replacement permission set and with offline caching disabled. This supports PDQ's
+default Push mode and multi-admin Central Server console access. Pull Copy mode is deferred;
+if enabled later, its Deploy User or group will need explicit read/write permissions at both
+the share and NTFS layers.
+
 ## Build status
 
-Skeleton. The install spine is built one MS/PDQ-doc-grounded piece per cycle.
-`present_windows.yml` is currently a no-op
-that proves config merge + validation.
+The App Share is implemented. The remaining install spine is built one
+MS/PDQ-doc-grounded piece per cycle.
 
 ## Reference install spine (target)
 

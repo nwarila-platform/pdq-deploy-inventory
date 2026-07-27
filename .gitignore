@@ -1,0 +1,13 @@
+# composition build tree (framework checkout + overlaid role) — never committed
+.compose/
+
+# ansible scratch
+*.retry
+*.log
+
+# strict-cycle worktrees live outside the repo (../.worktrees) but guard anyway
+.worktrees/
+
+# local-only secrets / scratch (never commit credentials)
+*.secret
+temp-password*

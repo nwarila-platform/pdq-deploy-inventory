@@ -1,0 +1,18 @@
+# =========================================================================================== #
+# File: '{{ role_path }}/defaults/main.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Lowest-precedence configuration for the windows_disk_manager role, merged by the v3 loader into
+# 'windows_disk_manager_running' (defaults -> vars/<os>[_<env>].yml overlays -> playbook
+# 'windows_disk_manager:' dict).
+#
+# Populated one piece at a time via the strict-cycle build queue (_handoff/QUEUE.md);
+# every key added here must be documented in the role README the same cycle.
+#
+# =========================================================================================== #
+---
+windows_disk_manager_defaults:
+  # Declared infrastructure platform. Required in the windows_disk_manager: override dict so the
+  # role can fail closed when the observed Windows hypervisor/vendor does not match the intended
+  # provider. Valid values are validated in tasks/validate.yml; no default is safe.
+  platform: ''

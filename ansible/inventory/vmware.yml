@@ -1,0 +1,28 @@
+# =========================================================================================== #
+# File: 'ansible/inventory/vmware.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# DEV inventory — VMware Workstation lab VM (see AGENTS.md).
+# Discipline: revert the VM to its clean baseline snapshot before EVERY playbook execution
+# (scripts/revert-vm.sh). Never run against a dirty VM.
+#
+# Auth: SSH key supplied by the controller's persistent ssh-agent; no key path or password
+# belongs in this file.
+#
+# NOTE (skeleton): ansible_host below is a PLACEHOLDER. The PDQ dev VM + its clean-baseline
+# snapshot (3 blank data disks: PDQDEPLOY/PDQINVENTORY/PDQSHARE) are not provisioned yet —
+# that is the first infra task (see _handoff/RESTART.md §Environment and READMAP). Update the
+# host/IP here and the VMX path in scripts/revert-vm.sh when the PDQ VM exists.
+#
+# =========================================================================================== #
+---
+all:
+  children:
+    pdq_servers:
+      hosts:
+        pdq-dev:
+          ansible_host: '192.168.0.182'   # PLACEHOLDER — set to the PDQ dev VM's static IP
+  vars:
+    ansible_user: 'administrator'
+    ansible_connection: 'ssh'
+    ansible_shell_type: 'powershell'

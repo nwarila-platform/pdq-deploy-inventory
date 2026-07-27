@@ -1,0 +1,34 @@
+# =========================================================================================== #
+# File: '{{ role_path }}/tasks/validate.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Config-contract validation executed by the v3.1.0 loader's
+# 'INIT | Validating Merged Configuration' hook, with the merged configuration passed
+# as 'config'. Holds ONLY load-bearing, module-inexpressible invariants (never a
+# precondition a module already fails on — style guide §4b). Runs for every state;
+# branch present-specific asserts on 'state'.
+#
+# =========================================================================================== #
+---
+#region ------ [ Script ] -------------------------------------------------------------------- #
+
+# Load-bearing config invariant: the declared platform selects provider-specific disk identity
+# behavior in later pieces. Unsupported values must fail closed before any provider adapter can run.
+- name: 'BEGIN | Assert Platform Is Valid'
+  vars:
+    __platform__: "{{ config.platform | default('') | string | lower | trim }}"
+    __platform_vendor__:
+      vmware: 'VMware, Inc.'
+      aws: 'Amazon EC2'
+  ansible.builtin.assert:
+    that:
+      - (__platform__ | length) > 0
+      - __platform__ in __platform_vendor__
+      - __platform__ in ['vmware', 'aws']
+    fail_msg: >-
+      windows_disk_manager.platform is REQUIRED and must be one of ['vmware', 'aws'].
+      Got '{{ config.platform | default('') }}'. Declare platform in the
+      windows_disk_manager: override dict; proxmox is intentionally not accepted until measured.
+    quiet: true
+
+#endregion --- [ Script ] -------------------------------------------------------------------- #

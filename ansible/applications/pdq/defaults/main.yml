@@ -1,0 +1,50 @@
+# =========================================================================================== #
+# File: '{{ role_path }}/defaults/main.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Lowest-precedence configuration for the pdq role, merged by the v3 loader into
+# 'pdq_running' (defaults -> vars/<os>[_<env>].yml overlays -> playbook 'pdq:' dict).
+#
+# Populated one piece at a time via the strict-cycle build queue (_handoff/QUEUE.md);
+# every key added here must be documented in the role README the same cycle. Keep this
+# MINIMAL — a key lands here only when the piece that consumes it merges (house rule).
+#
+# Topology invariant (vendor-doc-grounded): PDQ Deploy AND PDQ Inventory live on ONE server
+# and integrate only when they share a Background Service User + operating mode (Central
+# Server). This role therefore configures a single all-in-one host, one service account for
+# both. See _handoff/RESTART.md §PDQ facts.
+#
+# =========================================================================================== #
+---
+pdq_defaults:
+  # 3-disk layout. windows_disk_manager provisions the physical disks (init/partition/format);
+  # the pdq role consumes these drive letters/labels for DB relocation + the App Share.
+  #   E: PDQDEPLOY    — PDQ Deploy database
+  #   F: PDQINVENTORY — PDQ Inventory database
+  #   G: PDQSHARE     — PDQ Deploy repository / App Share (install-source UNC share)
+  # allocation_unit 4096 (NTFS default) for all three: PDQ D&I use SQLite databases (not a SQL
+  # Server engine), and neither PDQ nor MS specify a cluster size — 4 KiB is the correct default
+  # (contrast WSUS's 64 KiB SUSDB, which is a SQL-engine best practice PDQ does NOT inherit).
+  data_disks:
+    deploy:
+      drive_letter: 'E'
+      label: 'PDQDEPLOY'
+      allocation_unit: 4096
+    inventory:
+      drive_letter: 'F'
+      label: 'PDQINVENTORY'
+      allocation_unit: 4096
+    share:
+      drive_letter: 'G'
+      label: 'PDQSHARE'
+      allocation_unit: 4096
+  # Central Server communication port (PDQ default 7337; configurable). A Windows Firewall
+  # exception for this TCP port is created by the firewall piece. Client consoles connect here.
+  central_server:
+    port: 7337
+# The following are declared in the 'pdq:' override dict (playbook / -e) and read as config.*,
+# NOT defaulted here (no safe default; validate.yml fails closed if absent):
+#   deploy_disk_id / inventory_disk_id / share_disk_id  — Windows Get-Disk UniqueId per disk
+#   license_key        — PDQ Enterprise license (REQUIRED for Central Server); no_log
+#   service_account    — { name, password? } Background Service User (local admin, R/W to share);
+#                        ONE account for both Deploy + Inventory (integration prerequisite)

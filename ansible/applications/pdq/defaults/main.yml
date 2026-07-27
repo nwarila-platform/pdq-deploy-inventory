@@ -38,6 +38,10 @@ pdq_defaults:
       drive_letter: 'G'
       label: 'PDQSHARE'
       allocation_unit: 4096
+  # PDQ Deploy repository / App Share on the dedicated share disk.
+  repository:
+    dir_name: 'AppRepo'
+    share_name: 'AppRepo'
   # Central Server communication port (PDQ default 7337; configurable). A Windows Firewall
   # exception for this TCP port is created by the firewall piece. Client consoles connect here.
   central_server:

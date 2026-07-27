@@ -1,0 +1,55 @@
+{
+  "piece": "P03",
+  "repo": "nwarila-platform/pdq-deploy-inventory",
+  "module": "pdq/present_windows — App Share on G: (directory + explicit NTFS ACL + SMB share)",
+  "status": "P0 rev3 2026-07-27 (folded Codex P2 r2 — Director ratified SKIP_REVERT idempotency); awaiting Codex P2 r3",
+  "goal": "First real pdq role logic: create the PDQ Deploy repository (App Share) directory on the G: (PDQSHARE) disk, apply an EXPLICIT NTFS ACL (Administrators + SYSTEM Full, BUILTIN\\Users R&X — none relied on via inheritance), and SMB-share it for Central Server multi-admin console access. Bundled per Director (win_file + win_acl + win_share).",
+  "why": "The PDQ Deploy repository is the install-source folder; a Central Server shared by multiple admin consoles requires it as a UNC SHARE, and it lives on the dedicated G: PDQSHARE disk (windows_disk_manager provisions G: earlier in the play). PDQ docs: repository R/W by the Background Service User; NTFS restricted to admins.",
+  "directorDecisions": "2026-07-27: (a) bundle the SMB share with dir+ACL (one piece); (b) folder = G:\\AppRepo, share name = AppRepo.",
+  "contract": {
+    "path": "App Share dir = '{{ __share_drive__ }}:\\{{ config.repository.dir_name }}' where __share_drive__ = config.data_disks.share.drive_letter (G, a BLOCK-VAR — Codex P2 #8, no set_fact) and repository.dir_name defaults 'AppRepo' -> G:\\AppRepo. SMB share name = config.repository.share_name (default 'AppRepo').",
+    "acl": "win_acl grants THREE EXPLICIT ACEs on G:\\AppRepo, each inherit=true (InheritanceFlags ContainerInherit,ObjectInherit; propagation to this folder + subfolders + files) — NONE relied on via root inheritance (Codex P2 #2/#4): (1) BUILTIN\\Users ReadAndExecute (org convention — RESTART §6 U1: everyone here is an admin; an explicit Users R&X ACE means an Explorer elevation never STAMPS a personal ACE that becomes a stale SID); (2) BUILTIN\\Administrators FullControl; (3) NT AUTHORITY\\SYSTEM FullControl (the PDQ background service + product run as/under SYSTEM-adjacent contexts). state=present is ADDITIVE — it PREVENTS a future personal-ACE stamp on this clean role-created dir; it does NOT remove a pre-existing personal/stale ACE (Codex P2 #3 — claim narrowed to prevention-on-clean-managed-dir).",
+    "share": "win_share name=AppRepo, path=G:\\AppRepo, rule_action='set' (Codex P2 #1 — closed, intentional permission set, no stale share ACEs), full=['Administrators'] (Central Server admin consoles + the Background Service User, a local admin per P05, get R/W via admin membership), caching_mode='none' (repository files are pulled live, not offline-cached). NO Users share grant (Codex P2 #6): PDQ default is PUSH copy (the service user reads the local repo + pushes to targets — targets never touch the share); the share exists here for multi-admin Central Server console access, NOT Pull-copy.",
+    "deferred": "Pull Copy Mode (Codex P2 #6): DEFERRED. PDQ's Deploy User need NOT be a local admin, and Pull Copy authenticates targets to the UNC share as the Deploy User requiring share R/W. If Pull is later enabled, a dedicated Deploy-User/group R/W grant (share + NTFS) is added then — NOT assumed here. P03 configures the default Push posture. Also DEFERRED: PDQ's repository-inheritance-protection + NT AUTHORITY\\INTERACTIVE removal (their security best-practice hardening) -> a separate hardening piece; P03 does not claim that posture.",
+    "entitlement": "P03 establishes the GROUP-based entitlement (Administrators Full); P05 later makes the Background Service User ELIGIBLE by adding it to local Administrators. P03 cannot prove effective access AS that account (it does not exist yet) — Codex P2 #5."
+  },
+  "smallestStep": "In pdq/tasks/present_windows.yml replace the no-op body with a block whose vars derive __share_drive__/__repo_dir__ (block-var): (1) win_file state=directory G:\\AppRepo; (2) win_acl x3 explicit inherited ACEs (Users R&X, Administrators Full, SYSTEM Full); (3) win_share AppRepo rule_action=set full=Administrators caching=none. Add defaults: repository.dir_name='AppRepo', repository.share_name='AppRepo'.",
+  "research": [
+    "PDQ Deploy repository (docs.pdq.com/current-version/Deploy/repository-file.htm + repository.htm): UNC path REQUIRED for a repository shared by multiple admins under Central Server (our case) AND for Pull Copy; default %PUBLIC%\\...\\PDQ Deploy\\Repository. PDQ security best practices (help.pdq.com/43238981958299): protect repository folder inheritance, restrict to admins, remove insecure NT AUTHORITY\\INTERACTIVE — noted as a DEFERRED hardening piece.",
+    "PDQ credentials (help.pdq.com/115002510472): Background Service User adds/retrieves repo files (R/W); the Deploy User authenticates to targets and (Pull mode only) to the UNC share (R/W) and need NOT be a PDQ-server local admin — hence Pull deferred, not assumed.",
+    "windows-wsus U1 (RESTART §6 / style §4c): explicit BUILTIN\\Users ReadAndExecute (allow, inherit) on role-created app dirs; win_acl type=allow inherit=true. ansible.windows win_file/win_acl/win_share are idempotent."
+  ],
+  "invariants": [
+    "App Share path derived from config.data_disks.share.drive_letter + config.repository.dir_name via a BLOCK-VAR (no hardcoded G:, no set_fact — Codex P2 #8).",
+    "THREE explicit inherited NTFS ACEs (Users R&X, Administrators Full, SYSTEM Full) — nothing relied on via inheritance (Codex P2 #2); each IsInherited=false, InheritanceFlags ContainerInherit,ObjectInherit.",
+    "win_share rule_action=set (closed set), full=Administrators, caching=none; NO Users share grant (Push default; Pull deferred — Codex P2 #6).",
+    "win_file/win_acl/win_share idempotent (re-run changed=0).",
+    "Runs AFTER windows_disk_manager provisions G: (play role order); no PDQ install dependency (repository-repoint is a later post-install piece). Loader/validate/playbook/disk-manager untouched.",
+    "Claim scoped: prevention-of-personal-ACE-stamp on a clean managed dir, NOT stale-ACE normalization nor the PDQ inheritance-hardening posture (both deferred)."
+  ],
+  "scopeLock": {
+    "fileAllowlist": [
+      "ansible/applications/pdq/tasks/present_windows.yml",
+      "ansible/applications/pdq/defaults/main.yml",
+      "ansible/applications/pdq/README.md",
+      "_handoff/steps/P03.plan.json"
+    ],
+    "forbidden": "tasks/main.yml (loader), tasks/validate.yml, windows_disk_manager (framework), pdq.yml (playbook), .framework-pin, any other file"
+  },
+  "proofs": [
+    "yamllint + ansible-lint clean; check-winshell-splitargs clean.",
+    "POSITIVE E2E (live pdq-dev, REVERT-FIRST): compose -> windows_disk_manager provisions G: -> pdq creates the App Share. FALSIFIABLE assertions (pass/fail, not just display — Codex P2 #10): Test-Path G:\\AppRepo == true; (Get-Acl G:\\AppRepo).Access -> a BUILTIN\\Users ACE with FileSystemRights ReadAndExecute, IsInherited=false, InheritanceFlags='ContainerInherit, ObjectInherit'; a BUILTIN\\Administrators FullControl explicit ACE; a NT AUTHORITY\\SYSTEM FullControl explicit ACE; NO NT AUTHORITY\\INTERACTIVE ACE was ADDED by this role; (Get-SmbShare AppRepo).Path == G:\\AppRepo and CachingMode == None; Get-SmbShareAccess AppRepo -> exactly {Administrators Full}, no Everyone/Users entry.",
+    "IDEMPOTENCY (Director-RATIFIED method 2026-07-27, Codex P2 r2 #11 resolved): after the revert-first positive converge, re-run with SKIP_REVERT=1 against the converged state -> win_file/win_acl/win_share all changed=0, recap failed=0. SKIP_REVERT is hereby the approved idempotency-proof mechanism (composition testing AND idempotency re-runs), formalizing the windows-wsus ledger practice — NOT a lifecycle violation.",
+    "NEGATIVE (unchanged gate): the pdq validate (license/service-account) still fails the run when those inputs are empty (regression check)."
+  ],
+  "judgementCalls": [
+    "Explicit Administrators Full + SYSTEM Full (not inherited) — consistent with distrusting inheritance for the Users ACE (Codex P2 #2).",
+    "Defer Pull Copy (Codex P2 #6): configure the default Push posture (share = Administrators Full for Central Server admin consoles); a Deploy-User R/W grant is added only if Pull is later enabled. Do not assume the Deploy User is a local admin.",
+    "Defer the PDQ repository inheritance-hardening + INTERACTIVE removal to a separate hardening piece; narrow P03's stale-ACE claim to prevention-on-clean-dir.",
+    "win_share rule_action=set (closed set); caching=none; block-var path derivation (no set_fact).",
+    "Bundle dir+ACL+share (Director); G:\\AppRepo + AppRepo share (Director)."
+  ],
+  "blastRadius": "Low — one directory + 3 NTFS ACEs + one SMB share on the already-provisioned G: disk. No PDQ install, no Pull/hardening config. Idempotent, reversible.",
+  "risk": "Low. The SMB share exposes G:\\AppRepo (Administrators Full only, no Everyone/Users share access; NTFS admins+SYSTEM Full, Users R&X). Network reachability is governed by the host firewall/network layer, not this piece. No secrets.",
+  "directorNotes": "First pdq-role logic; pdq strict cycle, system codex gpt-5.6-sol. Codex P2 r1 (12 pts) folded — notably: explicit Admin/SYSTEM ACEs, Pull-copy deferred (default Push), idempotency via SKIP_REVERT (Director-RATIFIED 2026-07-27 as the approved method), narrowed stale-ACE claim. Flag at P4.5: Pull-copy + PDQ inheritance-hardening are deferred follow-ups."
+}

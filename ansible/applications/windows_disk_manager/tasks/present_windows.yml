@@ -1,0 +1,34 @@
+# =========================================================================================== #
+# File: '{{ role_path }}/tasks/present_windows.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Read-only platform guard for the windows_disk_manager role on the Windows family (resolved by
+# the v3 loader via first_found; a future 'present_windows_<dist>_<ver>.yml' would shadow this
+# automatically). Receives the merged running configuration as 'config'.
+#
+# BUILD IN PROGRESS — this piece only verifies that the declared infrastructure platform matches
+# the observed Windows system vendor. Disk facts, provider adapters, classification, and mutations
+# land in later WDM pieces.
+#
+# =========================================================================================== #
+---
+#region ------ [ Script ] -------------------------------------------------------------------- #
+
+- name: 'BEGIN | Assert Declared Platform Matches Observed Vendor'
+  vars:
+    __platform__: "{{ config.platform | string | lower | trim }}"
+    __observed_vendor__: "{{ ansible_facts.system_vendor | default('') | string | trim }}"
+    __platform_vendor__:
+      vmware: 'VMware, Inc.'
+      aws: 'Amazon EC2'
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.system_vendor is defined
+      - __observed_vendor__ == __platform_vendor__[__platform__]
+    fail_msg: >-
+      windows_disk_manager.platform '{{ __platform__ }}' expects system_vendor
+      '{{ __platform_vendor__[__platform__] }}', but observed '{{ __observed_vendor__ }}'.
+      Refusing to continue before any disk-manager provider work.
+    quiet: true
+
+#endregion --- [ Script ] -------------------------------------------------------------------- #

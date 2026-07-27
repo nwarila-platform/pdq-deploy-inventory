@@ -1,0 +1,31 @@
+# =========================================================================================== #
+# File: '{{ role_path }}/tasks/present_windows.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# state=present entrypoint for the pdq role on Windows, dispatched by the v3 loader after it
+# merges config (passed as 'config') and runs validate.yml. windows_disk_manager has already
+# provisioned E:/F:/G: (PDQDEPLOY/PDQINVENTORY/PDQSHARE) when this runs — see ansible/playbooks/pdq.yml.
+#
+# SKELETON — the actual install spine is built one MS/PDQ-doc-grounded piece per cycle.
+# Reference install spine (single all-in-one Central Server host):
+#   App Share on G: (dir + SMB share + ACLs: BUILTIN\Users R&X, service account R/W)
+#   -> Background Service User (local admin, shared by Deploy + Inventory — integration prereq)
+#   -> install PDQ Inventory (MSI silent: Mode=Server ServerPort Licensekey /qn /norestart)
+#   -> install PDQ Deploy   (MSI silent, SAME service user + mode for integration)
+#   -> Central Server enable + firewall exception (TCP central_server.port, default 7337)
+#   -> relocate Inventory DB -> F:, Deploy DB -> E:; point Deploy repository -> G: App Share
+#   -> verify services running + Central Server port listening.
+#
+# =========================================================================================== #
+---
+#region ------ [ Main ] ---------------------------------------------------------------------- #
+
+- name: 'INFO | pdq present_windows not yet implemented (skeleton)'
+  ansible.builtin.debug:
+    msg: >-
+      pdq role skeleton reached present_windows.yml. Config merged and validated
+      (disks E:/F:/G:, license present, service account '{{ config.service_account.name | default('?') }}',
+      Central Server port {{ config.central_server.port | default('?') }}). Install spine is built
+      one piece per cycle — no PDQ operations are performed yet.
+
+#endregion --- [ Main ] ---------------------------------------------------------------------- #

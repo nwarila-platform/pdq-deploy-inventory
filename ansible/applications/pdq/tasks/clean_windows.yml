@@ -1,0 +1,17 @@
+# =========================================================================================== #
+# File: '{{ role_path }}/tasks/clean_windows.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Cache/scratch cleanup path for the pdq role (state=clean), dispatched by the v3 loader. The
+# role does not yet create persistent caches; this acknowledges the state so 'clean' is a
+# supported no-op rather than a resolution failure (mirrors the wazuh roles' clean contract).
+#
+# =========================================================================================== #
+---
+#region ------ [ Clean ] --------------------------------------------------------------------- #
+
+- name: 'INFO | Nothing To Clean (no role-owned caches yet)'
+  ansible.builtin.debug:
+    msg: 'pdq role: no persistent caches are created yet; clean is a supported no-op.'
+
+#endregion --- [ Clean ] --------------------------------------------------------------------- #

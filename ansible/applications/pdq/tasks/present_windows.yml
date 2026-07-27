@@ -7,10 +7,10 @@
 # provisioned E:/F:/G: (PDQDEPLOY/PDQINVENTORY/PDQSHARE) when this runs — see ansible/playbooks/pdq.yml.
 #
 # The install spine is built one MS/PDQ-doc-grounded piece per strict-cycle cycle
-# (_handoff/QUEUE.md). Current implementation creates the App Share repository directory,
-# its explicit inherited NTFS ACEs, and its Administrators-only SMB share. Remaining spine:
-#   Background Service User (local admin, shared by Deploy + Inventory — integration prereq)
-#   -> install PDQ Inventory (MSI silent: Mode=Server ServerPort Licensekey /qn /norestart)
+# (_handoff/QUEUE.md). Current implementation creates the shared local Background Service User,
+# the App Share repository directory, its explicit inherited NTFS ACEs, and its Administrators-only
+# SMB share. Remaining spine:
+#   Install PDQ Inventory (MSI silent: Mode=Server ServerPort Licensekey /qn /norestart)
 #   -> install PDQ Deploy   (MSI silent, SAME service user + mode for integration)
 #   -> Central Server enable + firewall exception (TCP central_server.port, default 7337)
 #   -> relocate Inventory DB -> F:, Deploy DB -> E:; point Deploy repository -> G: App Share
@@ -19,6 +19,34 @@
 # =========================================================================================== #
 ---
 #region ------ [ Main ] ---------------------------------------------------------------------- #
+
+#region ------ [ Background Service User ] --------------------------------------------------- #
+
+- name: 'CONFIGURE | Create the PDQ Background Service User'
+  block:
+    - name: 'CONFIGURE | Create the local PDQ service account'
+      no_log: true
+      ansible.windows.win_user:
+        name: '{{ config.service_account.name }}'
+        password: '{{ config.service_account.password }}'
+        state: 'present'
+        groups:
+          - 'Administrators'
+        groups_action: 'add'
+        password_never_expires: true
+        user_cannot_change_password: true
+        update_password: 'on_create'
+
+    - name: 'CONFIGURE | Grant Log-On-as-Service to the PDQ service account'
+      ansible.windows.win_user_right:
+        name: 'SeServiceLogonRight'
+        users:
+          - '.\{{ config.service_account.name }}'
+        action: 'add'
+
+#endregion --- [ Background Service User ] --------------------------------------------------- #
+
+#region ------ [ App Share ] ----------------------------------------------------------------- #
 
 - name: 'CONFIGURE | Create the PDQ Deploy App Share'
   vars:
@@ -67,5 +95,7 @@
         full: 'Administrators'
         rule_action: 'set'
         caching_mode: 'None'
+
+#endregion --- [ App Share ] ----------------------------------------------------------------- #
 
 #endregion --- [ Main ] ---------------------------------------------------------------------- #

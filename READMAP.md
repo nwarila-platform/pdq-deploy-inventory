@@ -22,13 +22,16 @@ Status legend: ✅ done · 🔄 in-flight · 📐 designed (ready) · 💤 defer
    `disks:[]` contract, state-scoped validate guards, fail-closed present). Ran the full app-repo
    strict cycle (P2 Codex AGREE r5 → P3 → P4 live-VM proof matrix on `pdq-dev`, 2 defects repaired →
    P4.5 approved), system codex `gpt-5.6-sol`. **WDM-02a ✅ MERGED** `197c5ca [audited 4111693]`
-   (2026-07-27): non-destructive resolve + online + **fail-closed safety classifier** (PRISTINE/OURS-by-
-   NTFS-label, else refuse; Director middle-path blank-safety), proven on the 3 real disks + 9 synthetic-
-   fact fixtures (P2 AGREE r6, P4 no defects). **NEXT: WDM-02b** (`win_initialize_disk` GPT) → 02c
-   (`win_partition`) → 02d (`win_format`, flips the pipeline green), then the **pdq repoint**: bump
-   `.framework-pin` to `≥197c5ca`, drop pdq's local `windows_disk_manager` stopgap (compose-guard auto-
-   refuses it once framework-tracked), reshape `pdq.yml` to the `disks:[]` list (the 3 captured eui ids).
-   Real 3-disk provisioning proves after WDM-02d.
+   (superseded). **WDM-02b ✅ MERGED** `1abfec4 [audited 73048d8]` (2026-07-27): **the role now fully
+   provisions.** Director rip-out-classifier decision ("config control is the operator's job; don't
+   handhold") replaced the elaborate 02a classifier with a MINIMAL trust-config pipeline — resolve →
+   online → skip-if-ours (NTFS+label via `partitions[].volumes[]`, idempotency only) → `win_initialize_disk`
+   → `win_partition` → `win_format`, `force:false`, NTFS-only. **Live-proven on pdq-dev: formatted
+   E:PDQDEPLOY/F:PDQINVENTORY/G:PDQSHARE NTFS (changed=3), idempotency re-run changed=0.** Fixed a latent
+   02a traversal bug. **`windows_disk_manager` is now a complete framework disk-provisioning role.**
+   **NEXT: the pdq repoint** — bump `.framework-pin` to `≥1abfec4`, drop pdq's local `windows_disk_manager`
+   stopgap (compose-guard auto-refuses it once framework-tracked), reshape `pdq.yml` to the `disks:[]` list
+   (the 3 captured eui ids + labels + drive letters). That gives PDQ real 3-disk provisioning E:/F:/G:.
 4. **P03–P05 — App Share + service account** (⛏️). The integration substrate (one service user).
 5. **P06–P08 — Install both apps + Central Server + firewall** (⛏️). PDQ alive.
 6. **P09–P12 — DB relocation + repository + integration** (⛏️). The whole point: integrated AIO on

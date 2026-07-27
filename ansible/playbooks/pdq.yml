@@ -30,9 +30,28 @@
     windows_disk_manager:
       # TD-001: disable the loader's POSIX temp-dir; the role owns its Windows operations.
       # NOTE: a `-e '{"windows_disk_manager":{...}}'` override REPLACES this whole mapping, so a
-      # proof override must re-state temp_dir: false.
+      # proof override must re-state temp_dir: false + disks.
       temp_dir: false
       platform: 'vmware'
+      # windows_disk_manager (framework role, .framework-pin >= 1abfec4) provisions these 3 disks
+      # end-to-end: init GPT -> partition -> NTFS format, force:false (idempotent), skip-if-ours.
+      # unique_id captured from the live pdq-dev VM 2026-07-27 (a full clone re-mints all eui.*);
+      # parameterize on backport to a *-template repo. Disk identity now lives HERE (not in the
+      # pdq: override — the pdq.deploy_disk_id/inventory_disk_id/share_disk_id below are transitional
+      # and get removed when the pdq role is reshaped to consume drive letters, a later cycle).
+      disks:
+        - unique_id: 'eui.E838E9FEF13BD475000C2960C66494AE'  # 20 GiB -> E: PDQDEPLOY    (PDQ Deploy DB)
+          drive_letter: 'E'
+          label: 'PDQDEPLOY'
+          allocation_unit: 4096
+        - unique_id: 'eui.FF1BA2DA823ECF16000C2965289C10F5'  # 20 GiB -> F: PDQINVENTORY (PDQ Inventory DB)
+          drive_letter: 'F'
+          label: 'PDQINVENTORY'
+          allocation_unit: 4096
+        - unique_id: 'eui.B3DC2EC9CC388D4F000C2968B08CFF5F'  # 30 GiB -> G: PDQSHARE     (Deploy App Share)
+          drive_letter: 'G'
+          label: 'PDQSHARE'
+          allocation_unit: 4096
     pdq:
       # TD-001: disable the loader's POSIX temp-dir; the role owns its own staging.
       # NOTE: a `-e '{"pdq":{...}}'` override REPLACES this whole mapping, so a proof override

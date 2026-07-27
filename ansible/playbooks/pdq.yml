@@ -39,12 +39,12 @@
       # must re-state temp_dir: false.
       temp_dir: false
       # Data-disk identity (Windows Get-Disk UniqueId). Declared here so the loader folds them
-      # into config (config.deploy_disk_id / inventory_disk_id / share_disk_id).
-      # DEV PLACEHOLDERS — set to the real eui.* ids of the PDQ dev VM's 3 blank disks once it
-      # exists; parameterize (templated vars) on backport to a *-template repo.
-      deploy_disk_id: 'REPLACE-eui-of-PDQDEPLOY-disk'      # -> E: PDQDEPLOY    (PDQ Deploy DB)
-      inventory_disk_id: 'REPLACE-eui-of-PDQINVENTORY-disk'  # -> F: PDQINVENTORY (PDQ Inventory DB)
-      share_disk_id: 'REPLACE-eui-of-PDQSHARE-disk'        # -> G: PDQSHARE     (Deploy App Share)
+      # into config (config.deploy_disk_id / inventory_disk_id / share_disk_id). Captured from the
+      # live pdq-dev VM 2026-07-27 (a full clone re-mints all eui.*, so these are pdq-dev-specific);
+      # parameterize (templated vars) on backport to a *-template repo.
+      deploy_disk_id: 'eui.E838E9FEF13BD475000C2960C66494AE'  # Disk1 20 GiB -> E: PDQDEPLOY    (PDQ Deploy DB)
+      inventory_disk_id: 'eui.FF1BA2DA823ECF16000C2965289C10F5'  # Disk3 20 GiB -> F: PDQINVENTORY (PDQ Inventory DB)
+      share_disk_id: 'eui.B3DC2EC9CC388D4F000C2968B08CFF5F'  # Disk2 30 GiB -> G: PDQSHARE     (Deploy App Share, largest)
       # PDQ Enterprise license (REQUIRED — Central Server + integration). no_log; supply via a
       # non-committed override (-e / vault). DEV PLACEHOLDER; never commit a real key.
       license_key: 'REPLACE-WITH-PDQ-ENTERPRISE-LICENSE-KEY'

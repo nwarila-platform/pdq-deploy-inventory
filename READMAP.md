@@ -11,13 +11,15 @@ Status legend: ✅ done · 🔄 in-flight · 📐 designed (ready) · 💤 defer
 
 ## 1. Recommended global order
 
-1. **P00 — Provision the PDQ dev VM** (🔄 VM up; disk-id capture key-gated). `pdq-dev` full-cloned
-   from the wsus clean baseline, MAC pinned → IP 192.168.0.181 (never run both VMs), booted SSH-ready,
-   memory-baseline snapshot taken, scripts/inventory repointed. **Remaining:** load the `hellbomb` SSH
-   key (Director), then capture the 3 disks' `eui.*` ids into `pdq.yml` and run the P01 proof.
-2. **P01 — Skeleton wiring proof** (⛏️). Compose green, both loaders resolve, `pdq` present no-op
-   converges `changed=0`. First merge — proves the harness before any PDQ logic.
-3. **P02 — Disk provisioning** (⛏️) via `windows_disk_manager` (reused). E:/F:/G:.
+1. **P00 — Provision the PDQ dev VM** (✅ 2026-07-27). `pdq-dev` full-cloned from the wsus clean
+   baseline, MAC pinned → IP 192.168.0.181 (never run both VMs), booted SSH-ready, memory-baseline
+   snapshot taken, scripts/inventory repointed, 3 disk `eui.*` ids captured into `pdq.yml`.
+2. **P01 — Skeleton wiring proof** (✅ 2026-07-27). Live-VM E2E green: `ok=23 changed=0 failed=0`;
+   both loaders resolve, `pdq` validate passes, present no-op. Harness proven before any PDQ logic.
+3. **P02 — Disk provisioning** (⛏️ NEXT) — E:/F:/G:. **Design open:** `windows_disk_manager`
+   present is still only a platform guard (its disk-mutation pieces are the windows-wsus C15 arc,
+   in progress) — decide whether pdq waits on WDM maturing or the `pdq` role owns disk init like
+   wsus did. See §3.
 4. **P03–P05 — App Share + service account** (⛏️). The integration substrate (one service user).
 5. **P06–P08 — Install both apps + Central Server + firewall** (⛏️). PDQ alive.
 6. **P09–P12 — DB relocation + repository + integration** (⛏️). The whole point: integrated AIO on

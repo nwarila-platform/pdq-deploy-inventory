@@ -37,7 +37,11 @@ Status legend: ✅ done · 🔄 in-flight · 📐 designed (ready) · 💤 defer
    **NEXT: the PDQ install spine — QUEUE P03+** (App Share on G: → service account → MSI installs →
    Central Server → DB relocation → integration). The pdq role's transitional `deploy_disk_id`/etc. get
    removed when it's reshaped to consume drive letters (a pdq-role cycle).
-4. **P03–P05 — App Share + service account** (⛏️). The integration substrate (one service user).
+4. **P03 App Share ✅ MERGED** `0c4c9a0 [audited 66e97bb]` (2026-07-27): `G:\AppRepo` dir + 3 explicit
+   NTFS ACEs (Users R&X, Administrators/SYSTEM Full) + Administrators-only SMB share, live-proven
+   (changed=8, idempotent; falsifiable ACL/share assertions verified). Push default; Pull-copy + PDQ
+   inheritance-hardening deferred. **NEXT: P05 Background Service User** (create local `svc-pdq` → add
+   to Administrators → gets share R/W via admin), then MSI installs (P06/P07). One service user for both apps.
 5. **P06–P08 — Install both apps + Central Server + firewall** (⛏️). PDQ alive.
 6. **P09–P12 — DB relocation + repository + integration** (⛏️). The whole point: integrated AIO on
    the 3 disks.

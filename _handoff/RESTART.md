@@ -26,7 +26,9 @@ Backport to a `*-template` repo once operational. `terraform/` is a skeleton, **
 ## 3. Non-negotiable constraints
 
 - **Revert the VM before EVERY playbook execution** (`scripts/revert-vm.sh`; built into
-  `compose-and-run.sh`; `SKIP_REVERT=1` = composition testing only).
+  `compose-and-run.sh`). `SKIP_REVERT=1` bypasses the revert for TWO ratified uses (Director
+  2026-07-27): composition testing, AND the idempotency proof — converge revert-first, then a
+  `SKIP_REVERT=1` re-run to show `changed=0`. It is NOT a general escape hatch for live runs.
 - **One command per cycle.** Split a piece that grows a second command.
 - **`tasks/main.yml` (v3 loader) is untouchable per-role.** Any change — even a recommendation —
   goes through `_handoff/loop/loader-change-protocol.md` (one independent Claude/Fable + one

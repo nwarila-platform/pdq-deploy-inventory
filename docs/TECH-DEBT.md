@@ -93,4 +93,25 @@
   migrate the `MAIN | Tune WsusPool Application Pool` task from `community.windows.win_iis_webapppool`
   to `microsoft.iis.web_app_pool` (verify the `attributes` mapping / parameter shape), add
   `microsoft.iis` to the composition's collection requirements, and re-run the C08 proofs → close TD-004.
+
+## TD-005 — v3 loader echoes the merged `<role>_running` config (incl. secrets) at `-v`
+
+- **What:** the framework v3 loader's `INIT | Loading Overrides` task `set_fact`s the merged
+  `<role>_running` dict (the style-guide-SANCTIONED persistent config — R3's named exception). When a
+  secret lives in the override dict (P05: `pdq.service_account.password`), that secret becomes a
+  persistent HOST FACT and is printed in full on any `-v`+ run (Ansible prints `set_fact` results at
+  verbosity ≥ 1). Proven with a sentinel password 2026-07-28 (P05 P4).
+- **Scope:** the **v3 loader — GOVERNANCE SURFACE** (byte-identical, untouchable per-role); affects
+  EVERY secret-bearing role composed on it, not just pdq. P05 is merely the first pdq piece to route a
+  secret through the loader.
+- **Not a leak at default verbosity:** normal runs (no `-v`) do NOT print it — proven, 0 sentinel
+  occurrences. The consuming task's own `no_log` (P05's `win_user`) also works. The residual exposure is
+  `-v`+ runs (e.g. a verbose CI log) plus the play-duration host-fact persistence of the secret.
+- **Mitigations already in place:** secrets supplied via `-e @<non-committed protected file>` or vault
+  (never a literal `-e`), so command-line / shell-history / process-listing exposure is already avoided.
+- **Fix / rollout:** add `no_log: true` to the loader's override-merge `set_fact` (suppresses the `-v`
+  print of the merged config). This is a loader change → the loader-change gate (two independent
+  reviewers both confirm it is a generic improvement fitting EVERY role, then the Director
+  accepts). Recommended; does NOT block role pieces. Raised 2026-07-28 (P05).
+- **Evidence:** the P05 record "Finding → TD-005"; the P05 sentinel-hygiene proof.
 - **Evidence:** C08 packet `moduleChoice.moduleDeprecationNote` + the C08 record.

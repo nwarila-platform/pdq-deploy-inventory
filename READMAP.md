@@ -40,9 +40,19 @@ Status legend: ✅ done · 🔄 in-flight · 📐 designed (ready) · 💤 defer
 4. **P03 App Share ✅ MERGED** `0c4c9a0 [audited 66e97bb]` (2026-07-27): `G:\AppRepo` dir + 3 explicit
    NTFS ACEs (Users R&X, Administrators/SYSTEM Full) + Administrators-only SMB share, live-proven
    (changed=8, idempotent; falsifiable ACL/share assertions verified). Push default; Pull-copy + PDQ
-   inheritance-hardening deferred. **NEXT: P05 Background Service User** (create local `svc-pdq` → add
-   to Administrators → gets share R/W via admin), then MSI installs (P06/P07). One service user for both apps.
-5. **P06–P08 — Install both apps + Central Server + firewall** (⛏️). PDQ alive.
+   inheritance-hardening deferred. **P05 Background Service User ✅ MERGED** `ad26a08 [audited 0509401]`
+   (2026-07-28): local `svc-pdq` via `win_user` (no_log password, Administrators via groups_action=add,
+   password_never_expires, user_cannot_change_password, update_password=on_create) + `win_user_right
+   SeServiceLogonRight` (`.\svc-pdq`), inserted BEFORE the App Share region. Repository R/W via
+   Administrators membership (P03's Admin-Full ACE) — no per-account ACE. **Live-proven on pdq-dev:**
+   create changed=10 failed=0 (Enabled, PasswordExpires=never, UserMayChange=False, in Administrators,
+   SeServiceLogonRight granted); SKIP_REVERT idempotency changed=0; default-verbosity secret hygiene 0
+   leaks. **Finding TD-005:** the v3 loader echoes the merged `pdq_running` (incl. the service password)
+   at `-v` — framework governance surface; fix via loader-change-protocol (`no_log` the loader set_fact);
+   default runs clean, does NOT block. One service user for both apps. **NEXT: P06/P07 MSI installs.**
+5. **P06–P08 — Install both apps + Central Server + firewall** (⛏️). PDQ alive. **P06 next:** PDQ
+   Inventory — self-hosted pinned MSI (checksum-gated), silent `Mode=Server ServerPort Licensekey /qn
+   /norestart` (license `no_log`); then P07 Deploy (SAME service user + `Mode=Server`).
 6. **P09–P12 — DB relocation + repository + integration** (⛏️). The whole point: integrated AIO on
    the 3 disks.
 7. **P13 — Verify / END** (⛏️ or DROP).
@@ -106,10 +116,19 @@ feasible** — MSI silent + PDQ CLI (`SetServiceMode`/`SetServiceCredentials`/`S
   After the role is operational on VMware.
 - 💤 **Backport to a `*-template` repo** once fully operational.
 
-## 5. Session handoff (2026-07-27)
+## 5. Session handoff (2026-07-28)
 
-Skeleton scaffolded: mirrors `secure-wazuh` structure + `windows-wsus` Windows lessons. Role
-loader/defaults/validate/present-stub in place, `windows_disk_manager` reused, `pdq.yml` play,
-dev inventory, compose + gate scripts, strict-cycle docs, this queue. **Nothing PDQ is installed
-yet.** Next action: P00 (provision the dev VM) — everything else blocks on it. Confirm the §3
-open decisions with the Director before the pieces that consume them.
+Install spine underway. **Merged to `main`:** P00 dev VM, P01 wiring, P02 disk provisioning
+(`windows_disk_manager` in the framework + repoint), P03 App Share on G:, **P05 Background Service
+User (`ad26a08`)**. The role now: provisions E:/F:/G: NTFS, builds the `G:\AppRepo` dir + SMB share,
+and creates the shared local `svc-pdq` service account (Administrators + Log-On-as-Service). **Still no
+PDQ software installed.** **NEXT: P06** — install PDQ Inventory (self-hosted pinned MSI, checksum-gated,
+silent `Mode=Server ServerPort Licensekey /qn /norestart`), then P07 Deploy (same service user + mode).
+
+**Open governance item — TD-005:** the v3 loader prints the merged config (incl. secrets) at `-v`.
+Queued for the `loader-change-protocol` (one Fable + one Codex-Sol validator, then Director acceptance)
+— Claude to run that gate when the Director directs; default-verbosity runs are clean meanwhile.
+
+**Framework PR #39** (`windows_disk_manager`) still awaits the Director's GitHub merge; the framework
+commits (pin `1abfec4`) are LOCAL-ONLY. If the PR squashes on merge, re-pin pdq's `.framework-pin` to
+the squashed SHA. Confirm the §3 open decisions with the Director before the pieces that consume them.

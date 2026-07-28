@@ -29,18 +29,18 @@ link Deploy↔Inventory integration → verify.
 
 | ID | Task | Status |
 |----|------|--------|
-| P00 | Provision the PDQ dev VM + clean baseline snapshot (3 blank disks, static IP, SSH+PowerShell, VMware Tools); capture the 3 disks' `eui.*` ids into `pdq.yml`; update `revert-vm.sh` VMX/snapshot. See `docs/VM-LIFECYCLE.md §3`. | ⛏️ not-started |
+| P00 | Provision the PDQ dev VM + clean baseline snapshot (3 blank disks, static IP, SSH+PowerShell, VMware Tools); capture the 3 disks' `eui.*` ids into `pdq.yml`; update `revert-vm.sh` VMX/snapshot. See `docs/VM-LIFECYCLE.md §3`. | ✅ 574439c |
 
 ## Role build queue (draft)
 
 | ID | Piece (single command / operation) | Status |
 |----|-----------------------------------|--------|
-| P01 | Skeleton wiring proof: `compose-and-run.sh` overlays `windows_disk_manager` + `pdq`, both loaders resolve, `pdq` present is a validated no-op. Green gate + a from-baseline converge (`changed=0` on the no-op). | ⛏️ |
-| P02 | `windows_disk_manager`: declare the 3 PDQ disks; init/partition/format E:/F:/G: (`PDQDEPLOY`/`PDQINVENTORY`/`PDQSHARE`, NTFS 4 KiB). Reuses the merged windows-wsus disk arc — may be 1 cycle if the role is mature, else decompose init→partition→format. | ⛏️ |
-| P03 | App Share directory on G: (`win_file` — e.g. `G:\PDQRepository`) + explicit ACLs: `BUILTIN\Users` R&X (inherit, org convention) + service account R/W. | ⛏️ |
-| P04 | SMB share for the repository (`win_share`) — the install-source UNC the Deploy repository points at; share + NTFS perms aligned to the service account + deploy users. | ⛏️ |
-| P05 | Background Service User — create/validate the local account `svc-pdq` (`win_user`), add to local `Administrators`, ensure R/W to the App Share (Log-On-as-Service is auto-granted by PDQ). Applied to each app via CLI `SetServiceCredentials`. ONE account for both (integration prereq). `no_log`. | ⛏️ |
-| P06 | Install **PDQ Inventory** — MSI silent from the **self-hosted pinned artifact** (checksum-gated `win_get_url`/S3 → `win_package`): `Mode=Server ServerPort=<port> Licensekey=<key> /qn /norestart` (case-sensitive props; license `no_log`). Idempotency via `SystemInfo`/`win_package` version. | ⛏️ |
+| P01 | Skeleton wiring proof: `compose-and-run.sh` overlays `windows_disk_manager` + `pdq`, both loaders resolve, `pdq` present is a validated no-op. Green gate + a from-baseline converge (`changed=0` on the no-op). | ✅ |
+| P02 | `windows_disk_manager`: declare the 3 PDQ disks; init/partition/format E:/F:/G: (`PDQDEPLOY`/`PDQINVENTORY`/`PDQSHARE`, NTFS 4 KiB). Reuses the merged windows-wsus disk arc — may be 1 cycle if the role is mature, else decompose init→partition→format. | ✅ (windows_disk_manager in framework, pin 1abfec4) |
+| P03 | App Share directory on G: (`win_file` — e.g. `G:\PDQRepository`) + explicit ACLs: `BUILTIN\Users` R&X (inherit, org convention) + service account R/W. | ✅ 0c4c9a0 (bundled P04; explicit Admin/SYSTEM ACEs; G:\AppRepo) |
+| P04 | SMB share for the repository (`win_share`) — the install-source UNC the Deploy repository points at; share + NTFS perms aligned to the service account + deploy users. | ✅ folded into P03 (Administrators-only SMB share) |
+| P05 | Background Service User — create/validate the local account `svc-pdq` (`win_user`), add to local `Administrators`, ensure R/W to the App Share (Log-On-as-Service is auto-granted by PDQ). Applied to each app via CLI `SetServiceCredentials`. ONE account for both (integration prereq). `no_log`. | ✅ ad26a08 (pre-granted Log-On-as-Service; update_password=on_create) |
+| P06 | Install **PDQ Inventory** — MSI silent from the **self-hosted pinned artifact** (checksum-gated `win_get_url`/S3 → `win_package`): `Mode=Server ServerPort=<port> Licensekey=<key> /qn /norestart` (case-sensitive props; license `no_log`). Idempotency via `SystemInfo`/`win_package` version. | ⛏️ ◀ NEXT |
 | P07 | Install **PDQ Deploy** — same self-hosted MSI + silent pattern, SAME service user + `Mode=Server` (integration). | ⛏️ |
 | P08 | Enable **Central Server** on both apps via CLI `SetServiceMode Server` + Windows Firewall exception (`win_firewall_rule`) for TCP `central_server.port` (7337). Idempotent: read current mode via `Settings`/`SystemInfo`, set on diff. | ⛏️ |
 | P09 | Relocate **PDQ Inventory** database → F: via registry `HKLM\SOFTWARE\Admin Arsenal\PDQ Inventory\Settings\Database\FileName` (`win_regedit`): stop service → set → move DB dir → start. ⚠ **P0 must confirm on-VM whether `-wal`/`-shm`/`log.db` also relocate** (only `Database.db` may move — the biggest open risk). | ⛏️ |

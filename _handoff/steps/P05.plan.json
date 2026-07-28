@@ -1,0 +1,55 @@
+{
+  "piece": "P05",
+  "repo": "nwarila-platform/pdq-deploy-inventory",
+  "module": "pdq/present_windows — Background Service User (local svc-pdq + Administrators + Log-On-as-Service)",
+  "status": "P0 rev2 2026-07-27 (folded Codex P2 r1, 12 pts — local-only, secedit SID proof, -e @file secret supply, local-qualified right); awaiting Codex P2 r2",
+  "goal": "Create the PDQ Background Service User: a LOCAL account (default name svc-pdq) with a no_log password, added to local Administrators (which grants it the App Share R/W via the P03 Administrators-Full ACL), and granted the Log-On-as-Service right. ONE account for BOTH PDQ Deploy and PDQ Inventory (the integration prerequisite). Inserted BEFORE the App Share region in present_windows.yml (account is a prerequisite for the later MSI installs / Central Server).",
+  "why": "PDQ's Background Service User runs the Deploy + Inventory services and must be a local admin with R/W to the repository + the Log-On-as-Service privilege (PDQ auto-grants it at install; pre-granting is cleaner + idempotent). Deploy + Inventory integrate ONLY under a shared Background Service User (RESTART §6). Director 2026-07-27: role-created LOCAL svc-pdq (self-contained AIO; overridable to a domain account later). Repository R/W comes via Administrators membership (P03 granted Administrators FullControl on G:\\AppRepo) — no per-account ACL needed.",
+  "contract": {
+    "account": "win_user name=config.service_account.name (default svc-pdq, UNQUALIFIED local name), password=config.service_account.password (REQUIRED, no_log — never committed/printed), state=present, groups=['Administrators'] groups_action=add, password_never_expires=true, user_cannot_change_password=true, update_password=on_create. NOTE (Codex P2 #1): update_password=on_create means a later PASSWORD ROTATION is IGNORED for an existing account — a deliberate idempotency trade; rotating the service password is a separate deliberate action (not this role's re-run).",
+    "right": "win_user_right name='SeServiceLogonRight' users=['.\\\\' ~ config.service_account.name] action=add — the Log-On-as-Service privilege, LOCAL-QUALIFIED '.\\svc-pdq' to disambiguate on a domain-joined machine (Codex P2 #2; win_user itself takes the UNQUALIFIED name). action=add never strips other principals holding the right.",
+    "repository-access": "NO per-account App Share grant here: svc-pdq gets R/W to G:\\AppRepo via BUILTIN\\Administrators FullControl (granted in P03). This is why the account is added to Administrators.",
+    "password-supply": "config.service_account.password has NO default (a secret). Supplied at run time via ANSIBLE VAULT or a non-committed, permission-restricted extra-vars FILE referenced as `-e @<file>` that carries the COMPLETE pdq mapping (Codex P2 #3: a partial `-e '{\"pdq\":{...}}'` REPLACES the whole pdq dict, dropping temp_dir/disk-ids/license/service_account.name). NEVER a literal password on the command line (Codex P2 #4: shell history / process listing / logs bypass task no_log). The win_user task is no_log:true (Codex P2 #5).",
+    "scope-local-only": "LOCAL account ONLY (Codex P2 #11): win_user creates/manages a LOCAL account; a domain-account Background Service User is a separate future DESIGN change (not merely overriding the name). Contract + README are local-only."
+  },
+  "smallestStep": "In pdq/present_windows.yml, INSERT before the 'Create the PDQ Deploy App Share' block a service-account region: (1) win_user (create svc-pdq, no_log password, groups=Administrators add, never-expires); (2) win_user_right SeServiceLogonRight add. No new defaults (service_account is in the pdq: override). README documents the service account.",
+  "research": [
+    "PDQ credentials (help.pdq.com/115002510472): the Background Service User runs the PDQ service, must be a local admin on the PDQ server with R/W to the repository; domain OR local. Deploy + Inventory must share the SAME Background Service User to integrate (RESTART §6). PDQ auto-grants Log-On-as-Service if missing — pre-granting is idempotent + explicit.",
+    "ansible.windows.win_user (name, password, state, groups, groups_action, password_never_expires, user_cannot_change_password) — idempotent; no_log the password. ansible.windows.win_user_right (name=SeServiceLogonRight, users, action=add) — idempotent.",
+    "P03 (merged): BUILTIN\\Administrators has FullControl on G:\\AppRepo -> a Background Service User in Administrators gets repository R/W without a per-account ACE."
+  ],
+  "invariants": [
+    "Secrets: the win_user password is config.service_account.password with no_log:true on the task; NEVER committed, NEVER printed. no default.",
+    "groups_action=add (add to Administrators, don't replace memberships); win_user_right action=add (don't strip other SeServiceLogonRight holders).",
+    "ONE account (config.service_account.name) — the same account both PDQ apps will use (integration prereq); created once here.",
+    "Idempotent: win_user + win_user_right re-run changed=0 once created (password change on re-run is a known win_user quirk — set update_password=on_create so an existing account is not 'changed' every run).",
+    "No per-account App Share ACL (repository R/W via Administrators from P03). tasks/main.yml (loader) + validate.yml untouched (password failure is module-level, not asserted). Runs before the App Share region."
+  ],
+  "scopeLock": {
+    "fileAllowlist": [
+      "ansible/applications/pdq/tasks/present_windows.yml",
+      "ansible/applications/pdq/README.md",
+      "_handoff/steps/P05.plan.json"
+    ],
+    "forbidden": "tasks/main.yml (loader), tasks/validate.yml, defaults/main.yml, windows_disk_manager, pdq.yml (playbook), .framework-pin"
+  },
+  "proofs": [
+    "yamllint + ansible-lint clean; check-winshell-splitargs clean.",
+    "POSITIVE E2E (live pdq-dev, REVERT-FIRST, password via `-e @<non-committed protected file>` with the COMPLETE pdq dict — NOT a literal -e): FALSIFIABLE (pass/fail): Get-LocalUser svc-pdq -> exists, Enabled=true, PasswordNeverExpires=true, UserMayChangePassword=false (Codex P2 #9); Get-LocalGroupMember Administrators contains svc-pdq; SeServiceLogonRight assigned to svc-pdq proven via SID (Codex P2 #8): SID=(Get-LocalUser svc-pdq).SID; secedit /export /areas USER_RIGHTS to a controlled temp file; parse the SeServiceLogonRight line; assert it contains '*'+SID; delete the temp export. recap failed=0.",
+    "IDEMPOTENCY (Director-ratified SKIP_REVERT re-run): win_user (update_password=on_create) + win_user_right -> changed=0, failed=0.",
+    "SECRET HYGIENE (Codex P2 #6): use a UNIQUE throwaway SENTINEL password; capture the full controller output to a permission-restricted temp log; assert a fixed-string search for the sentinel returns NO match (task no_log honored); delete the log. (This verifies OUTPUT redaction only — the -e @file mechanic, not a literal -e, is what prevents command-line exposure per #4.)",
+    "REPOSITORY ACCESS (Codex P2 #7): svc-pdq's repository access is via Administrators membership + P03's BUILTIN\\Administrators FullControl NTFS ACE on G:\\AppRepo (LOCAL filesystem) — asserted by group membership + the P03 ACE, NOT by a remote SMB test as the local account (network local-account token filtering can distort that).",
+    "NEGATIVE (Codex P2 #5): omit service_account.password -> the run fails loudly EITHER at undefined-var during module-arg templating OR at win_user module validation (does NOT need to reach Windows) — fail-closed, not a silent skip."
+  ],
+  "judgementCalls": [
+    "LOCAL svc-pdq ONLY (Director + Codex P2 #11); a domain service account is a future design change, not a name override.",
+    "win_user_right LOCAL-QUALIFIED '.\\svc-pdq'; win_user unqualified (Codex P2 #2).",
+    "Repository R/W via Administrators membership (P03 Admin-Full ACE) — no per-account App Share grant (Codex P2 #7).",
+    "Pre-grant Log-On-as-Service (idempotent) rather than PDQ install-time auto-grant.",
+    "update_password=on_create (idempotency) — password rotation deliberately ignored for an existing account (Codex P2 #1); groups/right action=add.",
+    "Password: no_log, no default, supplied via vault or `-e @<non-committed file>` with the complete pdq dict — never a literal -e (Codex P2 #3/#4)."
+  ],
+  "blastRadius": "Low-moderate — creates ONE local admin account + grants it a logon-as-service right. A local admin account is a privileged principal, but it is the required PDQ service identity, password-protected (no_log), and single-purpose. No PDQ install yet. Reversible (remove the account).",
+  "risk": "Low. The account is a local admin (privileged) — inherent to PDQ's service-user requirement; password is a no_log secret. Idempotency guarded by update_password=on_create. No secret leakage (no_log + a grep proof). Dev password is a throwaway -e value; production supplies via vault.",
+  "directorNotes": "pdq strict cycle, system codex gpt-5.6-sol. Local svc-pdq (Director 2026-07-27). Password supplied via -e for the live proof (no_log). Flag at P4.5: the win_user update_password=on_create idempotency choice; repository R/W is via Administrators (P03), not a per-account grant."
+}

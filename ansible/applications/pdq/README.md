@@ -27,8 +27,8 @@ Declared in the `pdq:` override dict (playbook / `-e`), read by the loader as `c
 | `inventory_disk_id` | `config.inventory_disk_id` | **yes** | → F: `PDQINVENTORY` (Inventory DB) |
 | `share_disk_id` | `config.share_disk_id` | **yes** | → G: `PDQSHARE` (Deploy repository / App Share) |
 | `license_key` | `config.license_key` | **yes** | PDQ **Enterprise** license (Central Server + integration). `no_log`; never committed |
-| `service_account.name` | `config.service_account.name` | **yes** | Background Service User — **one** account for both apps; local admin, R/W to the App Share |
-| `service_account.password` | `config.service_account.password` | conditional | For a role-created local account; via `-e`/vault, never committed |
+| `service_account.name` | `config.service_account.name` | **yes** | Local Background Service User — **one** account for both apps (default `svc-pdq`) |
+| `service_account.password` | `config.service_account.password` | **yes** | Local account secret; supply via vault or a protected `-e @<file>`, never literally on the command line or committed |
 | `central_server.port` | `config.central_server.port` | no (default `7337`) | Central Server TCP port; a firewall exception is created for it |
 | `data_disks.*` | `config.data_disks.*` | no (defaults) | Drive letters / labels / allocation units (see `defaults/main.yml`) |
 | `repository.dir_name` | `config.repository.dir_name` | no (default `AppRepo`) | Repository directory on `config.data_disks.share.drive_letter` |
@@ -54,15 +54,33 @@ default Push mode and multi-admin Central Server console access. Pull Copy mode 
 if enabled later, its Deploy User or group will need explicit read/write permissions at both
 the share and NTFS layers.
 
+## Background Service User
+
+The role creates one local-only Background Service User (by default `svc-pdq`) for both PDQ
+Deploy and PDQ Inventory. It adds the account to the local `Administrators` group and grants
+`SeServiceLogonRight` (Log-On-as-Service). Administrators membership gives the account repository
+read/write access through the `BUILTIN\Administrators: FullControl` App Share ACL implemented in
+P03; no separate per-account repository ACE is required.
+
+The account password has no default. Supply it through Ansible Vault or a non-committed,
+permission-restricted extra-vars file referenced as `-e @<file>` and containing the complete
+`pdq` mapping. Do not put a literal password in command-line extra vars. The complete
+`ansible.windows.win_user` task is protected with `no_log: true`.
+
+Password updates use `update_password: on_create` so converged runs remain idempotent. Consequently,
+changing the configured secret does not rotate the password of an existing account; password
+rotation must be performed as a separate, deliberate operation. Domain service accounts are not
+supported by this local-account implementation.
+
 ## Build status
 
-The App Share is implemented. The remaining install spine is built one
+The Background Service User and App Share are implemented. The remaining install spine is built one
 MS/PDQ-doc-grounded piece per strict-cycle cycle — see
 [`_handoff/QUEUE.md`](../../../_handoff/QUEUE.md).
 
 ## Reference install spine (target)
 
-App Share on G: (dir + SMB share + ACLs) → Background Service User → install PDQ Inventory (MSI
+Background Service User → App Share on G: (dir + SMB share + ACLs) → install PDQ Inventory (MSI
 silent `Mode=Server ServerPort Licensekey /qn /norestart`) → install PDQ Deploy (same user + mode)
 → Central Server enable + firewall exception → relocate Inventory DB→F:, Deploy DB→E:, Deploy
 repository→G: → verify services + Central Server port.

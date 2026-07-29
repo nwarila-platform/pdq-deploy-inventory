@@ -11,3 +11,9 @@
 # local-only secrets / scratch (never commit credentials)
 *.secret
 temp-password*
+
+# Withheld from the public repository (Director, 2026-07-29): these enumerate findings still OPEN
+# in secure-wazuh, a public sibling. Kept symmetric with windows-wsus so neither repo can publish
+# them by accident.
+_handoff/AWS-IAM-AUDIT-wazuh.md
+_handoff/WAZUH-IAM-BACKPORT.md

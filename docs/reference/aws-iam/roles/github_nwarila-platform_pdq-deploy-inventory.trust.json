@@ -15,7 +15,7 @@
         },
         "StringLike": {
           "token.actions.githubusercontent.com:sub": "repo:nwarila-platform/pdq-deploy-inventory:*",
-          "token.actions.githubusercontent.com:job_workflow_ref": "nwarila-platform/pdq-deploy-inventory/.github/workflows/deploy.yml@*"
+          "token.actions.githubusercontent.com:job_workflow_ref": "nwarila-platform/pdq-deploy-inventory/.github/workflows/aws-deploy.yml@*"
         }
       }
     }

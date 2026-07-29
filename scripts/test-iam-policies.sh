@@ -63,6 +63,58 @@ for f in "${WORK}"/policies/*.json; do
                      || bad "$(basename "${f}")" "${n}" "0"
 done
 
+# ---- 1b. trust documents -------------------------------------------------------------------
+# simulate-custom-policy cannot evaluate sts:AssumeRoleWithWebIdentity, so the OIDC and SSO
+# hardening has no simulable proof. Validate the grammar and assert the structural properties
+# directly instead, so a widened trust cannot pass unnoticed.
+#
+# MISSING_RESOURCE is expected and filtered: a trust policy has no Resource element by design.
+# Verified against secure-wazuh's live, working trust documents, which return the identical code.
+echo "== trust documents =="
+for f in "${WORK}"/roles/*.json; do
+    n="$(aws accessanalyzer validate-policy --policy-type RESOURCE_POLICY \
+         --policy-document "file://${f}" --profile "${PROFILE}" --region "${REGION}" \
+         --query 'length(findings[?findingType==`ERROR` && issueCode!=`MISSING_RESOURCE`])' --output text 2>&1)"
+    [ "${n}" = "0" ] && ok "$(basename "${f}")" "grammar clean" || bad "$(basename "${f}")" "${n}" "0"
+done
+
+trust_assert() { # name jq-expression expected file
+    local name="$1" expr="$2" want="$3" file="$4"
+    local got; got="$(python3 -S -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+print(eval(sys.argv[2], {"d": d, "json": json}))' "${WORK}/roles/${file}" "${expr}" 2>&1 | tail -1)"
+    [ "${got}" = "${want}" ] && ok "${name}" "${got}" || bad "${name}" "${got}" "${want}"
+}
+CI_TRUST="github_nwarila-platform_${THIS_REPO}.trust.json"
+ADMIN_TRUST="github_nwarila-platform_${THIS_REPO}-admin.trust.json"
+POC_TRUST="${THIS_REPO}-poc-role.trust.json"
+C='d["Statement"][0]["Condition"]'
+
+# Single-valued sub and job_workflow_ref: an array is what teaches a cloner to APPEND, and an
+# appended trust leaves the sibling repository trusted.
+trust_assert "OIDC sub is single-valued" \
+  "type(${C}['StringLike']['token.actions.githubusercontent.com:sub']).__name__" "str" "${CI_TRUST}"
+trust_assert "OIDC job_workflow_ref is single-valued" \
+  "type(${C}['StringLike']['token.actions.githubusercontent.com:job_workflow_ref']).__name__" "str" "${CI_TRUST}"
+trust_assert "OIDC binds this repository id exactly" \
+  "${C}['StringEquals']['token.actions.githubusercontent.com:repository_id']" "${REPO_ID}" "${CI_TRUST}"
+trust_assert "OIDC audience is exact" \
+  "${C}['StringEquals']['token.actions.githubusercontent.com:aud']" "sts.amazonaws.com" "${CI_TRUST}"
+trust_assert "OIDC sub names this repository" \
+  "'${OWNER}/${THIS_REPO}' in ${C}['StringLike']['token.actions.githubusercontent.com:sub']" "True" "${CI_TRUST}"
+# The SSO suffix must be hash-bounded, not a trailing wildcard that also matches a future
+# permission set named github_<owner>_<anything>.
+trust_assert "SSO trust is hash-bounded, not wildcard" \
+  "${C}['ArnLike']['aws:PrincipalArn'].endswith('_' + '?'*16)" "True" "${ADMIN_TRUST}"
+trust_assert "SSO trust carries no trailing wildcard" \
+  "not ${C}['ArnLike']['aws:PrincipalArn'].endswith('*')" "True" "${ADMIN_TRUST}"
+# Confused-deputy guard on the instance-profile trust.
+trust_assert "instance trust pins SourceAccount" \
+  "${C}['StringEquals']['aws:SourceAccount']" "${ACCOUNT}" "${POC_TRUST}"
+trust_assert "instance trust principal is ec2" \
+  "d['Statement'][0]['Principal']['Service']" "ec2.amazonaws.com" "${POC_TRUST}"
+
 # ---- 2. security properties ----------------------------------------------------------------
 simulate() { # action resource context...
     local action="$1" resource="$2"; shift 2

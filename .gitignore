@@ -11,3 +11,4 @@
 # local-only secrets / scratch (never commit credentials)
 *.secret
 temp-password*
+

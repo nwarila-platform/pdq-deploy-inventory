@@ -1,0 +1,81 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadWriteStateFileOnly",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::<account-id>-terraform/nwarila-platform/pdq-deploy-inventory/*.tfstate",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "<account-id>"
+        }
+      }
+    },
+    {
+      "Sid": "ManageS3LockfileOnly",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": "arn:aws:s3:::<account-id>-terraform/nwarila-platform/pdq-deploy-inventory/*.tfstate.tflock",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "<account-id>"
+        }
+      }
+    },
+    {
+      "Sid": "ListStateBucket",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::<account-id>-terraform",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "<account-id>"
+        },
+        "StringLike": {
+          "s3:prefix": [
+            "nwarila-platform/pdq-deploy-inventory/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyDeleteStateFile",
+      "Effect": "Deny",
+      "Action": [
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion"
+      ],
+      "Resource": "arn:aws:s3:::<account-id>-terraform/nwarila-platform/pdq-deploy-inventory/*.tfstate"
+    },
+    {
+      "Sid": "DenyUnencryptedPuts",
+      "Effect": "Deny",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::<account-id>-terraform/nwarila-platform/pdq-deploy-inventory/*",
+      "Condition": {
+        "StringNotEquals": {
+          "s3:x-amz-server-side-encryption": "AES256"
+        }
+      }
+    },
+    {
+      "Sid": "DenyPutsWithoutEncryptionHeader",
+      "Effect": "Deny",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::<account-id>-terraform/nwarila-platform/pdq-deploy-inventory/*",
+      "Condition": {
+        "Null": {
+          "s3:x-amz-server-side-encryption": "true"
+        }
+      }
+    }
+  ]
+}

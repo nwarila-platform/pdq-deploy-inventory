@@ -1,0 +1,179 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadKmsAliasesForTerraform",
+      "Effect": "Allow",
+      "Action": "kms:ListAliases",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<region>"
+        }
+      }
+    },
+    {
+      "Sid": "DescribeKmsKeysForTerraform",
+      "Effect": "Allow",
+      "Action": "kms:DescribeKey",
+      "Resource": "arn:aws:kms:<region>:<account-id>:key/<ebs-kms-key-id>",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<region>"
+        }
+      }
+    },
+    {
+      "Sid": "KmsForEbsCryptographicOperations",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*"
+      ],
+      "Resource": "arn:aws:kms:<region>:<account-id>:key/<ebs-kms-key-id>",
+      "Condition": {
+        "StringEquals": {
+          "kms:ViaService": "ec2.<region>.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "KmsGrantForEbsOnly",
+      "Effect": "Allow",
+      "Action": "kms:CreateGrant",
+      "Resource": "arn:aws:kms:<region>:<account-id>:key/<ebs-kms-key-id>",
+      "Condition": {
+        "StringEquals": {
+          "kms:ViaService": "ec2.<region>.amazonaws.com"
+        },
+        "Bool": {
+          "kms:GrantIsForAWSResource": "true"
+        }
+      }
+    },
+    {
+      "Sid": "DescribeSsmManagedInstances",
+      "Effect": "Allow",
+      "Action": "ssm:DescribeInstanceInformation",
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<region>"
+        }
+      }
+    },
+    {
+      "Sid": "SsmSessionOnlyToOurTaggedInstances",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": "arn:aws:ec2:<region>:*:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ssm:resourceTag/nwarila:management:repository-id": "<repository-id>"
+        }
+      }
+    },
+    {
+      "Sid": "SsmStartSshSessionDocument",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": "arn:aws:ssm:<region>::document/AWS-StartSSHSession"
+    },
+    {
+      "Sid": "SsmSessionTeardownInRegion",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:TerminateSession",
+        "ssm:ResumeSession"
+      ],
+      "Resource": "arn:aws:ssm:<region>:*:session/*"
+    },
+    {
+      "Sid": "CreateTaggedPocSecurityGroups",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:<region>:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<region>",
+          "aws:RequestTag/nwarila:management:repository-id": "<repository-id>"
+        }
+      }
+    },
+    {
+      "Sid": "UseDeployVpcForPocSecurityGroupCreation",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:<region>:*:vpc/<vpc-id>",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<region>"
+        }
+      }
+    },
+    {
+      "Sid": "TagPocSecurityGroupResourcesAtCreate",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": [
+        "arn:aws:ec2:<region>:*:security-group/*",
+        "arn:aws:ec2:<region>:*:security-group-rule/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "ec2:CreateAction": [
+            "CreateSecurityGroup",
+            "AuthorizeSecurityGroupIngress",
+            "AuthorizeSecurityGroupEgress"
+          ],
+          "aws:RequestTag/nwarila:management:repository-id": "<repository-id>"
+        }
+      }
+    },
+    {
+      "Sid": "ManageTaggedPocSecurityGroupsInDeployVpc",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:ModifySecurityGroupRules",
+        "ec2:UpdateSecurityGroupRuleDescriptionsIngress",
+        "ec2:UpdateSecurityGroupRuleDescriptionsEgress",
+        "ec2:DeleteSecurityGroup"
+      ],
+      "Resource": "arn:aws:ec2:<region>:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<region>",
+          "ec2:ResourceTag/nwarila:management:repository-id": "<repository-id>"
+        },
+        "ArnLike": {
+          "ec2:Vpc": "arn:aws:ec2:<region>:*:vpc/<vpc-id>"
+        }
+      }
+    },
+    {
+      "Sid": "ManagePocSecurityGroupRuleResources",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:ModifySecurityGroupRules",
+        "ec2:UpdateSecurityGroupRuleDescriptionsIngress",
+        "ec2:UpdateSecurityGroupRuleDescriptionsEgress"
+      ],
+      "Resource": "arn:aws:ec2:<region>:*:security-group-rule/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<region>"
+        }
+      }
+    }
+  ]
+}

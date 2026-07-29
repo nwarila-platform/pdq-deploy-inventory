@@ -1,0 +1,158 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "GetConsoleOutputForOurInstances",
+      "Effect": "Allow",
+      "Action": "ec2:GetConsoleOutput",
+      "Resource": "arn:aws:ec2:<region>:*:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<region>",
+          "ec2:ResourceTag/nwarila:management:repository-id": "<repository-id>"
+        }
+      }
+    },
+    {
+      "Sid": "TagOnlyAtCreateTime",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": [
+        "arn:aws:ec2:<region>:*:instance/*",
+        "arn:aws:ec2:<region>:*:volume/*",
+        "arn:aws:ec2:<region>:*:network-interface/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "ec2:CreateAction": [
+            "RunInstances",
+            "CreateVolume",
+            "CreateNetworkInterface"
+          ],
+          "aws:RequestTag/nwarila:management:repository-id": "<repository-id>"
+        }
+      }
+    },
+    {
+      "Sid": "StampRepoIdentityTagOnRootVolumes",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:<region>:*:volume/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/nwarila:management:repository-id": "<repository-id>",
+          "aws:RequestedRegion": "<region>",
+          "ec2:ResourceTag/nwarila:management:repository-id": "<repository-id>"
+        }
+      }
+    },
+    {
+      "Sid": "DenyOverwriteForeignRepoIdentityTag",
+      "Effect": "Deny",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:<region>:*:*/*",
+      "Condition": {
+        "Null": {
+          "ec2:ResourceTag/nwarila:management:repository-id": "false"
+        },
+        "StringNotEquals": {
+          "ec2:ResourceTag/nwarila:management:repository-id": "<repository-id>"
+        }
+      }
+    },
+    {
+      "Sid": "DenySetWrongRepoIdentityTag",
+      "Effect": "Deny",
+      "Action": "ec2:CreateTags",
+      "Resource": [
+        "arn:aws:ec2:<region>:*:instance/*",
+        "arn:aws:ec2:<region>:*:volume/*",
+        "arn:aws:ec2:<region>:*:network-interface/*",
+        "arn:aws:ec2:<region>:*:security-group/*",
+        "arn:aws:ec2:<region>:*:security-group-rule/*"
+      ],
+      "Condition": {
+        "Null": {
+          "aws:RequestTag/nwarila:management:repository-id": "false"
+        },
+        "StringNotEquals": {
+          "aws:RequestTag/nwarila:management:repository-id": "<repository-id>"
+        }
+      }
+    },
+    {
+      "Sid": "DenyDeleteRepoIdentityTag",
+      "Effect": "Deny",
+      "Action": "ec2:DeleteTags",
+      "Resource": "arn:aws:ec2:<region>:*:*/*",
+      "Condition": {
+        "ForAnyValue:StringEquals": {
+          "aws:TagKeys": "nwarila:management:repository-id"
+        }
+      }
+    },
+    {
+      "Sid": "LifecycleOnlyOnOurTaggedResources",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:TerminateInstances",
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:RebootInstances",
+        "ec2:AttachVolume",
+        "ec2:DetachVolume",
+        "ec2:DeleteVolume",
+        "ec2:AttachNetworkInterface",
+        "ec2:DetachNetworkInterface",
+        "ec2:DeleteNetworkInterface",
+        "ec2:ModifyNetworkInterfaceAttribute",
+        "ec2:DeleteTags"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<region>",
+          "ec2:ResourceTag/nwarila:management:repository-id": "<repository-id>"
+        }
+      }
+    },
+    {
+      "Sid": "ModifyMetadataImdsV2Only",
+      "Effect": "Allow",
+      "Action": "ec2:ModifyInstanceMetadataOptions",
+      "Resource": "arn:aws:ec2:<region>:*:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<region>",
+          "ec2:ResourceTag/nwarila:management:repository-id": "<repository-id>"
+        },
+        "StringEqualsIfExists": {
+          "ec2:MetadataHttpTokens": "required"
+        },
+        "NumericLessThanEqualsIfExists": {
+          "ec2:MetadataHttpPutResponseHopLimit": "1"
+        }
+      }
+    },
+    {
+      "Sid": "ModifyVolumeCapped",
+      "Effect": "Allow",
+      "Action": "ec2:ModifyVolume",
+      "Resource": "arn:aws:ec2:<region>:*:volume/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<region>",
+          "ec2:ResourceTag/nwarila:management:repository-id": "<repository-id>"
+        },
+        "StringEqualsIfExists": {
+          "ec2:VolumeType": "gp3"
+        },
+        "NumericLessThanEqualsIfExists": {
+          "ec2:VolumeSize": "64",
+          "ec2:VolumeIops": "3000",
+          "ec2:VolumeThroughput": "125"
+        }
+      }
+    }
+  ]
+}

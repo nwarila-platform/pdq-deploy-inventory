@@ -34,7 +34,7 @@
       }
     },
     {
-      "Sid": "StampRepoIdentityTagOnRootVolumes",
+      "Sid": "MergeTagsOnOwnedVolumes",
       "Effect": "Allow",
       "Action": "ec2:CreateTags",
       "Resource": "arn:aws:ec2:<region>:*:volume/*",
@@ -64,13 +64,7 @@
       "Sid": "DenySetWrongRepoIdentityTag",
       "Effect": "Deny",
       "Action": "ec2:CreateTags",
-      "Resource": [
-        "arn:aws:ec2:<region>:*:instance/*",
-        "arn:aws:ec2:<region>:*:volume/*",
-        "arn:aws:ec2:<region>:*:network-interface/*",
-        "arn:aws:ec2:<region>:*:security-group/*",
-        "arn:aws:ec2:<region>:*:security-group-rule/*"
-      ],
+      "Resource": "arn:aws:ec2:<region>:*:*/*",
       "Condition": {
         "Null": {
           "aws:RequestTag/nwarila:management:repository-id": "false"
@@ -88,6 +82,17 @@
       "Condition": {
         "ForAnyValue:StringEquals": {
           "aws:TagKeys": "nwarila:management:repository-id"
+        }
+      }
+    },
+    {
+      "Sid": "DenyDeleteTagsWithoutTagKeys",
+      "Effect": "Deny",
+      "Action": "ec2:DeleteTags",
+      "Resource": "arn:aws:ec2:<region>:*:*/*",
+      "Condition": {
+        "Null": {
+          "aws:TagKeys": "true"
         }
       }
     },

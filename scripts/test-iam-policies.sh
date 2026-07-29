@@ -46,7 +46,7 @@ cp "${IAM_DIR}/policies/"*.json "${WORK}/policies/"
 cp "${IAM_DIR}/roles/"*.json    "${WORK}/roles/"
 sed -i "s|<account-id>|${ACCOUNT}|g; s|<repository-id>|${REPO_ID}|g; s|<region>|${REGION}|g;
         s|<vpc-id>|vpc-00000000000000000|g; s|<subnet-id>|subnet-00000000000000000|g;
-        s|<ebs-kms-key-id>|${KMS_KEY}|g; s|<key-pair-name>|${THIS_REPO}-poc-key|g" \
+        s|<ebs-kms-key-id>|${KMS_KEY}|g; s|<key-pair-name>|${THIS_REPO}-poc-key|g; s|<owner-id>|000000000|g" \
     "${WORK}"/policies/*.json "${WORK}"/roles/*.json
 
 "${REPO_ROOT}/scripts/check-iam-literals.sh" --materialized "${WORK}" >/dev/null \
@@ -93,16 +93,23 @@ C='d["Statement"][0]["Condition"]'
 
 # Single-valued sub and job_workflow_ref: an array is what teaches a cloner to APPEND, and an
 # appended trust leaves the sibling repository trusted.
-trust_assert "OIDC sub is single-valued" \
-  "type(${C}['StringLike']['token.actions.githubusercontent.com:sub']).__name__" "str" "${CI_TRUST}"
+# `sub` MUST list BOTH forms. CloudTrail proves GitHub emits the ID-EMBEDDED subject
+# (repo:<owner>@<owner-id>/<repo>@<repo-id>:<context>) for these repositories, not the plain slug
+# form. An earlier audit finding called that subject dead and this assertion enforced single-valued
+# — together they de-credentialed CI in all three repos. `repository_id` StringEquals is the real
+# identity boundary, so carrying both subject forms costs nothing and survives a transfer.
+trust_assert "OIDC sub lists BOTH subject forms" \
+  "len(${C}['StringLike']['token.actions.githubusercontent.com:sub'])" "2" "${CI_TRUST}"
+trust_assert "OIDC sub includes the ID-embedded form GitHub emits" \
+  "any('@' in x for x in ${C}['StringLike']['token.actions.githubusercontent.com:sub'])" "True" "${CI_TRUST}"
 trust_assert "OIDC job_workflow_ref is single-valued" \
   "type(${C}['StringLike']['token.actions.githubusercontent.com:job_workflow_ref']).__name__" "str" "${CI_TRUST}"
 trust_assert "OIDC binds this repository id exactly" \
   "${C}['StringEquals']['token.actions.githubusercontent.com:repository_id']" "${REPO_ID}" "${CI_TRUST}"
 trust_assert "OIDC audience is exact" \
   "${C}['StringEquals']['token.actions.githubusercontent.com:aud']" "sts.amazonaws.com" "${CI_TRUST}"
-trust_assert "OIDC sub names this repository" \
-  "'${OWNER}/${THIS_REPO}' in ${C}['StringLike']['token.actions.githubusercontent.com:sub']" "True" "${CI_TRUST}"
+trust_assert "every OIDC sub names this repository" \
+  "all('${THIS_REPO}' in x for x in ${C}['StringLike']['token.actions.githubusercontent.com:sub'])" "True" "${CI_TRUST}"
 # The SSO suffix must be hash-bounded, not a trailing wildcard that also matches a future
 # permission set named github_<owner>_<anything>.
 trust_assert "SSO trust is hash-bounded, not wildcard" \

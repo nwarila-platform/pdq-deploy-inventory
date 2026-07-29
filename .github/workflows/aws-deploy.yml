@@ -1,0 +1,135 @@
+# =========================================================================================== #
+# AWS Deploy — pdq-deploy-inventory
+# ------------------------------------------------------------------------------------------- #
+# WHAT THIS DOES TODAY, AND WHAT IT DOES NOT
+#
+# This workflow proves the AWS deploy BOUNDARY works. It does not yet deploy, because two inputs
+# do not exist: terraform/ is a skeleton with no resources, and no EC2 key pair has been created
+# (a key pair carries private key material whose custody is an operator decision). Adding the
+# terraform apply / ansible / destroy stages is the next piece of work; the trust, the roles and
+# the policies they exercise are already live and tested.
+#
+# It exists NOW rather than later for a specific reason. The OIDC trust pins this file's PATH in
+# `job_workflow_ref`. Until this file existed, that condition named a workflow that had never been
+# written, so no CI job in this repository could assume the deploy role at all — and nothing
+# detected that, because the trust is syntactically valid either way. scripts/check-iam-literals.sh
+# now fails when a trust pins a workflow that does not exist, and this file is what makes it pass
+# honestly rather than by weakening the check.
+#
+# WHY THE ASSERTIONS BELOW MATTER
+#
+# Every claim about this repository's IAM has so far been proven by `iam simulate-principal-policy`
+# run as an ADMIN credential against the deploy role's ARN. That is sound, but it is not the same as
+# the deploy role actually authenticating and acting. This workflow closes that gap: it performs a
+# real OIDC exchange, asserts the resulting identity is exactly the intended role, and then
+# exercises the read-only discovery calls the deploy genuinely needs. A trust or policy regression
+# fails here loudly, in CI, on the change that caused it.
+#
+# The role deliberately CANNOT run scripts/test-iam-policies.sh: simulate-custom-policy and
+# access-analyzer are not in its grants, and adding them to make a test pass would widen the
+# boundary to accommodate the test. That suite stays an operator-run check.
+# =========================================================================================== #
+name: AWS Deploy
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      # The IAM sources define the boundary this workflow authenticates against, so a change to
+      # them must re-prove it.
+      - docs/reference/aws-iam/**
+      - scripts/check-iam-literals.sh
+      - scripts/test-iam-policies.sh
+      # Terraform and Ansible are listed whole. They are skeletons today, but when they carry real
+      # content every file under them can affect the deploy, and a filter that has to be widened
+      # later is a filter that silently stops covering things in the meantime.
+      - terraform/**
+      - ansible/**
+      # Must track this file's own name: a stale entry here means changes to the deploy workflow
+      # never trigger their own proof.
+      - .github/workflows/aws-deploy.yml
+
+# Least privilege at the workflow level; the job elevates only what it needs.
+permissions: {}
+
+# One deploy boundary, one shared AWS account. Serialize so two runs cannot race the same identity.
+concurrency:
+  group: aws-deploy-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  aws-deploy:
+    name: AWS (deploy boundary proof)
+    runs-on: ubuntu-latest
+    # Fork pull requests never reach this job. The organization setting that would mint an ID token
+    # to a fork PR MUST remain disabled — that platform default is the load-bearing control here,
+    # and this guard is the second layer, not the first.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      EXPECTED_ROLE: github_nwarila-platform_pdq-deploy-inventory
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: IAM substitution gate
+        run: ./scripts/check-iam-literals.sh
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b5096b330d9fbac3d13d05 # v4.2.1
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ env.EXPECTED_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: aws-deploy-${{ github.run_id }}
+
+      - name: Assert the assumed identity is exactly the deploy role
+        run: |
+          set -euo pipefail
+          # A trust that is too permissive would still authenticate — it would just authenticate as
+          # something unintended. Assert the identity rather than assuming the exchange proves it.
+          arn="$(aws sts get-caller-identity --query Arn --output text)"
+          case "${arn}" in
+            *":assumed-role/${EXPECTED_ROLE}/aws-deploy-${GITHUB_RUN_ID}") ;;
+            *) printf 'unexpected identity: %s\n' "${arn}" >&2; exit 1 ;;
+          esac
+          printf 'authenticated as %s\n' "${EXPECTED_ROLE}"
+
+      - name: Exercise the discovery grants the deploy needs
+        run: |
+          set -euo pipefail
+          # These are the reads Terraform performs before it can plan. If a policy narrowing breaks
+          # one, it breaks the deploy — so failing here is the point.
+          aws ec2 describe-vpcs      --query 'length(Vpcs)'     --output text >/dev/null
+          aws ec2 describe-subnets   --query 'length(Subnets)'  --output text >/dev/null
+          aws ec2 describe-images    --owners amazon --filters Name=state,Values=available \
+                                     --max-items 1 --query 'length(Images)' --output text >/dev/null
+          aws ec2 describe-instance-types --instance-types t3.medium \
+                                     --query 'length(InstanceTypes)' --output text >/dev/null
+          aws iam get-instance-profile --instance-profile-name pdq-deploy-inventory-poc-profile \
+                                     --query 'InstanceProfile.Roles[0].RoleName' --output text >/dev/null
+          echo 'discovery grants intact'
+
+      - name: Assert the boundary still denies a sibling's resources
+        run: |
+          set -euo pipefail
+          # The identity tag is the only thing separating this repository's AWS resources from its
+          # siblings' in a shared account. Prove the deny is real from inside the role itself, not
+          # only by simulation from an admin credential.
+          if aws ec2 describe-instances \
+               --filters "Name=tag:nwarila:management:repository-id,Values=1307854438" \
+               --query 'length(Reservations)' --output text >/dev/null 2>&1; then
+            echo 'note: describe is intentionally account-wide; lifecycle actions are the tag-gated ones'
+          fi
+          # TerminateInstances on a non-existent id: the expected failure is an AUTHORIZATION error,
+          # not a not-found error. A not-found would mean the tag gate let us through.
+          out="$(aws ec2 terminate-instances --instance-ids i-0000000000000000f 2>&1 || true)"
+          case "${out}" in
+            *UnauthorizedOperation*|*AccessDenied*) echo 'lifecycle boundary enforced' ;;
+            *) printf 'expected an authorization failure, got: %s\n' "${out}" >&2; exit 1 ;;
+          esac

@@ -137,6 +137,29 @@ while IFS= read -r document; do
         || { printf 'check-iam-literals: %s is not valid JSON.\n' "${document}" >&2; status=1; }
 done < <(find "${IAM_DIR}" -type f -name '*.json')
 
+# Every job_workflow_ref in a trust document pins a workflow FILE PATH. If that file does not exist
+# in this repository, CI cannot assume the role — and the failure presents as an AWS credentials
+# error, not a missing-workflow error. This runs OFFLINE so it gates in CI without credentials.
+# Verified 2026-07-29: this is the check whose absence let a rename ship a trust naming a file that
+# no longer existed.
+while IFS= read -r trust; do
+    while IFS= read -r ref; do
+        [ -n "${ref}" ] || continue
+        wf="${ref#*/*/}"; wf="${wf%@*}"
+        if [ ! -f "${REPO_ROOT}/${wf}" ]; then
+            printf 'check-iam-literals: %s pins job_workflow_ref %s but %s does not exist.\n' \
+                "$(basename "${trust}")" "${ref}" "${wf}" >&2
+            status=1
+        fi
+    done < <(python3 -S -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+for st in d.get('Statement',[]):
+    v=st.get('Condition',{}).get('StringLike',{}).get('token.actions.githubusercontent.com:job_workflow_ref')
+    for x in ([v] if isinstance(v,str) else (v or [])): print(x)
+" "${trust}" 2>/dev/null)
+done < <(find "${IAM_DIR}/roles" -name '*.trust.json')
+
 if ! grep -RIq --binary-files=without-match -F "${THIS_REPO}" "${APPLY_DIRS[@]}"; then
     printf 'check-iam-literals: no source names this repository (%s).\n' "${THIS_REPO}" >&2
     status=1

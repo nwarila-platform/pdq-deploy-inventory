@@ -1,0 +1,45 @@
+# =========================================================================================== #
+# AWS IAM source gate
+# ------------------------------------------------------------------------------------------- #
+# The substitution gate is the control that stops a partial clone from silently granting this
+# repository authority over a sibling's live AWS resources. It is only a control if it runs, so
+# it runs here on every change to the IAM sources or to the scripts themselves.
+#
+# This job is offline by design: no AWS credentials, no network. It checks that the committed
+# sources still carry their placeholders and carry no sibling identity. The live-account
+# property tests (scripts/test-iam-policies.sh) need credentials and are run deliberately by an
+# operator, not on every push.
+# =========================================================================================== #
+name: 'AWS IAM sources'
+
+on:
+  pull_request:
+    paths:
+      - 'docs/reference/aws-iam/**'
+      - 'scripts/check-iam-literals.sh'
+      - 'scripts/test-iam-policies.sh'
+      - '.github/workflows/iam.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/reference/aws-iam/**'
+      - 'scripts/check-iam-literals.sh'
+      - 'scripts/test-iam-policies.sh'
+
+permissions: {}
+
+jobs:
+  literals:
+    name: 'Substitution gate'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Checkout'
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8  # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: 'Shell syntax'
+        run: bash -n scripts/check-iam-literals.sh scripts/test-iam-policies.sh
+
+      - name: 'IAM substitution gate'
+        run: ./scripts/check-iam-literals.sh

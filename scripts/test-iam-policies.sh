@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# =========================================================================================== #
+# test-iam-policies.sh — falsifiable tests for this repository's AWS IAM documents
+# ------------------------------------------------------------------------------------------- #
+# Materializes the IAM sources into a scratch directory using the LIVE account and this
+# repository's real GitHub id, then exercises them two ways:
+#
+#   1. aws accessanalyzer validate-policy   — grammar, condition-key/action validity, findings
+#   2. aws iam simulate-custom-policy       — the security PROPERTIES, as pass/fail assertions
+#
+# Both are READ-ONLY: nothing is created, modified or deleted in AWS. The scratch tree is
+# destroyed on exit. Requires an AWS profile with iam:SimulateCustomPolicy and
+# access-analyzer:ValidatePolicy.
+#
+#   ./scripts/test-iam-policies.sh [aws-profile]     (default: admin)
+#
+# Exit 0 = every assertion held.
+# =========================================================================================== #
+set -uo pipefail
+
+PROFILE="${1:-admin}"
+REGION="${AWS_REGION:-us-east-1}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IAM_DIR="${REPO_ROOT}/docs/reference/aws-iam"
+OWNER='nwarila-platform'
+THIS_REPO='pdq-deploy-inventory'
+SIBLINGS=('windows-wsus' 'secure-wazuh')
+
+WORK="$(mktemp -d)"; trap 'rm -rf "${WORK}"' EXIT
+pass=0; fail=0
+ok()   { printf '  \033[32m✓\033[0m %-56s %s\n' "$1" "$2"; pass=$((pass+1)); }
+bad()  { printf '  \033[31m✗\033[0m %-56s got=%s want=%s\n' "$1" "$2" "$3"; fail=$((fail+1)); }
+
+echo "== resolving live values =="
+ACCOUNT="$(aws sts get-caller-identity --profile "${PROFILE}" --query Account --output text)" || exit 1
+REPO_ID="$(gh api "repos/${OWNER}/${THIS_REPO}" --jq .id)" || exit 1
+KMS_KEY="$(aws kms describe-key --key-id alias/aws/ebs --profile "${PROFILE}" --region "${REGION}" \
+           --query 'KeyMetadata.KeyId' --output text 2>/dev/null || echo '00000000-0000-0000-0000-000000000000')"
+declare -A SIB_ID
+for s in "${SIBLINGS[@]}"; do SIB_ID["$s"]="$(gh api "repos/${OWNER}/${s}" --jq .id 2>/dev/null || echo 0)"; done
+echo "  repository id ${REPO_ID}; siblings $(for s in "${SIBLINGS[@]}"; do printf '%s=%s ' "$s" "${SIB_ID[$s]}"; done)"
+
+# ---- materialize -------------------------------------------------------------------------
+mkdir -p "${WORK}/policies" "${WORK}/roles"
+cp "${IAM_DIR}/policies/"*.json "${WORK}/policies/"
+cp "${IAM_DIR}/roles/"*.json    "${WORK}/roles/"
+sed -i "s|<account-id>|${ACCOUNT}|g; s|<repository-id>|${REPO_ID}|g; s|<region>|${REGION}|g;
+        s|<vpc-id>|vpc-00000000000000000|g; s|<subnet-id>|subnet-00000000000000000|g;
+        s|<ebs-kms-key-id>|${KMS_KEY}|g; s|<key-pair-name>|${THIS_REPO}-poc-key|g" \
+    "${WORK}"/policies/*.json "${WORK}"/roles/*.json
+
+"${REPO_ROOT}/scripts/check-iam-literals.sh" --materialized "${WORK}" >/dev/null \
+  && ok "substitution gate (--materialized)" "clean" \
+  || bad "substitution gate (--materialized)" "FAIL" "clean"
+
+# ---- 1. grammar + semantics ----------------------------------------------------------------
+echo "== validate-policy =="
+for f in "${WORK}"/policies/*.json; do
+    n="$(aws accessanalyzer validate-policy --policy-type IDENTITY_POLICY \
+         --policy-document "file://${f}" --profile "${PROFILE}" --region "${REGION}" \
+         --query 'length(findings[?findingType==`ERROR` || findingType==`SECURITY_WARNING`])' --output text 2>&1)"
+    [ "${n}" = "0" ] && ok "$(basename "${f}")" "0 error/security findings" \
+                     || bad "$(basename "${f}")" "${n}" "0"
+done
+
+# ---- 2. security properties ----------------------------------------------------------------
+simulate() { # action resource context...
+    local action="$1" resource="$2"; shift 2
+    python3 -S -c '
+import json, sys, glob, os
+work, action, resource = sys.argv[1], sys.argv[2], sys.argv[3]
+ctx = []
+for kv in sys.argv[4:]:
+    k, t, v = kv.split("=", 2)
+    ctx.append({"ContextKeyName": k, "ContextKeyType": t, "ContextKeyValues": [v]})
+json.dump({"PolicyInputList": [open(f).read() for f in sorted(glob.glob(work + "/policies/*.json"))],
+           "ActionNames": [action], "ResourceArns": [resource], "ContextEntries": ctx},
+          open(work + "/req.json", "w"))
+' "${WORK}" "${action}" "${resource}" "$@"
+    aws iam simulate-custom-policy --profile "${PROFILE}" --region "${REGION}" \
+        --cli-input-json "file://${WORK}/req.json" \
+        --query 'EvaluationResults[0].EvalDecision' --output text 2>&1
+}
+assert() { # name expected action resource context...
+    local name="$1" want="$2"; shift 2
+    local got; got="$(simulate "$@" | tail -1)"
+    [ "${got}" = "${want}" ] && ok "${name}" "${got}" || bad "${name}" "${got}" "${want}"
+}
+
+TAG='ec2:ResourceTag/nwarila:management:repository-id'
+RTAG='aws:RequestTag/nwarila:management:repository-id'
+REG="aws:RequestedRegion=string=${REGION}"
+INST="arn:aws:ec2:${REGION}:${ACCOUNT}:instance/i-0test"
+VOL="arn:aws:ec2:${REGION}:${ACCOUNT}:volume/vol-0test"
+STATE="arn:aws:s3:::${ACCOUNT}-terraform/${OWNER}/${THIS_REPO}"
+
+echo "== cross-repository isolation (the identity tag is the only separator) =="
+assert "terminate own instance"        allowed      ec2:TerminateInstances "${INST}" "${REG}" "${TAG}=string=${REPO_ID}"
+for s in "${SIBLINGS[@]}"; do
+  assert "terminate ${s} instance"     implicitDeny ec2:TerminateInstances "${INST}" "${REG}" "${TAG}=string=${SIB_ID[$s]}"
+  assert "SSM shell into ${s}"         implicitDeny ssm:StartSession       "${INST}" "ssm:resourceTag/nwarila:management:repository-id=string=${SIB_ID[$s]}"
+  assert "write ${s} tfstate"          implicitDeny s3:PutObject "arn:aws:s3:::${ACCOUNT}-terraform/${OWNER}/${s}/aws.tfstate" \
+                                                    "aws:ResourceAccount=string=${ACCOUNT}" "s3:x-amz-server-side-encryption=string=AES256"
+done
+assert "delete own volume"             allowed      ec2:DeleteVolume "${VOL}" "${REG}" "${TAG}=string=${REPO_ID}"
+assert "detach a sibling's volume"     implicitDeny ec2:DetachVolume "${VOL}" "${REG}" "${TAG}=string=${SIB_ID[${SIBLINGS[0]}]}"
+
+echo "== launch controls =="
+assert "t3.medium, IMDSv2, tagged"     allowed      ec2:RunInstances "${INST}" "ec2:InstanceType=string=t3.medium" \
+       "ec2:Tenancy=string=default" "ec2:MetadataHttpTokens=string=required" "${RTAG}=string=${REPO_ID}"
+assert "disallowed instance type"      implicitDeny ec2:RunInstances "${INST}" "ec2:InstanceType=string=m6i.xlarge" \
+       "ec2:Tenancy=string=default" "ec2:MetadataHttpTokens=string=required" "${RTAG}=string=${REPO_ID}"
+assert "IMDSv1 at launch"              implicitDeny ec2:RunInstances "${INST}" "ec2:InstanceType=string=t3.medium" \
+       "ec2:Tenancy=string=default" "ec2:MetadataHttpTokens=string=optional" "${RTAG}=string=${REPO_ID}"
+assert "dedicated tenancy"             implicitDeny ec2:RunInstances "${INST}" "ec2:InstanceType=string=t3.medium" \
+       "ec2:Tenancy=string=dedicated" "ec2:MetadataHttpTokens=string=required" "${RTAG}=string=${REPO_ID}"
+assert "untagged launch"               implicitDeny ec2:RunInstances "${INST}" "ec2:InstanceType=string=t3.medium" \
+       "ec2:Tenancy=string=default" "ec2:MetadataHttpTokens=string=required"
+
+echo "== volume controls =="
+assert "encrypted gp3 within cap"      allowed      ec2:CreateVolume "${VOL}" "${REG}" "ec2:VolumeType=string=gp3" \
+       "ec2:VolumeSize=numeric=30" "ec2:Encrypted=boolean=true" "${RTAG}=string=${REPO_ID}"
+assert "UNENCRYPTED volume"            implicitDeny ec2:CreateVolume "${VOL}" "${REG}" "ec2:VolumeType=string=gp3" \
+       "ec2:VolumeSize=numeric=30" "ec2:Encrypted=boolean=false" "${RTAG}=string=${REPO_ID}"
+assert "oversized volume"              implicitDeny ec2:CreateVolume "${VOL}" "${REG}" "ec2:VolumeType=string=gp3" \
+       "ec2:VolumeSize=numeric=500" "ec2:Encrypted=boolean=true" "${RTAG}=string=${REPO_ID}"
+assert "non-gp3 volume type"           implicitDeny ec2:CreateVolume "${VOL}" "${REG}" "ec2:VolumeType=string=io2" \
+       "ec2:VolumeSize=numeric=30" "ec2:Encrypted=boolean=true" "${RTAG}=string=${REPO_ID}"
+
+echo "== identity-tag tamper Denies (explicit) =="
+assert "retag a foreign-owned resource" explicitDeny ec2:CreateTags "${VOL}" "${REG}" \
+       "${TAG}=string=${SIB_ID[${SIBLINGS[0]}]}" "${RTAG}=string=${REPO_ID}"
+assert "stamp a foreign identity"       explicitDeny ec2:CreateTags "${INST}" "${REG}" \
+       "ec2:CreateAction=string=RunInstances" "${RTAG}=string=${SIB_ID[${SIBLINGS[0]}]}"
+assert "delete the identity tag"        explicitDeny ec2:DeleteTags "${INST}" "${REG}" \
+       "${TAG}=string=${REPO_ID}" "aws:TagKeys=string=nwarila:management:repository-id"
+
+echo "== PassRole =="
+assert "pass own instance role"         allowed      iam:PassRole "arn:aws:iam::${ACCOUNT}:role/${THIS_REPO}-poc-role" \
+       "iam:PassedToService=string=ec2.amazonaws.com"
+assert "pass a sibling's instance role" implicitDeny iam:PassRole "arn:aws:iam::${ACCOUNT}:role/${SIBLINGS[1]}-poc-role" \
+       "iam:PassedToService=string=ec2.amazonaws.com"
+assert "pass own role to a non-EC2"     implicitDeny iam:PassRole "arn:aws:iam::${ACCOUNT}:role/${THIS_REPO}-poc-role" \
+       "iam:PassedToService=string=lambda.amazonaws.com"
+
+echo "== state protection =="
+assert "write own state, encrypted"     allowed      s3:PutObject "${STATE}/aws.tfstate" \
+       "aws:ResourceAccount=string=${ACCOUNT}" "s3:x-amz-server-side-encryption=string=AES256"
+assert "write own state UNENCRYPTED"    explicitDeny s3:PutObject "${STATE}/aws.tfstate" \
+       "aws:ResourceAccount=string=${ACCOUNT}" "s3:x-amz-server-side-encryption=string=AES128"
+assert "write own state, no header"     explicitDeny s3:PutObject "${STATE}/aws.tfstate" \
+       "aws:ResourceAccount=string=${ACCOUNT}"
+assert "delete own state"               explicitDeny s3:DeleteObject "${STATE}/aws.tfstate" \
+       "aws:ResourceAccount=string=${ACCOUNT}"
+
+echo "== region lock =="
+assert "terminate out of region"        implicitDeny ec2:TerminateInstances \
+       "arn:aws:ec2:us-west-2:${ACCOUNT}:instance/i-0test" "aws:RequestedRegion=string=us-west-2" "${TAG}=string=${REPO_ID}"
+
+echo
+printf 'test-iam-policies: %d passed, %d failed\n' "${pass}" "${fail}"
+[ "${fail}" -eq 0 ]

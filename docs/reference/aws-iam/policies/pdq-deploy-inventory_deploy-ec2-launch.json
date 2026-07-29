@@ -1,0 +1,134 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RunInstancesTypeLocked",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:<region>:*:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:InstanceType": [
+            "t3.medium",
+            "t3.large"
+          ],
+          "ec2:Tenancy": "default",
+          "ec2:MetadataHttpTokens": "required",
+          "aws:RequestTag/nwarila:management:repository-id": "<repository-id>"
+        },
+        "NumericLessThanEqualsIfExists": {
+          "ec2:MetadataHttpPutResponseHopLimit": "1"
+        }
+      }
+    },
+    {
+      "Sid": "RunInstancesVolumeCapped",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:<region>:*:volume/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:VolumeType": "gp3",
+          "aws:RequestTag/nwarila:management:repository-id": "<repository-id>"
+        },
+        "Bool": {
+          "ec2:Encrypted": "true"
+        },
+        "NumericLessThanEquals": {
+          "ec2:VolumeSize": "64"
+        },
+        "NumericLessThanEqualsIfExists": {
+          "ec2:VolumeIops": "3000",
+          "ec2:VolumeThroughput": "125"
+        }
+      }
+    },
+    {
+      "Sid": "RunInstancesNetworkResourcesInDeployVpc",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:<region>:*:network-interface/*",
+        "arn:aws:ec2:<region>:*:subnet/<subnet-id>",
+        "arn:aws:ec2:<region>:*:security-group/*"
+      ],
+      "Condition": {
+        "ArnLike": {
+          "ec2:Vpc": "arn:aws:ec2:<region>:*:vpc/<vpc-id>",
+          "ec2:Subnet": "arn:aws:ec2:<region>:*:subnet/<subnet-id>"
+        }
+      }
+    },
+    {
+      "Sid": "RunInstancesImagesFromTrustedOwners",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:<region>::image/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:Owner": [
+            "amazon",
+            "<account-id>"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "RunInstancesWithPinnedKeyPair",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:<region>:*:key-pair/<key-pair-name>"
+    },
+    {
+      "Sid": "CreateDataVolumeCapped",
+      "Effect": "Allow",
+      "Action": "ec2:CreateVolume",
+      "Resource": "arn:aws:ec2:<region>:*:volume/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:VolumeType": "gp3",
+          "aws:RequestTag/nwarila:management:repository-id": "<repository-id>"
+        },
+        "Bool": {
+          "ec2:Encrypted": "true"
+        },
+        "NumericLessThanEquals": {
+          "ec2:VolumeSize": "64"
+        },
+        "NumericLessThanEqualsIfExists": {
+          "ec2:VolumeIops": "3000",
+          "ec2:VolumeThroughput": "125"
+        }
+      }
+    },
+    {
+      "Sid": "CreateEniWithRepoIdentity",
+      "Effect": "Allow",
+      "Action": "ec2:CreateNetworkInterface",
+      "Resource": "arn:aws:ec2:<region>:*:network-interface/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<region>",
+          "aws:RequestTag/nwarila:management:repository-id": "<repository-id>"
+        }
+      }
+    },
+    {
+      "Sid": "UseEniSupportingLegs",
+      "Effect": "Allow",
+      "Action": "ec2:CreateNetworkInterface",
+      "Resource": [
+        "arn:aws:ec2:<region>:*:subnet/<subnet-id>",
+        "arn:aws:ec2:<region>:*:security-group/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "<region>"
+        },
+        "ArnLike": {
+          "ec2:Vpc": "arn:aws:ec2:<region>:*:vpc/<vpc-id>"
+        }
+      }
+    }
+  ]
+}

@@ -6,7 +6,11 @@
 # roles, and the EC2 instance profile. Idempotent — re-running reconciles rather than duplicates,
 # so it is safe to run after editing a source document.
 #
-#   ./scripts/bootstrap-iam.sh [--apply] [aws-profile]
+#   ./scripts/bootstrap-iam.sh [--apply|--check-drift] [aws-profile]
+#
+# --check-drift compares LIVE IAM against the tracked source and fails on any difference. That is
+# the one comparison neither other gate makes: check-iam-literals.sh reads source vs filesystem,
+# and test-iam-policies.sh materializes FROM source, so both pass while live holds an older version.
 #
 # Without --apply it PLANS: materializes, gates, validates every document through Access
 # Analyzer, and prints what would be created or updated. Nothing is written to AWS.
@@ -19,7 +23,11 @@
 # =========================================================================================== #
 set -uo pipefail
 
-APPLY=false; [ "${1:-}" = '--apply' ] && { APPLY=true; shift; }
+APPLY=false; DRIFT=false
+case "${1:-}" in
+    --apply) APPLY=true; shift ;;
+    --check-drift) DRIFT=true; shift ;;
+esac
 PROFILE="${1:-admin}"
 REGION="${AWS_REGION:-us-east-1}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,6 +47,9 @@ KMS_KEY="$(aws kms describe-key --key-id alias/aws/ebs --profile "${PROFILE}" --
 VPC_ID="$(aws ec2 describe-vpcs --profile "${PROFILE}" --region "${REGION}" --query 'Vpcs[0].VpcId' --output text)"
 SUBNET_ID="$(aws ec2 describe-subnets --profile "${PROFILE}" --region "${REGION}" --query 'Subnets[0].SubnetId' --output text)"
 KEY_PAIR="${REPO}-poc-key"
+# The OIDC subject GitHub actually emits embeds the OWNER id as well as the repository id
+# (proven by CloudTrail). Resolve it rather than hard-coding it.
+OWNER_ID="$(gh api "orgs/${OWNER}" --jq .id)" || die "cannot resolve owner id for ${OWNER}"
 say 'repository id' "${REPO_ID}"
 say 'vpc / subnet' "${VPC_ID} / ${SUBNET_ID}"
 say 'ebs key' "${KMS_KEY}"
@@ -49,7 +60,7 @@ cp "${IAM_DIR}/policies/"*.json "${WORK}/policies/"
 cp "${IAM_DIR}/roles/"*.json    "${WORK}/roles/"
 sed -i "s|<account-id>|${ACCOUNT}|g; s|<repository-id>|${REPO_ID}|g; s|<region>|${REGION}|g;
         s|<vpc-id>|${VPC_ID}|g; s|<subnet-id>|${SUBNET_ID}|g; s|<ebs-kms-key-id>|${KMS_KEY}|g;
-        s|<key-pair-name>|${KEY_PAIR}|g" "${WORK}"/policies/*.json "${WORK}"/roles/*.json
+        s|<key-pair-name>|${KEY_PAIR}|g; s|<owner-id>|${OWNER_ID}|g" "${WORK}"/policies/*.json "${WORK}"/roles/*.json
 
 "${ROOT}/scripts/check-iam-literals.sh" --materialized "${WORK}" >/dev/null \
   || die 'the materialized tree failed the substitution gate — do not apply'
@@ -92,6 +103,51 @@ exists_role()   { aws iam get-role --role-name "$1" --profile "${PROFILE}" >/dev
 for p in "${POLICIES[@]}"; do say "policy ${p}" "$(exists_policy "${p}" && echo 'exists → new version' || echo 'CREATE')"; done
 for r in "${CI_ROLE}" "${ADMIN_ROLE}" "${POC_ROLE}"; do say "role ${r}" "$(exists_role "${r}" && echo 'exists → update trust' || echo 'CREATE')"; done
 say "instance profile ${POC_PROFILE}" "$(aws iam get-instance-profile --instance-profile-name "${POC_PROFILE}" --profile "${PROFILE}" >/dev/null 2>&1 && echo exists || echo CREATE)"
+
+# ---- drift mode ------------------------------------------------------------------------------
+# The gap this closes, learned the hard way 2026-07-29: check-iam-literals.sh compares the SOURCE
+# documents to the filesystem, and test-iam-policies.sh MATERIALIZES from source — so both pass
+# happily while LIVE IAM still holds an older version. Editing a trust and forgetting to re-apply
+# left two repositories whose live trust named a workflow that no longer existed, meaning no CI job
+# could assume the deploy role at all. Nothing detected it because nothing compared source to live.
+if [ "${DRIFT:-false}" = 'true' ]; then
+    drift=0
+    for p in "${POLICIES[@]}"; do
+        arn="arn:aws:iam::${ACCOUNT}:policy/${p}"
+        if ! exists_policy "${p}"; then say "policy ${p}" 'ABSENT LIVE'; drift=1; continue; fi
+        v="$(aws iam get-policy --policy-arn "${arn}" --profile "${PROFILE}" --query Policy.DefaultVersionId --output text)"
+        aws iam get-policy-version --policy-arn "${arn}" --version-id "${v}" --profile "${PROFILE}" \
+            --query PolicyVersion.Document --output json > "${WORK}/live.json"
+        if python3 -S -c "
+import json,sys,urllib.parse
+l=json.load(open(sys.argv[1]))
+if isinstance(l,str): l=json.loads(urllib.parse.unquote(l))
+s=json.load(open(sys.argv[2]))
+sys.exit(0 if l['Statement']==s['Statement'] else 1)" "${WORK}/live.json" "${WORK}/policies/${p}.json"; then
+            say "policy ${p}" "in sync (${v})"
+        else
+            say "policy ${p}" "DRIFT — live ${v} differs from source"; drift=1
+        fi
+    done
+    for pair in "${CI_ROLE}:github_${OWNER}_${REPO}.trust.json" \
+                "${ADMIN_ROLE}:github_${OWNER}_${REPO}-admin.trust.json" \
+                "${POC_ROLE}:${REPO}-poc-role.trust.json"; do
+        role="${pair%%:*}"; tf="${pair#*:}"
+        if ! exists_role "${role}"; then say "role ${role}" 'ABSENT LIVE'; drift=1; continue; fi
+        aws iam get-role --role-name "${role}" --profile "${PROFILE}" --query Role.AssumeRolePolicyDocument --output json > "${WORK}/live.json"
+        if python3 -S -c "
+import json,sys
+sys.exit(0 if json.load(open(sys.argv[1]))['Statement']==json.load(open(sys.argv[2]))['Statement'] else 1)" \
+            "${WORK}/live.json" "${WORK}/roles/${tf}"; then
+            say "trust ${role}" 'in sync'
+        else
+            say "trust ${role}" 'DRIFT — live differs from source'; drift=1
+        fi
+    done
+    [ "${drift}" -eq 0 ] || die 'live IAM has drifted from the tracked source. Re-run with --apply.'
+    printf '\nbootstrap-iam: NO DRIFT — live IAM matches the tracked source.\n'
+    exit 0
+fi
 
 if ! ${APPLY}; then
     printf '\nbootstrap-iam: PLAN ONLY — nothing was written. Re-run with --apply.\n'

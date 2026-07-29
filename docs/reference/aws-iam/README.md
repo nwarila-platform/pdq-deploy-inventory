@@ -87,9 +87,15 @@ polish; each one is a finding both auditors raised.
 - **The SSO trust is bounded to the permission-set hash**, `AWSReservedSSO_github_nwarila-platform_`
   + sixteen `?` (R3-8). The source uses a trailing `*`, which also matches any future permission set
   named `github_nwarila-platform_<something>` — including a low-privilege one.
-- **OIDC trust conditions are single-valued** (R3-2). The source ships two-element `sub` and
-  `job_workflow_ref` arrays, which teaches a cloner to *append* — and an appended trust leaves the
-  sibling repository trusted. Replace these values wholesale; never add to them.
+- **`job_workflow_ref` is single-valued** (R3-2), so there is no array shape teaching a cloner to
+  *append* — an appended trust leaves the sibling repository trusted. Replace it wholesale.
+  **`sub` deliberately lists BOTH subject forms.** GitHub emits the ID-embedded subject
+  `repo:<owner>@<owner-id>/<repo>@<repository-id>:<context>` for repositories created after roughly
+  2026-07-15 — proven from the CloudTrail `userName` on a real denied `AssumeRoleWithWebIdentity`,
+  not inferred. An earlier audit finding called that subject dead and a single-valued `sub`
+  de-credentialed CI in all three repositories until it was corrected. `repository_id` with
+  `StringEquals` is the actual identity boundary, so carrying both forms costs nothing and survives
+  a repository transfer.
 - **IMDS hop limit pinned to 1** at launch and on modify (R3-14), so IMDS cannot be extended past
   the host network stack.
 - **Denies carry no substitutable narrowing** (R3 F11). The state Denies dropped

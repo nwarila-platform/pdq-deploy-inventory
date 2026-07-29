@@ -42,7 +42,10 @@ readonly -a FOREIGN_IDENTITY_PATTERNS=(
                               # id is the fail-open case this gate exists for, and the
                               # twelve-digit account rule does not catch a 10-digit id
     '1307854438'              # secure-wazuh repository id — the sharpest fail-open of the audit
-    '230745524'               # nwarila-platform owner id (only ever appeared in a dead subject)
+    # NOT listed: '230745524' is this ORGANISATION's own owner id, as public and as constant as
+    # the owner NAME already carried concretely in every trust. It was listed here on an audit
+    # finding that called the ID-embedded OIDC subject dead; CloudTrail proves that subject is
+    # the ONLY form GitHub emits for these repos, so banning the id banned the fix.
     'sg-06a3a06bcc4413c10'    # secure-wazuh's retired standing security group
     'sgr-08833db7ea5d82c23'
     'aws-marketplace'         # open publisher namespace; this repo launches amazon-alias images
@@ -69,6 +72,7 @@ readonly -a REQUIRED_PLACEHOLDERS=(
     '<subnet-id>'
     '<ebs-kms-key-id>'
     '<key-pair-name>'
+    '<owner-id>'
 )
 
 fail() { printf 'check-iam-literals: FAIL — %s\n' "$1" >&2; exit 1; }

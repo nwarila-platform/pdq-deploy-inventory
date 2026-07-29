@@ -145,6 +145,18 @@ REG="aws:RequestedRegion=string=${REGION}"
 INST="arn:aws:ec2:${REGION}:${ACCOUNT}:instance/i-0test"
 VOL="arn:aws:ec2:${REGION}:${ACCOUNT}:volume/vol-0test"
 STATE="arn:aws:s3:::${ACCOUNT}-terraform/${OWNER}/${THIS_REPO}"
+# The suite materializes DUMMY network ids (see the sed above), so every network-leg assertion
+# must use these, not the live vpc/subnet — a leg pinned by ArnLike to the materialized value
+# returns implicitDeny for any other ARN, which would make these assertions lie.
+VPC_ID='vpc-00000000000000000'
+SUBNET_ID='subnet-00000000000000000'
+KEY_PAIR="${THIS_REPO}-poc-key"
+ENI="arn:aws:ec2:${REGION}:${ACCOUNT}:network-interface/eni-0test"
+SUBNET="arn:aws:ec2:${REGION}:${ACCOUNT}:subnet/${SUBNET_ID}"
+SG="arn:aws:ec2:${REGION}:${ACCOUNT}:security-group/sg-0test"
+VPCC="ec2:Vpc=string=arn:aws:ec2:${REGION}:${ACCOUNT}:vpc/${VPC_ID}"
+SUBC="ec2:Subnet=string=arn:aws:ec2:${REGION}:${ACCOUNT}:subnet/${SUBNET_ID}"
+SIB_ID="${SIB_ID_0:-}"
 
 echo "== cross-repository isolation (the identity tag is the only separator) =="
 assert "terminate own instance"        allowed      ec2:TerminateInstances "${INST}" "${REG}" "${TAG}=string=${REPO_ID}"
@@ -158,8 +170,9 @@ assert "delete own volume"             allowed      ec2:DeleteVolume "${VOL}" "$
 assert "detach a sibling's volume"     implicitDeny ec2:DetachVolume "${VOL}" "${REG}" "${TAG}=string=${SIB_ID[${SIBLINGS[0]}]}"
 
 echo "== launch controls =="
-assert "t3.medium, IMDSv2, tagged"     allowed      ec2:RunInstances "${INST}" "ec2:InstanceType=string=t3.medium" \
-       "ec2:Tenancy=string=default" "ec2:MetadataHttpTokens=string=required" "${RTAG}=string=${REPO_ID}"
+assert "t3.medium, IMDSv2, hop 1, tagged" allowed   ec2:RunInstances "${INST}" "ec2:InstanceType=string=t3.medium" \
+       "ec2:Tenancy=string=default" "ec2:MetadataHttpTokens=string=required" \
+       "ec2:MetadataHttpPutResponseHopLimit=numeric=1" "${RTAG}=string=${REPO_ID}"
 assert "disallowed instance type"      implicitDeny ec2:RunInstances "${INST}" "ec2:InstanceType=string=m6i.xlarge" \
        "ec2:Tenancy=string=default" "ec2:MetadataHttpTokens=string=required" "${RTAG}=string=${REPO_ID}"
 assert "IMDSv1 at launch"              implicitDeny ec2:RunInstances "${INST}" "ec2:InstanceType=string=t3.medium" \
@@ -168,6 +181,35 @@ assert "dedicated tenancy"             implicitDeny ec2:RunInstances "${INST}" "
        "ec2:Tenancy=string=dedicated" "ec2:MetadataHttpTokens=string=required" "${RTAG}=string=${REPO_ID}"
 assert "untagged launch"               implicitDeny ec2:RunInstances "${INST}" "ec2:InstanceType=string=t3.medium" \
        "ec2:Tenancy=string=default" "ec2:MetadataHttpTokens=string=required"
+
+echo "== RunInstances: EVERY resource leg (a launch needs ALL of them) =="
+# The ec2:Subnet defect denied the subnet and security-group legs while the instance leg — the only
+# leg the suite asserted — stayed green. One assertion per leg is the only shape that catches it.
+assert "leg: instance"          allowed      ec2:RunInstances "${INST}" "ec2:InstanceType=string=t3.medium" \
+       "ec2:Tenancy=string=default" "ec2:MetadataHttpTokens=string=required" \
+       "ec2:MetadataHttpPutResponseHopLimit=numeric=1" "${RTAG}=string=${REPO_ID}"
+assert "leg: volume"            allowed      ec2:RunInstances "${VOL}" "${REG}" "ec2:VolumeType=string=gp3" \
+       "ec2:VolumeSize=numeric=50" "ec2:Encrypted=boolean=true" "${RTAG}=string=${REPO_ID}"
+assert "leg: network-interface" allowed      ec2:RunInstances "${ENI}" "${VPCC}" "${SUBC}"
+assert "leg: subnet"            allowed      ec2:RunInstances "${SUBNET}" "${VPCC}"
+assert "leg: security-group"    allowed      ec2:RunInstances "${SG}" "${VPCC}"
+assert "leg: image (amazon)"    allowed      ec2:RunInstances "arn:aws:ec2:${REGION}::image/ami-0test" "ec2:Owner=string=amazon"
+assert "leg: key-pair (pinned)" allowed      ec2:RunInstances "arn:aws:ec2:${REGION}:${ACCOUNT}:key-pair/${KEY_PAIR}"
+# refuter correction: the positive key-pair assertion cannot fail (no Condition, and both sides are
+# built from the same variable). The negative is the shape that fails if the ARN is widened.
+assert "leg: key-pair OTHER -> deny" implicitDeny ec2:RunInstances "arn:aws:ec2:${REGION}:${ACCOUNT}:key-pair/some-other-key"
+assert "leg: image marketplace -> deny" implicitDeny ec2:RunInstances "arn:aws:ec2:${REGION}::image/ami-0test" "ec2:Owner=string=aws-marketplace"
+assert "ENI in a FOREIGN subnet -> deny" implicitDeny ec2:RunInstances "${ENI}" "${VPCC}" \
+       "ec2:Subnet=string=arn:aws:ec2:${REGION}:${ACCOUNT}:subnet/subnet-0foreign"
+
+echo "== omitted-key bypass (a condition avoided by omission is not a control) =="
+# Every one of these omits the key entirely. If the result is `allowed`, the control is decoration.
+assert "hop limit OMITTED -> deny"  implicitDeny ec2:RunInstances "${INST}" "ec2:InstanceType=string=t3.medium" \
+       "ec2:Tenancy=string=default" "ec2:MetadataHttpTokens=string=required" "${RTAG}=string=${REPO_ID}"
+assert "DeleteTags with TagKeys OMITTED -> deny" explicitDeny ec2:DeleteTags "${INST}" "${REG}" \
+       "${TAG}=string=${REPO_ID}"
+assert "CreateVolume Encrypted OMITTED -> deny" implicitDeny ec2:CreateVolume "${VOL}" "${REG}" \
+       "ec2:VolumeType=string=gp3" "ec2:VolumeSize=numeric=30" "${RTAG}=string=${REPO_ID}"
 
 echo "== volume controls =="
 assert "encrypted gp3 within cap"      allowed      ec2:CreateVolume "${VOL}" "${REG}" "ec2:VolumeType=string=gp3" \

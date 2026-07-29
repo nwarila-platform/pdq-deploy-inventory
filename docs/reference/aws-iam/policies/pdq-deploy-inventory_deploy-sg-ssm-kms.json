@@ -88,7 +88,7 @@
         "ssm:TerminateSession",
         "ssm:ResumeSession"
       ],
-      "Resource": "arn:aws:ssm:<region>:*:session/*"
+      "Resource": "arn:aws:ssm:<region>:*:session/${aws:userid}-*"
     },
     {
       "Sid": "CreateTaggedPocSecurityGroups",
@@ -162,11 +162,7 @@
       "Action": [
         "ec2:AuthorizeSecurityGroupIngress",
         "ec2:AuthorizeSecurityGroupEgress",
-        "ec2:RevokeSecurityGroupIngress",
-        "ec2:RevokeSecurityGroupEgress",
-        "ec2:ModifySecurityGroupRules",
-        "ec2:UpdateSecurityGroupRuleDescriptionsIngress",
-        "ec2:UpdateSecurityGroupRuleDescriptionsEgress"
+        "ec2:ModifySecurityGroupRules"
       ],
       "Resource": "arn:aws:ec2:<region>:*:security-group-rule/*",
       "Condition": {

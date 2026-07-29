@@ -16,7 +16,7 @@
           "ec2:MetadataHttpTokens": "required",
           "aws:RequestTag/nwarila:management:repository-id": "<repository-id>"
         },
-        "NumericLessThanEqualsIfExists": {
+        "NumericLessThanEquals": {
           "ec2:MetadataHttpPutResponseHopLimit": "1"
         }
       }
@@ -52,6 +52,9 @@
         "ArnLike": {
           "ec2:Vpc": "arn:aws:ec2:<region>:*:vpc/<vpc-id>",
           "ec2:Subnet": "arn:aws:ec2:<region>:*:subnet/<subnet-id>"
+        },
+        "StringEqualsIfExists": {
+          "ec2:ResourceTag/nwarila:management:repository-id": "<repository-id>"
         }
       }
     },
@@ -66,6 +69,9 @@
       "Condition": {
         "ArnLike": {
           "ec2:Vpc": "arn:aws:ec2:<region>:*:vpc/<vpc-id>"
+        },
+        "StringEqualsIfExists": {
+          "ec2:ResourceTag/nwarila:management:repository-id": "<repository-id>"
         }
       }
     },
@@ -137,6 +143,9 @@
         },
         "ArnLike": {
           "ec2:Vpc": "arn:aws:ec2:<region>:*:vpc/<vpc-id>"
+        },
+        "StringEqualsIfExists": {
+          "ec2:ResourceTag/nwarila:management:repository-id": "<repository-id>"
         }
       }
     }

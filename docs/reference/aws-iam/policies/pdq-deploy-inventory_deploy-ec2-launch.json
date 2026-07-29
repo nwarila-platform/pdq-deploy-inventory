@@ -44,18 +44,28 @@
       }
     },
     {
-      "Sid": "RunInstancesNetworkResourcesInDeployVpc",
+      "Sid": "RunInstancesEniInDeploySubnet",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:<region>:*:network-interface/*",
+      "Condition": {
+        "ArnLike": {
+          "ec2:Vpc": "arn:aws:ec2:<region>:*:vpc/<vpc-id>",
+          "ec2:Subnet": "arn:aws:ec2:<region>:*:subnet/<subnet-id>"
+        }
+      }
+    },
+    {
+      "Sid": "RunInstancesSubnetAndGroupsInDeployVpc",
       "Effect": "Allow",
       "Action": "ec2:RunInstances",
       "Resource": [
-        "arn:aws:ec2:<region>:*:network-interface/*",
         "arn:aws:ec2:<region>:*:subnet/<subnet-id>",
         "arn:aws:ec2:<region>:*:security-group/*"
       ],
       "Condition": {
         "ArnLike": {
-          "ec2:Vpc": "arn:aws:ec2:<region>:*:vpc/<vpc-id>",
-          "ec2:Subnet": "arn:aws:ec2:<region>:*:subnet/<subnet-id>"
+          "ec2:Vpc": "arn:aws:ec2:<region>:*:vpc/<vpc-id>"
         }
       }
     },

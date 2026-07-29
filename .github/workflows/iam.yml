@@ -41,5 +41,8 @@ jobs:
       - name: 'Shell syntax'
         run: bash -n scripts/check-iam-literals.sh scripts/test-iam-policies.sh
 
+      - name: 'Workflow trigger contract'
+        run: ./scripts/check-workflow-trigger.sh
+
       - name: 'IAM substitution gate'
         run: ./scripts/check-iam-literals.sh

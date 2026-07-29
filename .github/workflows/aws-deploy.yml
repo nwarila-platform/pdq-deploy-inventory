@@ -34,21 +34,27 @@ name: AWS Deploy
 on:
   workflow_dispatch:
   pull_request:
+    # `synchronize` is INCLUDED deliberately: without it only the first push to a PR fires, so
+    # editing a task file or variable in an already-open PR would silently skip the proof.
+    # `labeled` is deliberately ABSENT: manual re-runs go through workflow_dispatch, and the
+    # label path is reachable by a TRIAGE-permission user, who could otherwise spend real money
+    # without holding write access.
+    types: [opened, reopened, ready_for_review, synchronize]
     paths:
-      # The IAM sources define the boundary this workflow authenticates against, so a change to
-      # them must re-prove it.
+      # Role tasks, variables and defaults. Kept WHOLE, not enumerated: the Compose
+      # step rsyncs this directory onto the pinned framework tree where any file can
+      # shadow framework content, so the set that affects a deploy is all of them,
+      # including paths that do not exist yet.
+      - ansible/**
+      # The IAM sources define the boundary this workflow authenticates
+      # against, so a change to them must re-prove it.
       - docs/reference/aws-iam/**
       - scripts/check-iam-literals.sh
       - scripts/test-iam-policies.sh
-      # Terraform and Ansible are listed whole. They are skeletons today, but when they carry real
-      # content every file under them can affect the deploy, and a filter that has to be widened
-      # later is a filter that silently stops covering things in the meantime.
       - terraform/**
-      - ansible/**
-      # Must track this file's own name: a stale entry here means changes to the deploy workflow
-      # never trigger their own proof.
+      # Must track this workflow's own filename: a stale entry here means changes to the
+      # deploy workflow never trigger their own proof.
       - .github/workflows/aws-deploy.yml
-
 # Least privilege at the workflow level; the job elevates only what it needs.
 permissions: {}
 

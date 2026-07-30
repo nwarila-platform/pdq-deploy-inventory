@@ -89,10 +89,11 @@ POC_ROLE="${REPO}-poc-role"
 POC_PROFILE="${REPO}-poc-profile"
 # policy file -> applied name (file basename IS the applied name, per this repo's convention)
 mapfile -t POLICIES < <(cd "${WORK}/policies" && ls *.json | sed 's/\.json$//')
-DEPLOY_POLICIES=(); STATE_POLICY=''
+DEPLOY_POLICIES=(); ADMIN_ONLY_POLICIES=(); STATE_POLICY=''
 for p in "${POLICIES[@]}"; do
     case "${p}" in
         github_*) STATE_POLICY="${p}" ;;
+        pdq-deploy-inventory_artifact-read) ADMIN_ONLY_POLICIES+=("${p}") ;;
         *) DEPLOY_POLICIES+=("${p}") ;;
     esac
 done
@@ -187,6 +188,36 @@ apply_role() { # role-name trust-file
 apply_role "${CI_ROLE}"    "${WORK}/roles/github_${OWNER}_${REPO}.trust.json"
 apply_role "${ADMIN_ROLE}" "${WORK}/roles/github_${OWNER}_${REPO}-admin.trust.json"
 apply_role "${POC_ROLE}"   "${WORK}/roles/${REPO}-poc-role.trust.json"
+
+for p in "${ADMIN_ONLY_POLICIES[@]}"; do
+    arn="arn:aws:iam::${ACCOUNT}:policy/${p}"
+
+    if ! attached="$(aws iam list-attached-role-policies --role-name "${CI_ROLE}" --profile "${PROFILE}" \
+        --query "AttachedPolicies[?PolicyArn=='${arn}'].PolicyArn" --output text 2>&1)"; then
+        die "could not enumerate policies attached to ${CI_ROLE}: ${attached}"
+    fi
+    if [ "${attached}" = "${arn}" ]; then
+        if ! aws iam detach-role-policy --role-name "${CI_ROLE}" --policy-arn "${arn}" \
+            --profile "${PROFILE}" >/dev/null 2>&1; then
+            die "could not detach ${p} from ${CI_ROLE}"
+        fi
+    fi
+
+    if ! attached="$(aws iam list-attached-role-policies --role-name "${POC_ROLE}" --profile "${PROFILE}" \
+        --query "AttachedPolicies[?PolicyArn=='${arn}'].PolicyArn" --output text 2>&1)"; then
+        die "could not enumerate policies attached to ${POC_ROLE}: ${attached}"
+    fi
+    if [ "${attached}" = "${arn}" ]; then
+        if ! aws iam detach-role-policy --role-name "${POC_ROLE}" --policy-arn "${arn}" \
+            --profile "${PROFILE}" >/dev/null 2>&1; then
+            die "could not detach ${p} from ${POC_ROLE}"
+        fi
+    fi
+
+    aws iam attach-role-policy --role-name "${ADMIN_ROLE}" --policy-arn "${arn}" \
+        --profile "${PROFILE}" >/dev/null 2>&1 \
+        || die "could not attach ${p} to ${ADMIN_ROLE} - the role may not exist"
+done
 
 attach() {
     aws iam attach-role-policy --role-name "$1" --policy-arn "$2" --profile "${PROFILE}" >/dev/null 2>&1 \

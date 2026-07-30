@@ -58,12 +58,17 @@ out of git.
 | Role | Trust source | Policies | Purpose |
 |---|---|---|---|
 | `github_nwarila-platform_pdq-deploy-inventory` | `roles/github_nwarila-platform_pdq-deploy-inventory.trust.json` | `github_nwarila-platform_pdq-deploy-inventory` · `pdq-deploy-inventory_deploy-ec2-launch` · `pdq-deploy-inventory_deploy-ec2-lifecycle` · `pdq-deploy-inventory_deploy-sg-ssm-kms` · `pdq-deploy-inventory_deploy-discovery-iam` | CI state, deploy, prove, destroy |
-| `github_nwarila-platform_pdq-deploy-inventory-admin` | `roles/github_nwarila-platform_pdq-deploy-inventory-admin.trust.json` | `github_nwarila-platform_pdq-deploy-inventory` · the same four deploy policies | Operator break-glass and local deploy |
+| `github_nwarila-platform_pdq-deploy-inventory-admin` | `roles/github_nwarila-platform_pdq-deploy-inventory-admin.trust.json` | `github_nwarila-platform_pdq-deploy-inventory` · the same four deploy policies · `pdq-deploy-inventory_artifact-read` | Operator break-glass and local deploy |
 | `pdq-deploy-inventory-poc-role` | `roles/pdq-deploy-inventory-poc-role.trust.json` | `AmazonSSMManagedInstanceCore` (AWS-managed) **only** | EC2 instance profile `pdq-deploy-inventory-poc-profile` |
 
 The `-admin` role carries the state policy as well as the four deploy policies: a local
 `deploy -> test -> destroy` cannot read or write Terraform state without it, and the row above
-claims that capability. Detach the deploy policies when the local path is retired.
+claims that capability. It alone also carries `pdq-deploy-inventory_artifact-read`, which reads the
+pinned `applications/pdq/*` artifact prefix from the controller. CI is excluded to keep it
+least-privilege until Phase 2 genuinely needs that read. `scripts/bootstrap-iam.sh` attaches the
+four deploy policies to both roles, while its admin-only class removes the artifact-read policy
+from the CI and instance roles before attaching it to `-admin`. Detach the deploy policies when the
+local path is retired.
 `MaxSessionDuration` is 3600 seconds on all three roles — the AWS default, materialized as a
 role property rather than inside any document here.
 
@@ -169,20 +174,25 @@ polish; each one is a finding both auditors raised.
   materialized it measured 5,900 of the 6,144-character managed-policy limit — 96%, against a house
   rule of *split at 85%, never trim a control*. The source repo carries it combined at ~92% and has
   already had to defer fixes for want of room. Split now, before either clone extends it: the halves
-  measure ~2.6 KB and ~3.3 KB, and the role has ten managed-policy slots of which this uses four.
-  Attach both; they are one boundary in two documents. Do not recombine them.
+  measure ~2.6 KB and ~3.3 KB. Each role has ten managed-policy slots; these deploy-facing policies
+  use five on the admin role, including the admin-only artifact read, and four on CI. Attach both
+  EC2 halves; they are one boundary in two documents. Do not recombine them.
 
 ## What this clone deliberately drops
 
-Both auditors, independently, recommended that the Windows consumers drop the artifact-delivery path
-entirely. PDQ installs from a vendor MSI staged by the operator; it has no S3-delivered artifact
-today. Dropping it removes **the artifact-reader role, its trust, the artifact-read policy, the
-presigned-URL signer and its fetch tasks** — and with them every finding R4-3 through R4-9.
+Both auditors, independently, recommended that the Windows consumers drop the presigned,
+target-side artifact-delivery path. This clone still has **no artifact-reader role or trust,
+presigned-URL signer, or target-side fetch tasks**. It now has one narrower replacement: the
+operator role can read only the pinned `applications/pdq/*` prefix from the controller, which then
+pushes the file to the guest.
 
-The consequence worth stating: the instance profile is `AmazonSSMManagedInstanceCore` and nothing
-else, so **no credential on the target can reach S3 at all.** If a future piece genuinely needs a
-controller-delivered artifact, copy the source repo's presigned pattern *then* — with its own audit
-findings applied first — rather than carrying the surface now for a need that does not exist.
+The read policy applies the relevant R4-4 correction directly: `s3:GetObject` is limited to that
+single prefix, with no `s3:GetObjectVersion`, and the bucket listing is prefix-bounded. R4-3 and
+R4-5 remain inapplicable because no bearer URL is created or delivered to the target; R4-7 does not
+apply because there is no reader role or new `AssumeRole` session; and R4-8/R4-9 remain inapplicable
+because there is no signer module. The R4-6 property is preserved: the instance profile is
+`AmazonSSMManagedInstanceCore` and nothing else, so **no credential on the target can reach S3 at
+all.**
 
 ## Values re-derived for this repository (never copied)
 

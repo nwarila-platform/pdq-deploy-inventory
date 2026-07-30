@@ -1,8 +1,8 @@
 # VM lifecycle — PDQ dev VM (VMware Workstation)
 
-Concise PDQ adaptation of the windows-wsus VM discipline. **The PDQ dev VM does not exist yet** —
-provisioning it is the first infra task. This doc records
-the contract it must satisfy.
+Concise PDQ adaptation of the windows-wsus VM discipline. The `pdq-dev` VM was provisioned
+2026-07-27 at `D:\Documents\Virtual Machines\pdq-dev\pdq-dev.vmx`. It uses static address
+`192.168.0.182`, has its own generated MAC, and no longer collides with the windows-wsus dev VM.
 
 ## 1. Baseline contract (what the role is handed)
 
@@ -14,25 +14,27 @@ A Windows Server 2025 guest in VMware Workstation with:
   (`PDQDEPLOY` / `PDQINVENTORY` / `PDQSHARE`). No PDQ installed; fresh OS.
 - A clean-baseline snapshot (running VM, memory included), e.g. `pre-ansible-clean-ssh-ready`.
 
-The role configures this exact machine end-to-end, including disk init (`windows_disk_manager`).
+The role provisions the data disks, repository share, and local service account on this machine.
+It does not install or configure the PDQ applications yet.
 
 ## 2. Snapshot discipline (identical to windows-wsus)
 
 - **Revert to the clean baseline before EVERY playbook execution** — `scripts/revert-vm.sh`
-  (built into `compose-and-run.sh`; `SKIP_REVERT=1` only for composition testing). Never run
-  against a dirty VM.
+  (built into `compose-and-run.sh`). `SKIP_REVERT=1` is ratified only for composition testing and
+  an idempotency proof immediately after a revert-first converge. It is not a general escape hatch
+  for live runs.
 - At most TWO snapshots exist: the fresh-OS baseline anchor + one rolling `pre-<piece>` step
   snapshot (`scripts/snapshot-step.sh`, taken post-merge). `REVERT_TO=pre-<piece>` targets the
   rolling one; the baseline is re-proven E2E at END verify.
 
-## 3. To provision (open task)
+## 3. Provisioning record
 
 1. Build the Windows Server 2025 guest; attach 3 blank data disks; set a static IP.
 2. Install OpenSSH (DefaultShell=PowerShell) + VMware Tools; seat the SSH key.
 3. Snapshot the clean baseline (running, memory).
-4. Update `ansible/inventory/vmware.yml` (`ansible_host`) and the VMX path + snapshot name in
-   `scripts/revert-vm.sh` / `scripts/snapshot-step.sh` (they currently carry the windows-wsus
-   dev-VM values — placeholders until the PDQ VM exists).
+4. Record `ansible_host` as `192.168.0.182` in `ansible/inventory/vmware.yml`; record the PDQ VMX
+   path and `pre-ansible-clean-ssh-ready` baseline in `scripts/revert-vm.sh` and
+   `scripts/snapshot-step.sh`.
 5. Capture the 3 disks' `Get-Disk` UniqueId (`eui.*`) into `ansible/playbooks/pdq.yml`
    (`deploy_disk_id` / `inventory_disk_id` / `share_disk_id`).
 

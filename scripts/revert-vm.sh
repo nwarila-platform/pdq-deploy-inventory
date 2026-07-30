@@ -20,7 +20,7 @@ VMRUN="/mnt/c/Program Files (x86)/VMware/VMware Workstation/vmrun.exe"
 VMX='D:\Documents\Virtual Machines\pdq-dev\pdq-dev.vmx'
 BASELINE='pre-ansible-clean-ssh-ready'
 SNAPSHOT="${REVERT_TO:-${BASELINE}}"
-GUEST_HOST='192.168.0.181'
+GUEST_HOST='192.168.0.182'
 GUEST_USER='administrator'
 SSH_WAIT_SECS="${SSH_WAIT_SECS:-180}"
 

@@ -45,7 +45,8 @@ the static gate and the style guide, then merged with an audit-ledger row.
 
 ## Status
 
-**Skeleton scaffolded 2026-07-27.** No PDQ operations implemented yet; `pdq/present_windows.yml`
-is a validated no-op. Next: provision the PDQ dev VM + baseline snapshot, then start the queue at
-piece P01. The AWS-PoC layer (workflows / terraform / IAM) is intentionally deferred — see
-the upstream IAM, which must be finalized before it is cloned here.
+The `pdq-dev` VM and its clean baseline snapshot were provisioned 2026-07-27. The role provisions
+the three data volumes, creates `G:\AppRepo` with its ACLs and publishes it as an SMB share, and
+creates the local service account used by both applications. It does not install or configure the
+PDQ applications yet; that is the next work. The AWS-PoC layer (workflows / terraform / IAM) is
+intentionally deferred — see the upstream IAM, which must be finalized before it is cloned here.

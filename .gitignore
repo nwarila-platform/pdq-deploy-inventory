@@ -1,14 +1,51 @@
-# composition build tree (framework checkout + overlaid role) — never committed
-.compose/
+# =========================================================================================== #
+# File: '.gitignore'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# DEFAULT-DENY. Nothing in this working tree is tracked unless it is explicitly allowed
+# below. Adding a new file therefore requires allowing it here first — that is deliberate:
+# it makes publishing a file an explicit act rather than an accident.
+#
+# =========================================================================================== #
 
-# ansible scratch
+# Ignore everything ...
+**
+# ... but keep descending into directories so the allowances below can still match.
+!**/
+
+# --- [ allowed: repository configuration ] -------------------------------------------------- #
+!/.editorconfig
+!/.framework-pin
+!/.gitignore
+!/.yamllint.yml
+
+# --- [ allowed: top-level documents ] ------------------------------------------------------- #
+!/CHANGELOG.md
+!/LICENSE
+!/README.md
+
+# --- [ allowed: the product tree ] ---------------------------------------------------------- #
+!/.github/**
+!/ansible/**
+!/scripts/**
+!/terraform/**
+
+# --- [ allowed: published documentation ] --------------------------------------------------- #
+# Enumerated rather than a wildcard: local working notes live alongside these on disk and
+# must never be published by default.
+!/docs/KEY-RELOAD.md
+!/docs/TECH-DEBT.md
+!/docs/VM-LIFECYCLE.md
+!/docs/ansible-style-guide.md
+!/docs/reference/**
+
+# --- [ never tracked, even inside an allowed tree ] ----------------------------------------- #
+# Composition build tree (framework checkout + overlaid roles) and build worktrees.
+/.compose/
+/.worktrees/
+
+# Scratch and secrets — never commit credentials.
 *.retry
 *.log
-
-# build worktrees live outside the repo (../.worktrees) but guard anyway
-.worktrees/
-
-# local-only secrets / scratch (never commit credentials)
 *.secret
 temp-password*
-

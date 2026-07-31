@@ -6,5 +6,13 @@
 #
 # =========================================================================================== #
 ---
-pdq_inventory_defaults: {}
+pdq_inventory_defaults:
+  # Pinned PDQ Inventory installer, delivered from the account-local '-ansible' artifact bucket.
+  inventory_installer:
+    version: '20.1.8.0'
+    object_key: 'applications/pdq/Inventory_20.1.8.0.exe'
+    sha256: '48a486f3682cc01218993e72a8006163616166dd5f0fdcd1fab36724710fdbbf'
+    region: 'us-east-1'
+    staging_path: 'C:\Windows\Temp\Inventory_20.1.8.0.exe'
+    product_id: '{47D90CDF-2CE4-4B71-87DD-1223B1DA0AB2}'
 # service_account is required in the pdq_inventory override dict and has no safe default.

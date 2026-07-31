@@ -6,10 +6,11 @@ a **PDQ Deploy & Inventory** all-in-one **Central Server** on Windows Server —
 and inventory. It **composes** into a version-pinned checkout of `nwarila-platform/ansible-framework`
 at execution time (never runs repo-side).
 
-Structurally mirrors [`secure-wazuh`](../secure-wazuh) (repo hygiene, docs, strict cycle, AWS-PoC
-model) with the Windows-specific lessons from [`windows-wsus`](../windows-wsus) folded in (SSH+PowerShell
-transport, the v3.1 loader Windows workarounds, the 3-disk provisioning pattern via `windows_disk_manager`,
-the `check-winshell-splitargs.py` gate, the `BUILTIN\Users` ACL convention, the P4.5 review discipline).
+Structurally mirrors [`secure-wazuh`](../secure-wazuh) (repository hygiene, documentation,
+independent review, and AWS proof-of-concept structure), with the Windows-specific engineering
+from [`windows-wsus`](../windows-wsus) folded in (SSH+PowerShell transport, the v3.1 loader Windows
+workarounds, the 3-disk provisioning pattern via `windows_disk_manager`, the
+`check-winshell-splitargs.py` gate, and the `BUILTIN\Users` ACL convention).
 
 ## What it deploys
 
@@ -47,8 +48,9 @@ the static gate and the style guide, then merged with an audit-ledger row.
 
 ## Status
 
-The `pdq-dev` VM and its clean baseline snapshot were provisioned 2026-07-27. The role provisions
-the three data volumes, creates `G:\AppRepo` with its ACLs and publishes it as an SMB share, and
-creates the local service account used by both applications. It does not install or configure the
-PDQ applications yet; that is the next work. The AWS-PoC layer (workflows / terraform / IAM) is
+The `pdq-dev` VM and its clean baseline snapshot were provisioned 2026-07-27. The automation
+provisions the three data volumes, creates `G:\AppRepo` with its ACLs and publishes it as an SMB
+share, creates the local service account used by both applications, and installs the pinned PDQ
+Inventory 20.1.8.0 bundle. Inventory is not yet licensed, mode-configured, or started, and PDQ
+Deploy is not yet installed or configured. The AWS-PoC layer (workflows / terraform / IAM) is
 intentionally deferred — see the upstream IAM, which must be finalized before it is cloned here.

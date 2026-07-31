@@ -98,9 +98,11 @@
 
 - **What:** the framework v3 loader's `INIT | Loading Overrides` task `set_fact`s the merged
   `<role>_running` dict (the style-guide-SANCTIONED persistent config — R3's named exception). When a
-  secret lives in the override dict (P05: `pdq.service_account.password`), that secret becomes a
-  persistent HOST FACT and is printed in full on any `-v`+ run (Ansible prints `set_fact` results at
-  verbosity ≥ 1). Proven with a sentinel password 2026-07-28 (P05 P4).
+  secret lives in an override dict, that secret becomes a persistent HOST FACT. The current
+  playbook maps `pdq_service_account.password` into both
+  `pdq_inventory.service_account.password` and `pdq_deploy.service_account.password`, so each
+  role's merged configuration contains it and is printed in full on any `-v`+ run (Ansible prints
+  `set_fact` results at verbosity ≥ 1). Proven with a sentinel password 2026-07-28 (P05 P4).
 - **Scope:** the **v3 loader — GOVERNANCE SURFACE** (byte-identical, untouchable per-role); affects
   EVERY secret-bearing role composed on it, not just pdq. P05 is merely the first pdq piece to route a
   secret through the loader.

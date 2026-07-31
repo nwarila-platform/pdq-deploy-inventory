@@ -1,0 +1,17 @@
+# =========================================================================================== #
+# File: '{{ role_path }}/tasks/validate.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Validates load-bearing PDQ Deploy configuration after the v3 loader merge.
+#
+# =========================================================================================== #
+---
+- name: 'BEGIN | Assert PDQ Deploy Background Service User Provided'
+  when: (state | default('present') | string | lower | trim) == 'present'
+  ansible.builtin.assert:
+    that:
+      - (config.service_account.name | default('') | string | trim) | length > 0
+    fail_msg: >-
+      pdq_deploy.service_account.name is REQUIRED. Declare service_account.name in the
+      pdq_deploy override dict.
+    quiet: true

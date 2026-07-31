@@ -2,10 +2,7 @@
 # File: '{{ role_path }}/vars/windows.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# Windows-family overlay merged over pdq_defaults by the v3 loader. Environment variants
-# follow the loader's interleaved cascade: windows.yml -> windows_<env>.yml. Empty overlays
-# are skipped by the loader; keys land here only when a build piece introduces a genuinely
-# OS-scoped value (keep cross-OS defaults in defaults/main.yml).
+# Windows-family overlay merged over pdq_deploy_defaults by the v3 loader.
 #
 # =========================================================================================== #
 ---

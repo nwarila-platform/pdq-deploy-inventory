@@ -1,0 +1,10 @@
+# =========================================================================================== #
+# File: '{{ role_path }}/defaults/main.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Lowest-precedence configuration for the PDQ Inventory role.
+#
+# =========================================================================================== #
+---
+pdq_inventory_defaults: {}
+# service_account is required in the pdq_inventory override dict and has no safe default.

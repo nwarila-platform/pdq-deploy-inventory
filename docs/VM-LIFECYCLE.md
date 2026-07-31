@@ -35,7 +35,7 @@ It does not install or configure the PDQ applications yet.
 4. Record `ansible_host` as `192.168.0.182` in `ansible/inventory/vmware.yml`; record the PDQ VMX
    path and `pre-ansible-clean-ssh-ready` baseline in `scripts/revert-vm.sh` and
    `scripts/snapshot-step.sh`.
-5. Capture the 3 disks' `Get-Disk` UniqueId (`eui.*`) into `ansible/playbooks/pdq.yml`
-   (`deploy_disk_id` / `inventory_disk_id` / `share_disk_id`).
+5. Capture the 3 disks' `Get-Disk` UniqueId (`eui.*`) in each corresponding
+   `windows_disk_manager.disks[].unique_id` entry in `ansible/playbooks/pdq.yml`.
 
 `vmrun` lives at `/mnt/c/Program Files (x86)/VMware/VMware Workstation/vmrun.exe`.

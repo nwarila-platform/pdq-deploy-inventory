@@ -1,6 +1,7 @@
 # pdq-deploy-inventory
 
-A single-purpose `nwarila-platform` application repo that carries the **`pdq`** Ansible role —
+A single-purpose `nwarila-platform` application repo that carries separate **`pdq_inventory`**
+and **`pdq_deploy`** Ansible roles —
 a **PDQ Deploy & Inventory** all-in-one **Central Server** on Windows Server — plus its playbook
 and inventory. It **composes** into a version-pinned checkout of `nwarila-platform/ansible-framework`
 at execution time (never runs repo-side).
@@ -26,9 +27,10 @@ Background Service User (the integration prerequisite) — client consoles conne
 ## Layout
 
 ```
-ansible/applications/pdq/              # the role (skeleton)
+ansible/applications/pdq_inventory/    # PDQ Inventory application role
+ansible/applications/pdq_deploy/       # PDQ Deploy application role; owns the App Share
 ansible/applications/windows_disk_manager/   # reused disk provisioner (3-disk init/partition/format)
-ansible/playbooks/pdq.yml              # the AIO play (disk manager -> pdq)
+ansible/playbooks/pdq.yml              # the AIO play (disk manager -> Inventory -> Deploy)
 ansible/inventory/vmware.yml           # dev VM inventory (SSH + PowerShell)
 scripts/compose-and-run.sh             # compose + run (COMPOSE_PLAYBOOK=pdq.yml default)
 scripts/{revert-vm,snapshot-step}.sh   # VM discipline (revert before EVERY run)

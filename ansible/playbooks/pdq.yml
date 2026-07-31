@@ -5,8 +5,8 @@
 # Deploys the PDQ Deploy & Inventory all-in-one server (Central Server) to the 'pdq_servers'
 # inventory group. Runs from the COMPOSED tree only — scripts/compose-and-run.sh overlays the
 # roles into a pinned ansible-framework checkout and executes this playbook with the framework
-# chassis. windows_disk_manager provisions the 3 data disks; the pdq role installs + configures
-# PDQ on top of them.
+# chassis. windows_disk_manager provisions the 3 data disks; the two application roles configure
+# their independently owned PDQ prerequisites on top of them.
 #
 # Windows-over-SSH notes: the framework v3 loader is not yet Windows-aware; every workaround
 # below is tagged TD-001 and tracked in docs/TECH-DEBT.md. Remove them when the framework ships
@@ -26,7 +26,7 @@
   vars:
     # Platform convention: 'env' is the operator-facing extra-var; 'ENV' is the play-var the
     # loader validates (mirrors the wazuh/wsus central playbooks).
-    ENV: "{{ env }}"
+    ENV: "{{ env }}"  # noqa var-naming[pattern] -- loader contract uses uppercase ENV
     windows_disk_manager:
       # TD-001: disable the loader's POSIX temp-dir; the role owns its Windows operations.
       # NOTE: a `-e '{"windows_disk_manager":{...}}'` override REPLACES this whole mapping, so a
@@ -36,9 +36,8 @@
       # windows_disk_manager (framework role, .framework-pin >= 1abfec4) provisions these 3 disks
       # end-to-end: init GPT -> partition -> NTFS format, force:false (idempotent), skip-if-ours.
       # unique_id captured from the live pdq-dev VM 2026-07-27 (a full clone re-mints all eui.*);
-      # parameterize on backport to a *-template repo. Disk identity now lives HERE (not in the
-      # pdq: override — the pdq.deploy_disk_id/inventory_disk_id/share_disk_id below are transitional
-      # and get removed when the pdq role is reshaped to consume drive letters, a later cycle).
+      # parameterize on backport to a *-template repo. Disk identity lives only in this platform
+      # role declaration; application roles consume the resulting drive letters.
       disks:
         - unique_id: 'eui.E838E9FEF13BD475000C2960C66494AE'  # 20 GiB -> E: PDQDEPLOY    (PDQ Deploy DB)
           drive_letter: 'E'
@@ -52,26 +51,18 @@
           drive_letter: 'G'
           label: 'PDQSHARE'
           allocation_unit: 4096
-    pdq:
-      # TD-001: disable the loader's POSIX temp-dir; the role owns its own staging.
-      # NOTE: a `-e '{"pdq":{...}}'` override REPLACES this whole mapping, so a proof override
-      # must re-state temp_dir: false.
+    # Composition invariant: define the Background Service User once and map the whole value into
+    # both application namespaces. Any whole-dictionary override must preserve this invariant.
+    pdq_service_account:
+      name: 'svc-pdq'
+      password: "{{ pdq_service_account_password }}"
+    pdq_inventory:
       temp_dir: false
-      # Data-disk identity (Windows Get-Disk UniqueId). Declared here so the loader folds them
-      # into config (config.deploy_disk_id / inventory_disk_id / share_disk_id). Captured from the
-      # live pdq-dev VM 2026-07-27 (a full clone re-mints all eui.*, so these are pdq-dev-specific);
-      # parameterize (templated vars) on backport to a *-template repo.
-      deploy_disk_id: 'eui.E838E9FEF13BD475000C2960C66494AE'  # Disk1 20 GiB -> E: PDQDEPLOY    (PDQ Deploy DB)
-      inventory_disk_id: 'eui.FF1BA2DA823ECF16000C2965289C10F5'  # Disk3 20 GiB -> F: PDQINVENTORY (PDQ Inventory DB)
-      share_disk_id: 'eui.B3DC2EC9CC388D4F000C2968B08CFF5F'  # Disk2 30 GiB -> G: PDQSHARE     (Deploy App Share, largest)
-      # PDQ Enterprise license (REQUIRED — Central Server + integration). no_log; supply via a
-      # non-committed override (-e / vault). DEV PLACEHOLDER; never commit a real key.
-      license_key: 'REPLACE-WITH-PDQ-ENTERPRISE-LICENSE-KEY'
-      # Background Service User — ONE account for BOTH Deploy and Inventory (integration prereq);
-      # local admin with R/W to the App Share. Password supplied out-of-band (no_log / vault).
-      service_account:
-        name: 'svc-pdq'
-        # password: supplied via -e / vault, never committed
+      service_account: "{{ pdq_service_account }}"
+    pdq_deploy:
+      temp_dir: false
+      service_account: "{{ pdq_service_account }}"
+      repository: { dir_name: 'AppRepo', share_name: 'AppRepo' }
 
   pre_tasks:
     # TD-001: the loader's 'INIT | Loading Installed Package Facts' task runs
@@ -86,4 +77,5 @@
 
   roles:
     - role: 'windows_disk_manager'
-    - role: 'pdq'
+    - role: 'pdq_inventory'
+    - role: 'pdq_deploy'

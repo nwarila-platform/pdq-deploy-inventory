@@ -1,6 +1,6 @@
 # PDQ Deploy & Inventory — headless automation research (P0 grounding)
 
-**Type:** Reference. Vendor-doc-grounded research that grounds the `pdq` role build queue. Compiled
+**Type:** Reference. Vendor-doc-grounded research that grounds the PDQ application-role build queue. Compiled
 2026-07-27. Where a value must be confirmed on the live VM at piece time, it is marked **[confirm
 on-VM]** — the strict cycle re-researches per piece, this doc is the baseline.
 
@@ -114,7 +114,8 @@ version-pinned installs and side-steps the form gate. This is the strongest wazu
 ## Resolved decisions (Director to confirm)
 
 1. **MSI versioning → PIN + self-host in the artifact bucket** (above). Reproducible + offline.
-2. **Service account → role-created LOCAL account** (`svc-pdq`) for the Background Service User: the
+2. **Service account → application roles ensure one LOCAL account** (`svc-pdq`) for the Background
+   Service User: both application roles independently ensure the same account; the
    AIO single-server model is self-contained, local admin + Log-On-as-Service + share R/W all work
    locally, and it avoids a domain dependency for the dev loop. (Target/scan credentials used to
    reach *managed* clients are a SEPARATE, later concern — likely a domain deploy credential — not

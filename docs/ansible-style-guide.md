@@ -40,6 +40,13 @@
 - OS task files: `<state>_<family>[_<dist>[_<ver>]].yml`, resolved most-specific-first
   via `first_found`. This role ships `present_windows.yml` + `clean_windows.yml`
   (family-level; `os_family=Windows`).
+- **RATIFIED (Director, 2026-07-31):** A role's `tasks/` directory contains only the
+  generic `main.yml` loader, loader-resolved OS entrypoints, and `validate.yml`; this
+  list is exhaustive. Do not add other task files or split an entrypoint with a sibling
+  `include_tasks`; an entrypoint that needs splitting signals an over-broad role (§4d).
+- **RATIFIED (Director, 2026-07-31):** Keep `tasks/` flat:
+  `scripts/check-winshell-splitargs.py` scans `applications/*/tasks/*.yml`
+  non-recursively, so a nested task file silently escapes the inline-PowerShell gate.
 - Vars overlays: `vars/<family>[_...][_<env>].yml`, recursive combine,
   `list_merge='replace'`. `ENV` is mandatory and regex-validated by the loader.
 
@@ -60,6 +67,25 @@
   (lazily evaluated, block-scoped), task `vars:`, or `register`. Reserve `set_fact` for values
   that persist BY CONTRACT (e.g. the loader's `<role>_running` merged config) and namespace them
   (`<role>_*` / `__dunder__`).
+- **RATIFIED (Director, 2026-07-31):** A task whose registered result is consumed to
+  report success or failure uses `ignore_errors: true`, not `failed_when: false`;
+  `failed_when: false` rewrites `.failed` and makes a real module error report success.
+- **RATIFIED (Director, 2026-07-31):** Place a conditionally included unit's
+  postconditions after and outside its `include_tasks`, so verification also runs on
+  the converged path where the include is skipped.
+- **RATIFIED (Director, 2026-07-31):** A `rescue` preserving a failure projects only a
+  guarded field, never the whole `ansible_failed_result`:
+  `{{ ansible_failed_result.msg | default('<role> operation failed', true) }}`. Whole
+  results can expose invocation data, and an unguarded missing field can mask the
+  original failure during argument finalization.
+- **RATIFIED (Director, 2026-07-31):** Apply `no_log: true` where a secret is a task
+  argument or arbitrary result data is captured; remove it where neither holds, because
+  decorative `no_log` destroys diagnostics. Secret audits cover every accepted parameter
+  name and alias, registered variables, and whole-result persistence; claims describe
+  only those verified surfaces.
+- **RATIFIED (Director, 2026-07-31):** An include for a unit that cannot support check
+  mode carries `not ansible_check_mode` explicitly, so `--check` skips it honestly
+  instead of beginning work and failing.
 
 ## 4a. Role scope — the "handed machine" contract — RATIFIED (Director, 2026-07-15)
 
@@ -131,6 +157,27 @@ clobber, verified at the module source). These stay `quiet: true` with an action
   foreign drive letter → refuse. Idempotency: recognizing 'ours' lets a converged
   resource pass, which a blank-only guard would wrongly reject.)
 
+## 4d. Role scope — the application boundary — RATIFIED (Director, 2026-07-31)
+
+- One role owns one installable application or one coherent capability. A second
+  application is a second role, never a second task file; playbooks compose roles, and
+  roles do not nest. Deployment co-location, operating mode, and shared accounts do not
+  widen this boundary.
+- Each application role is functionally independent: the platform disk role plus that
+  one application role produces its complete correct result, and several application
+  roles converge to the same result as when run individually. Each role therefore
+  ensures its prerequisites idempotently; an ordered prerequisite-only role would
+  reintroduce the forbidden dependency.
+
+## 4e. Role scope — the identity boundary — RATIFIED (Director, 2026-07-31)
+
+- A role consumes ambient credentials and performs no identity transition. Credential
+  acquisition belongs to the caller; document that the ambient identity itself holds
+  each required grant, because assuming another identity couples the role to one caller
+  shape.
+- Never widen a grant for a module's convenience lookup; use its documented
+  narrow-permission option.
+
 ## 5. Windows conventions — SEEDED (first Windows role; ratify via research per cycle)
 
 - Transport: **SSH** (org standard; key auth, one transport story across the fleet).
@@ -138,11 +185,19 @@ clobber, verified at the module source). These stay `quiet: true` with an action
 - `become: false` at play level (framework chassis `become=sudo` is POSIX-only;
   built-in administrator over SSH is already elevated). Revisit for least-privilege
   runs (runas) when a non-admin service account is introduced — TBD.
+- **RATIFIED (Director, 2026-07-31):** In a Windows play, every task delegated to the
+  controller carries `vars: { ansible_shell_type: 'sh' }` alongside `become: false`;
+  otherwise the inherited PowerShell shell plugin runs controller payloads incorrectly.
 - Windows modules from `ansible.windows` (fallback `community.windows`); never invoke
   raw PowerShell where a module exists — escape-hatch threshold decided at C05, see the
   PROPOSED (C05) rule below.
 - Loader Windows gaps are TD-001 workarounds in the playbook, not role hacks — see
   `docs/TECH-DEBT.md`.
+- **RATIFIED (Director, 2026-07-31):** `ansible.windows.win_reg_stat` with `name:`
+  returns `exists: false` for both an absent key and an absent property. To distinguish
+  them, read the key without `name:` and test
+  `'<Prop>' in result.properties and result.properties.<Prop>.value == ...`; this was
+  verified in module source, and Jinja `and` short-circuits the absent-property access.
 - **RATIFIED (C02a, 2026-07-15 — supersedes the C01r §5-ext) — required per-target
   inputs live in the `<role>:` override dict, consumed via `config`.** Environment-
   specific inputs the role cannot default (e.g. disk identifiers `wid_disk_id` /
@@ -246,6 +301,9 @@ clobber, verified at the module source). These stay `quiet: true` with an action
 - Build process: one command per cycle;
   every cycle ends with a ledger row and any style-rule ratifications recorded here
   with the cycle ID.
+- **RATIFIED (Director, 2026-07-31):** A repository contract states which roles the
+  repository carries and why that decomposition is correct; a bare role count makes a
+  structural premise unreviewable.
 
 ## 8. Open questions (moved to RATIFIED/rule sections as cycles decide them)
 

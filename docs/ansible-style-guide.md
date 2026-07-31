@@ -24,6 +24,13 @@
 - Role defaults live under `<role>_defaults` in `defaults/main.yml`; the merged
   running config materializes as `<role>_running`; playbook overrides use the bare
   `<role>:` dict. (Loader v3 contract.)
+- **RATIFIED (Director, 2026-07-31):** When copying, splitting, or renaming a role,
+  rename its `defaults/main.yml` top-level key to `<new_role_name>_defaults`; the
+  loader resolves it from `role_name`, so a stale key silently yields empty config.
+- **RATIFIED (Director, 2026-07-31):** Reconcile the composed execution tree when a
+  role is renamed or removed. Before lint or live validation, fail unless every new
+  role directory is present and every retired role directory is absent; overlay
+  composition does not remove sources that no longer exist.
 
 ## 3. Loader contract — SEEDED (framework v3.0.0)
 
@@ -168,6 +175,10 @@ clobber, verified at the module source). These stay `quiet: true` with an action
   roles converge to the same result as when run individually. Each role therefore
   ensures its prerequisites idempotently; an ordered prerequisite-only role would
   reintroduce the forbidden dependency.
+- **RATIFIED (Director, 2026-07-31):** When independent roles duplicate prerequisite
+  logic, prove the second occurrence reports `changed=false` in the same convergence
+  run, identified by its `TASK [<role> : ...]` prefix; a later whole-play
+  `changed=0` run does not prove per-task idempotency.
 
 ## 4e. Role scope — the identity boundary — RATIFIED (Director, 2026-07-31)
 
@@ -177,6 +188,10 @@ clobber, verified at the module source). These stay `quiet: true` with an action
   shape.
 - Never widen a grant for a module's convenience lookup; use its documented
   narrow-permission option.
+- **RATIFIED (Director, 2026-07-31):** Define an account shared by independent roles
+  once at play level and map the whole value into each role namespace. Do not restate
+  it per role or use a YAML anchor; document that extra-vars can still replace an
+  entire role dictionary, so this invariant is structural rather than enforced.
 
 ## 5. Windows conventions — SEEDED (first Windows role; ratify via research per cycle)
 
@@ -198,6 +213,14 @@ clobber, verified at the module source). These stay `quiet: true` with an action
   them, read the key without `name:` and test
   `'<Prop>' in result.properties and result.properties.<Prop>.value == ...`; this was
   verified in module source, and Jinja `and` short-circuits the absent-property access.
+- **RATIFIED (Director, 2026-07-31):** Verify Windows ACLs by set equality over
+  explicit, non-inherited ACEs: require exactly the declared ACEs and report inherited
+  ACEs separately. Never assert a total ACE count or use a containment check, which
+  permits undeclared grants.
+- **RATIFIED (Director, 2026-07-31):** When asserting materialized
+  `FileSystemRights`, expect `ReadAndExecute, Synchronize` for a declared
+  `win_acl` right of `ReadAndExecute`; Windows generic mapping adds `Synchronize`, so
+  do not change the declared right to match the observed string.
 - **RATIFIED (C02a, 2026-07-15 — supersedes the C01r §5-ext) — required per-target
   inputs live in the `<role>:` override dict, consumed via `config`.** Environment-
   specific inputs the role cannot default (e.g. disk identifiers `wid_disk_id` /

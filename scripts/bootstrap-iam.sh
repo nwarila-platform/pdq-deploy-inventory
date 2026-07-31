@@ -192,8 +192,16 @@ apply_role "${POC_ROLE}"   "${WORK}/roles/${REPO}-poc-role.trust.json"
 for p in "${ADMIN_ONLY_POLICIES[@]}"; do
     arn="arn:aws:iam::${ACCOUNT}:policy/${p}"
 
-    if ! attached="$(aws iam list-attached-role-policies --role-name "${CI_ROLE}" --profile "${PROFILE}" \
-        --query "AttachedPolicies[?PolicyArn=='${arn}'].PolicyArn" --output text 2>&1)"; then
+    if ! attached="$(if query_result="$(aws iam list-attached-role-policies --role-name "${CI_ROLE}" --profile "${PROFILE}" \
+        --query "AttachedPolicies[?PolicyArn=='${arn}'].PolicyArn" --output text 2>"${WORK}/list-attached-role-policies.err")"; then
+            rm -f -- "${WORK}/list-attached-role-policies.err"
+            printf '%s' "${query_result}"
+        else
+            query_status=$?
+            cat "${WORK}/list-attached-role-policies.err"
+            rm -f -- "${WORK}/list-attached-role-policies.err"
+            exit "${query_status}"
+        fi)"; then
         die "could not enumerate policies attached to ${CI_ROLE}: ${attached}"
     fi
     if [ "${attached}" = "${arn}" ]; then
@@ -203,8 +211,16 @@ for p in "${ADMIN_ONLY_POLICIES[@]}"; do
         fi
     fi
 
-    if ! attached="$(aws iam list-attached-role-policies --role-name "${POC_ROLE}" --profile "${PROFILE}" \
-        --query "AttachedPolicies[?PolicyArn=='${arn}'].PolicyArn" --output text 2>&1)"; then
+    if ! attached="$(if query_result="$(aws iam list-attached-role-policies --role-name "${POC_ROLE}" --profile "${PROFILE}" \
+        --query "AttachedPolicies[?PolicyArn=='${arn}'].PolicyArn" --output text 2>"${WORK}/list-attached-role-policies.err")"; then
+            rm -f -- "${WORK}/list-attached-role-policies.err"
+            printf '%s' "${query_result}"
+        else
+            query_status=$?
+            cat "${WORK}/list-attached-role-policies.err"
+            rm -f -- "${WORK}/list-attached-role-policies.err"
+            exit "${query_status}"
+        fi)"; then
         die "could not enumerate policies attached to ${POC_ROLE}: ${attached}"
     fi
     if [ "${attached}" = "${arn}" ]; then

@@ -1,0 +1,11 @@
+# =========================================================================================== #
+# File: '{{ role_path }}/tasks/clean_windows.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Supported no-op cleanup path for the PDQ Deploy role.
+#
+# =========================================================================================== #
+---
+- name: 'INFO | Nothing To Clean (no role-owned caches yet)'
+  ansible.builtin.debug:
+    msg: 'pdq_deploy role: no persistent caches are created yet; clean is a supported no-op.'

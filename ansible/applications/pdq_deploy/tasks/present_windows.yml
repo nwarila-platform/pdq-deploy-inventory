@@ -2,26 +2,10 @@
 # File: '{{ role_path }}/tasks/present_windows.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# state=present entrypoint for the pdq role on Windows, dispatched by the v3 loader after it
-# merges config (passed as 'config') and runs validate.yml. windows_disk_manager has already
-# provisioned E:/F:/G: (PDQDEPLOY/PDQINVENTORY/PDQSHARE) when this runs — see ansible/playbooks/pdq.yml.
-#
-# The install spine is built one MS/PDQ-doc-grounded piece per cycle.
-# Current implementation creates the shared local Background Service User,
-# the App Share repository directory, its explicit inherited NTFS ACEs, and its Administrators-only
-# SMB share. Remaining spine:
-#   Install PDQ Inventory (MSI silent: Mode=Server ServerPort Licensekey /qn /norestart)
-#   -> install PDQ Deploy   (MSI silent, SAME service user + mode for integration)
-#   -> Central Server enable + firewall exception (TCP central_server.port, default 7337)
-#   -> relocate Inventory DB -> F:, Deploy DB -> E:; point Deploy repository -> G: App Share
-#   -> verify services running + Central Server port listening.
+# Ensures the Windows prerequisites owned by the PDQ Deploy application role.
 #
 # =========================================================================================== #
 ---
-#region ------ [ Main ] ---------------------------------------------------------------------- #
-
-#region ------ [ Background Service User ] --------------------------------------------------- #
-
 - name: 'CONFIGURE | Create the PDQ Background Service User'
   block:
     - name: 'CONFIGURE | Create the local PDQ service account'
@@ -43,10 +27,6 @@
         users:
           - '.\{{ config.service_account.name }}'
         action: 'add'
-
-#endregion --- [ Background Service User ] --------------------------------------------------- #
-
-#region ------ [ App Share ] ----------------------------------------------------------------- #
 
 - name: 'CONFIGURE | Create the PDQ Deploy App Share'
   vars:
@@ -95,7 +75,3 @@
         full: 'Administrators'
         rule_action: 'set'
         caching_mode: 'None'
-
-#endregion --- [ App Share ] ----------------------------------------------------------------- #
-
-#endregion --- [ Main ] ---------------------------------------------------------------------- #

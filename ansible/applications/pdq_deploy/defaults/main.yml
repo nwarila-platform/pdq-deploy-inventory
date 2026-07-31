@@ -1,0 +1,18 @@
+# =========================================================================================== #
+# File: '{{ role_path }}/defaults/main.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Lowest-precedence configuration for the PDQ Deploy role.
+#
+# =========================================================================================== #
+---
+pdq_deploy_defaults:
+  data_disks:
+    share:
+      drive_letter: 'G'
+      label: 'PDQSHARE'
+      allocation_unit: 4096
+  repository:
+    dir_name: 'AppRepo'
+    share_name: 'AppRepo'
+# service_account is required in the pdq_deploy override dict and has no safe default.

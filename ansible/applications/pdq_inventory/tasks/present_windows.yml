@@ -1,0 +1,29 @@
+# =========================================================================================== #
+# File: '{{ role_path }}/tasks/present_windows.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Ensures the Windows prerequisites owned by the PDQ Inventory application role.
+#
+# =========================================================================================== #
+---
+- name: 'CONFIGURE | Create the PDQ Background Service User'
+  block:
+    - name: 'CONFIGURE | Create the local PDQ service account'
+      no_log: true
+      ansible.windows.win_user:
+        name: '{{ config.service_account.name }}'
+        password: '{{ config.service_account.password }}'
+        state: 'present'
+        groups:
+          - 'Administrators'
+        groups_action: 'add'
+        password_never_expires: true
+        user_cannot_change_password: true
+        update_password: 'on_create'
+
+    - name: 'CONFIGURE | Grant Log-On-as-Service to the PDQ service account'
+      ansible.windows.win_user_right:
+        name: 'SeServiceLogonRight'
+        users:
+          - '.\{{ config.service_account.name }}'
+        action: 'add'

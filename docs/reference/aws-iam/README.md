@@ -183,8 +183,8 @@ polish; each one is a finding both auditors raised.
 Both auditors, independently, recommended that the Windows consumers drop the presigned,
 target-side artifact-delivery path. This clone still has **no artifact-reader role or trust,
 presigned-URL signer, or target-side fetch tasks**. It now has one narrower replacement: the
-operator role can read only the pinned `applications/pdq/*` prefix from the controller, which then
-pushes the file to the guest.
+operator role can read only the pinned `applications/pdq/*` prefix from the controller. A later
+install piece is intended to push the file to the guest.
 
 The read policy applies the relevant R4-4 correction directly: `s3:GetObject` is limited to that
 single prefix, with no `s3:GetObjectVersion`, and the bucket listing is prefix-bounded. R4-3 and

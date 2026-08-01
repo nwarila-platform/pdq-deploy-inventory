@@ -10,8 +10,6 @@ pdq_deploy_defaults:
   data_disks:
     share:
       drive_letter: 'G'
-      label: 'PDQSHARE'
-      allocation_unit: 4096
   repository:
     dir_name: 'AppRepo'
     share_name: 'AppRepo'

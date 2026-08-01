@@ -27,8 +27,6 @@ The role reads its merged configuration as `config.*`. These role defaults are d
 | Key | Default | Notes |
 |---|---|---|
 | `data_disks.share.drive_letter` | `G` | Drive containing the Deploy repository |
-| `data_disks.share.label` | `PDQSHARE` | Descriptive share-disk metadata; disk provisioning remains owned by `windows_disk_manager` |
-| `data_disks.share.allocation_unit` | `4096` | Descriptive share-disk metadata; disk provisioning remains owned by `windows_disk_manager` |
 | `repository.dir_name` | `AppRepo` | Repository directory below the configured share drive |
 | `repository.share_name` | `AppRepo` | SMB share name |
 

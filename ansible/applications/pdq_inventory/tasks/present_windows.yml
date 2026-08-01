@@ -2,10 +2,15 @@
 # File: '{{ role_path }}/tasks/present_windows.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# Ensures the Windows prerequisites owned by the PDQ Inventory application role.
+# Ensures the shared Background Service User and installs the pinned PDQ Inventory bundle on
+# Windows.
 #
 # =========================================================================================== #
 ---
+#region ------ [ Main ] ---------------------------------------------------------------------- #
+
+#region ------ [ Background Service User ] --------------------------------------------------- #
+
 - name: 'CONFIGURE | Create the PDQ Background Service User'
   block:
     - name: 'CONFIGURE | Create the local PDQ service account'
@@ -27,3 +32,247 @@
         users:
           - '.\{{ config.service_account.name }}'
         action: 'add'
+
+#endregion --- [ Background Service User ] --------------------------------------------------- #
+
+#region ------ [ PDQ Inventory ] ------------------------------------------------------------- #
+
+#region ------ [ PDQ Inventory: Observing Installed State ] ---------------------------------- #
+- name: 'GUARD | Observe the PDQ Inventory uninstall registration'
+  vars:
+    __inventory_uninstall_root__: >-
+      HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall
+  ansible.windows.win_reg_stat:
+    path: '{{ __inventory_uninstall_root__ }}\{{ config.inventory_installer.product_id }}'
+  register: __inventory_registration__
+
+- name: 'GUARD | Observe the PDQ Inventory service'
+  ansible.windows.win_service_info:
+    name: 'PDQInventory'
+  register: __inventory_service__
+#endregion --- [ PDQ Inventory: Observing Installed State ] ---------------------------------- #
+
+#region ------ [ PDQ Inventory: Delivering The Pinned Artifact ] ----------------------------- #
+- name: 'CONFIGURE | Deliver the pinned PDQ Inventory artifact'
+  when:
+    - not ansible_check_mode
+    - not __inventory_registration__.exists
+    - not __inventory_service__.exists
+  block:
+    - name: 'CONFIGURE | Fetch and install the pinned PDQ Inventory artifact'
+      block:
+        #region ------ [ Delivery: Resolving Controller Artifact Source ] -------------------- #
+        - name: 'CONFIGURE | Resolve the controller AWS account'
+          amazon.aws.aws_caller_info:
+          delegate_to: 'localhost'
+          vars:
+            ansible_shell_type: 'sh'
+          become: false
+          register: __inventory_caller__
+
+        - name: 'CONFIGURE | Create the controller artifact directory'
+          ansible.builtin.tempfile:
+            state: 'directory'
+            prefix: 'pdq-inventory-'
+          delegate_to: 'localhost'
+          vars:
+            ansible_shell_type: 'sh'
+          become: false
+          register: __inventory_controller_temp__
+
+        - name: 'CONFIGURE | Download the pinned PDQ Inventory artifact'
+          amazon.aws.s3_object:
+            bucket: '{{ __inventory_caller__.account }}-ansible'
+            object: '{{ config.inventory_installer.object_key }}'
+            dest: >-
+              {{ __inventory_controller_temp__.path }}/{{
+              config.inventory_installer.object_key | basename }}
+            mode: 'get'
+            region: '{{ config.inventory_installer.region }}'
+            ignore_nonexistent_bucket: true
+          delegate_to: 'localhost'
+          vars:
+            ansible_shell_type: 'sh'
+          become: false
+        #endregion --- [ Delivery: Resolving Controller Artifact Source ] -------------------- #
+
+        #region ------ [ Delivery: Verifying The Downloaded Artifact ] ----------------------- #
+        - name: 'CONFIGURE | Calculate the PDQ Inventory artifact checksum'
+          ansible.builtin.stat:
+            path: >-
+              {{ __inventory_controller_temp__.path }}/{{
+              config.inventory_installer.object_key | basename }}
+            checksum_algorithm: 'sha256'
+          delegate_to: 'localhost'
+          vars:
+            ansible_shell_type: 'sh'
+          become: false
+          register: __inventory_artifact_stat__
+
+        - name: 'GUARD | Verify the PDQ Inventory artifact checksum'
+          ansible.builtin.assert:
+            that:
+              - __inventory_artifact_stat__.stat.checksum == config.inventory_installer.sha256
+            fail_msg: >-
+              PDQ Inventory artifact checksum mismatch: refusing to copy or execute the artifact.
+            quiet: true
+          delegate_to: 'localhost'
+          vars:
+            ansible_shell_type: 'sh'
+          become: false
+        #endregion --- [ Delivery: Verifying The Downloaded Artifact ] ----------------------- #
+
+        #region ------ [ Delivery: Installing On The Target ] -------------------------------- #
+        - name: 'CONFIGURE | Stage the verified PDQ Inventory artifact'
+          ansible.windows.win_copy:
+            src: >-
+              {{ __inventory_controller_temp__.path }}/{{
+              config.inventory_installer.object_key | basename }}
+            dest: '{{ config.inventory_installer.staging_path }}'
+            force: true
+
+        - name: 'CONFIGURE | Install the verified PDQ Inventory artifact'
+          ansible.windows.win_package:
+            path: '{{ config.inventory_installer.staging_path }}'
+            product_id: '{{ config.inventory_installer.product_id }}'
+            arguments:
+              - '/s'
+              - '/norestart'
+            expected_return_code: [0]
+            state: 'present'
+        #endregion --- [ Delivery: Installing On The Target ] -------------------------------- #
+      always:
+        #region ------ [ Delivery: Cleaning Up Temporary Artifacts ] ------------------------- #
+        # Cleanup remains inside the gated unit so a converged host performs no controller or
+        # guest mutation, while a delivery failure is cleaned before the outer rescue reports it.
+        - name: 'CLEANUP | Remove the controller artifact directory'
+          ansible.builtin.file:
+            path: '{{ __inventory_controller_temp__.path | default("") }}'
+            state: 'absent'
+          delegate_to: 'localhost'
+          vars:
+            ansible_shell_type: 'sh'
+          become: false
+          when:
+            - __inventory_controller_temp__ is defined
+            - __inventory_controller_temp__.path is defined
+          ignore_errors: true
+          register: __inventory_controller_cleanup__
+
+        - name: 'CLEANUP | Remove the guest staging artifact'
+          ansible.windows.win_file:
+            path: '{{ config.inventory_installer.staging_path }}'
+            state: 'absent'
+          when: config.inventory_installer.staging_path is defined
+          ignore_errors: true
+          register: __inventory_guest_cleanup__
+        #endregion --- [ Delivery: Cleaning Up Temporary Artifacts ] ------------------------- #
+  rescue:
+    #region ------ [ Delivery: Reporting Delivery Failure ] ---------------------------------- #
+    # The nested shape preserves the original delivery error until both cleanup results exist,
+    # without persisting role-internal failure data as a host fact.
+    - name: 'CONFIGURE | Report the PDQ Inventory delivery failure'
+      ansible.builtin.fail:
+        msg: >-
+          {{ ansible_failed_result.msg
+          | default('PDQ Inventory installation failed', true) }}
+          Cleanup results: controller cleanup failed={{
+          __inventory_controller_cleanup__.failed | default(false) }};
+          guest cleanup failed={{ __inventory_guest_cleanup__.failed | default(false) }}.
+    #endregion --- [ Delivery: Reporting Delivery Failure ] ---------------------------------- #
+#endregion --- [ PDQ Inventory: Delivering The Pinned Artifact ] ----------------------------- #
+
+#region ------ [ PDQ Inventory: Reporting Cleanup Failure ] ---------------------------------- #
+- name: 'CLEANUP | Report the PDQ Inventory cleanup failure'
+  ansible.builtin.fail:
+    msg: >-
+      PDQ Inventory installation completed, but artifact cleanup failed. Cleanup results:
+      controller cleanup failed={{ __inventory_controller_cleanup__.failed | default(false) }};
+      guest cleanup failed={{ __inventory_guest_cleanup__.failed | default(false) }}.
+  when: >-
+    (__inventory_controller_cleanup__.failed | default(false))
+    or (__inventory_guest_cleanup__.failed | default(false))
+#endregion --- [ PDQ Inventory: Reporting Cleanup Failure ] ---------------------------------- #
+
+#region ------ [ PDQ Inventory: Verifying Installed Identity ] ------------------------------- #
+- name: 'END | Observe the installed PDQ Inventory identity'
+  vars:
+    __inventory_uninstall_root__: >-
+      HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall
+  ansible.windows.win_reg_stat:
+    path: '{{ __inventory_uninstall_root__ }}\{{ config.inventory_installer.product_id }}'
+  register: __inventory_installed_registration__
+
+- name: 'END | Observe the installed PDQ Inventory service'
+  ansible.windows.win_service_info:
+    name: 'PDQInventory'
+  register: __inventory_installed_service__
+
+- name: 'END | Verify the installed PDQ Inventory identity'
+  vars:
+    __inventory_initial_absent__: >-
+      {{
+        not __inventory_registration__.exists
+        and not __inventory_service__.exists
+      }}
+    __inventory_initial_converged__: >-
+      {{
+        __inventory_registration__.exists
+        and 'DisplayName' in (__inventory_registration__.properties | default({}))
+        and __inventory_registration__.properties.DisplayName.value == 'PDQ Inventory'
+        and 'DisplayVersion' in (__inventory_registration__.properties | default({}))
+        and __inventory_registration__.properties.DisplayVersion.value
+        == config.inventory_installer.version
+        and __inventory_service__.exists
+      }}
+    __inventory_delivery_attempted__: >-
+      {{ not ansible_check_mode and __inventory_initial_absent__ }}
+  ansible.builtin.assert:
+    that:
+      - __inventory_installed_registration__.exists
+      - >-
+        'DisplayName' in (__inventory_installed_registration__.properties | default({}))
+        and __inventory_installed_registration__.properties.DisplayName.value == 'PDQ Inventory'
+      - >-
+        'DisplayVersion' in (__inventory_installed_registration__.properties | default({}))
+        and __inventory_installed_registration__.properties.DisplayVersion.value
+        == config.inventory_installer.version
+      - __inventory_installed_service__.exists
+    fail_msg: >-
+      {% if ansible_check_mode and __inventory_initial_absent__ %}
+      PDQ Inventory installation is not supported in check mode; run without --check to install
+      the pinned artifact.
+      {% elif not __inventory_initial_absent__ and not __inventory_initial_converged__ %}
+      Unsupported initial PDQ Inventory identity: expected both the uninstall registration and
+      PDQInventory service to be absent, or both to be present with DisplayName PDQ Inventory and
+      DisplayVersion {{ config.inventory_installer.version }}. Upgrade, downgrade, and
+      partial-install repair are outside this piece. Observed uninstall key present={{
+      __inventory_registration__.exists }}, DisplayName property present={{ 'DisplayName' in
+      (__inventory_registration__.properties | default({})) }}, DisplayName={{
+      __inventory_registration__.properties.DisplayName.value if 'DisplayName' in
+      (__inventory_registration__.properties | default({})) else 'absent' }}, DisplayVersion
+      property present={{ 'DisplayVersion' in
+      (__inventory_registration__.properties | default({})) }}, DisplayVersion={{
+      __inventory_registration__.properties.DisplayVersion.value if 'DisplayVersion' in
+      (__inventory_registration__.properties | default({})) else 'absent' }}, PDQInventory
+      service present={{ __inventory_service__.exists }}.
+      {% else %}
+      PDQ Inventory postcondition failed: expected DisplayName PDQ Inventory, DisplayVersion
+      {{ config.inventory_installer.version }}, and the PDQInventory service. Delivery attempted={{
+      __inventory_delivery_attempted__ | string | lower }}. Observed uninstall key present={{
+      __inventory_installed_registration__.exists }}, DisplayName property present={{
+      'DisplayName' in (__inventory_installed_registration__.properties | default({})) }},
+      DisplayName={{ __inventory_installed_registration__.properties.DisplayName.value if
+      'DisplayName' in (__inventory_installed_registration__.properties | default({})) else
+      'absent' }}, DisplayVersion property present={{ 'DisplayVersion' in
+      (__inventory_installed_registration__.properties | default({})) }}, DisplayVersion={{
+      __inventory_installed_registration__.properties.DisplayVersion.value if 'DisplayVersion' in
+      (__inventory_installed_registration__.properties | default({})) else 'absent' }},
+      PDQInventory service present={{ __inventory_installed_service__.exists }}.
+      {% endif %}
+    quiet: true
+#endregion --- [ PDQ Inventory: Verifying Installed Identity ] ------------------------------- #
+
+#endregion --- [ PDQ Inventory ] ------------------------------------------------------------- #
+
+#endregion --- [ Main ] ---------------------------------------------------------------------- #

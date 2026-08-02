@@ -111,9 +111,20 @@ installer delivers it, measured for this bundle as Stopped and Disabled.
 ## Cleanup limits
 
 While a host remains active, the delivery unit attempts to remove both its controller temporary
-directory and its guest staging file after success or failure. A cleanup failure following a
-successful installation fails the run with a cleanup-specific report; it is not mislabeled as an
-installation failure.
+directory and its guest staging file after success or failure. On a delivery failure, the delivery
+error is reported first without cleanup projections, and cleanup runs afterward. If cleanup also
+fails, the run produces two failure records: the delivery error followed by the cleanup-specific
+report. A cleanup failure following a successful installation also fails the run with that report;
+it is not mislabeled as an installation failure.
+
+The cleanup report is status-neutral about the installation because it can follow either a
+successful or a failed delivery. It claims neither outcome and reports only the cleanup results:
+
+```yaml
+PDQ Inventory artifact cleanup failed. Cleanup results: controller cleanup failed={{
+__inventory_controller_cleanup__.failed | default(false) }}; guest cleanup failed={{
+__inventory_guest_cleanup__.failed | default(false) }}.
+```
 
 An unreachable host triggers neither `rescue` nor `always`. The controller cleanup is delegated
 from that now-inactive host, so losing the target strands both the guest staging file and the

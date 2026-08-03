@@ -33,25 +33,25 @@
       }
     },
     {
-      "Sid": "GetPocInstanceProfile",
+      "Sid": "GetSharedInstanceProfile",
       "Effect": "Allow",
       "Action": "iam:GetInstanceProfile",
-      "Resource": "arn:aws:iam::<account-id>:instance-profile/pdq-deploy-inventory-poc-profile"
+      "Resource": "arn:aws:iam::<account-id>:instance-profile/nwarila-ec2-profile"
     },
     {
-      "Sid": "InspectPocInstanceRolePolicies",
+      "Sid": "InspectSharedInstanceRolePolicies",
       "Effect": "Allow",
       "Action": [
         "iam:ListAttachedRolePolicies",
         "iam:ListRolePolicies"
       ],
-      "Resource": "arn:aws:iam::<account-id>:role/pdq-deploy-inventory-poc-role"
+      "Resource": "arn:aws:iam::<account-id>:role/nwarila-ec2-role"
     },
     {
-      "Sid": "PassOnlyPocInstanceRoleToEc2",
+      "Sid": "PassOnlySharedInstanceRoleToEc2",
       "Effect": "Allow",
       "Action": "iam:PassRole",
-      "Resource": "arn:aws:iam::<account-id>:role/pdq-deploy-inventory-poc-role",
+      "Resource": "arn:aws:iam::<account-id>:role/nwarila-ec2-role",
       "Condition": {
         "StringEquals": {
           "iam:PassedToService": "ec2.amazonaws.com"

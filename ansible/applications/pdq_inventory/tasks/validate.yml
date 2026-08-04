@@ -20,7 +20,7 @@
   when: (state | default('present') | string | lower | trim) == 'present'
   ansible.builtin.assert:
     that:
-      - config.inventory_installer.artifact_bucket is string
+      - (config.inventory_installer.artifact_bucket | default(none)) is string
       - >-
         (config.inventory_installer.artifact_bucket | default('', true) | string | trim)
         | length > 0

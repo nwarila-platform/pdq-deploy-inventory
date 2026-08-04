@@ -59,7 +59,7 @@ out of git.
 |---|---|---|---|
 | `github_nwarila-platform_pdq-deploy-inventory` | `roles/github_nwarila-platform_pdq-deploy-inventory.trust.json` | `github_nwarila-platform_pdq-deploy-inventory` · `pdq-deploy-inventory_deploy-ec2-launch` · `pdq-deploy-inventory_deploy-ec2-lifecycle` · `pdq-deploy-inventory_deploy-sg-ssm-kms` · `pdq-deploy-inventory_deploy-discovery-iam` | CI state, deploy, prove, destroy |
 | `github_nwarila-platform_pdq-deploy-inventory-admin` | `roles/github_nwarila-platform_pdq-deploy-inventory-admin.trust.json` | `github_nwarila-platform_pdq-deploy-inventory` · the same four deploy policies · `pdq-deploy-inventory_artifact-read` | Operator break-glass and local deploy |
-| `pdq-deploy-inventory-poc-role` | `roles/pdq-deploy-inventory-poc-role.trust.json` | `AmazonSSMManagedInstanceCore` (AWS-managed) **only** | EC2 instance profile `pdq-deploy-inventory-poc-profile` |
+| `nwarila-ec2-role` | `roles/nwarila-ec2-role.trust.json` | `AmazonSSMManagedInstanceCore` (AWS-managed) **only** | EC2 instance profile `nwarila-ec2-profile` |
 
 The `-admin` role carries the state policy as well as the four deploy policies: a local
 `deploy -> test -> destroy` cannot read or write Terraform state without it, and the row above

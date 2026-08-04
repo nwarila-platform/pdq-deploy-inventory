@@ -85,8 +85,8 @@ done
 # ---- the declared object model -------------------------------------------------------------
 CI_ROLE="github_${OWNER}_${REPO}"
 ADMIN_ROLE="github_${OWNER}_${REPO}-admin"
-POC_ROLE="${REPO}-poc-role"
-POC_PROFILE="${REPO}-poc-profile"
+POC_ROLE="nwarila-ec2-role"
+POC_PROFILE="nwarila-ec2-profile"
 # policy file -> applied name (file basename IS the applied name, per this repo's convention)
 mapfile -t POLICIES < <(cd "${WORK}/policies" && ls *.json | sed 's/\.json$//')
 DEPLOY_POLICIES=(); ADMIN_ONLY_POLICIES=(); STATE_POLICY=''
@@ -132,7 +132,7 @@ sys.exit(0 if l['Statement']==s['Statement'] else 1)" "${WORK}/live.json" "${WOR
     done
     for pair in "${CI_ROLE}:github_${OWNER}_${REPO}.trust.json" \
                 "${ADMIN_ROLE}:github_${OWNER}_${REPO}-admin.trust.json" \
-                "${POC_ROLE}:${REPO}-poc-role.trust.json"; do
+                "${POC_ROLE}:nwarila-ec2-role.trust.json"; do
         role="${pair%%:*}"; tf="${pair#*:}"
         if ! exists_role "${role}"; then say "role ${role}" 'ABSENT LIVE'; drift=1; continue; fi
         aws iam get-role --role-name "${role}" --profile "${PROFILE}" --query Role.AssumeRolePolicyDocument --output json > "${WORK}/live.json"
@@ -187,7 +187,7 @@ apply_role() { # role-name trust-file
 }
 apply_role "${CI_ROLE}"    "${WORK}/roles/github_${OWNER}_${REPO}.trust.json"
 apply_role "${ADMIN_ROLE}" "${WORK}/roles/github_${OWNER}_${REPO}-admin.trust.json"
-apply_role "${POC_ROLE}"   "${WORK}/roles/${REPO}-poc-role.trust.json"
+apply_role "${POC_ROLE}"   "${WORK}/roles/nwarila-ec2-role.trust.json"
 
 for p in "${ADMIN_ONLY_POLICIES[@]}"; do
     arn="arn:aws:iam::${ACCOUNT}:policy/${p}"

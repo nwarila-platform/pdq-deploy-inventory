@@ -88,7 +88,7 @@ print(eval(sys.argv[2], {"d": d, "json": json}))' "${WORK}/roles/${file}" "${exp
 }
 CI_TRUST="github_nwarila-platform_${THIS_REPO}.trust.json"
 ADMIN_TRUST="github_nwarila-platform_${THIS_REPO}-admin.trust.json"
-POC_TRUST="${THIS_REPO}-poc-role.trust.json"
+POC_TRUST="nwarila-ec2-role.trust.json"
 C='d["Statement"][0]["Condition"]'
 
 # Single-valued sub and job_workflow_ref: an array is what teaches a cloner to APPEND, and an
@@ -237,11 +237,11 @@ assert "delete the identity tag"        explicitDeny ec2:DeleteTags "${INST}" "$
        "${TAG}=string=${REPO_ID}" "aws:TagKeys=string=nwarila:management:repository-id"
 
 echo "== PassRole =="
-assert "pass own instance role"         allowed      iam:PassRole "arn:aws:iam::${ACCOUNT}:role/${THIS_REPO}-poc-role" \
+assert "pass own instance role"         allowed      iam:PassRole "arn:aws:iam::${ACCOUNT}:role/nwarila-ec2-role" \
        "iam:PassedToService=string=ec2.amazonaws.com"
-assert "pass a sibling's instance role" implicitDeny iam:PassRole "arn:aws:iam::${ACCOUNT}:role/${SIBLINGS[1]}-poc-role" \
+assert "pass a non-instance role"       implicitDeny iam:PassRole "arn:aws:iam::${ACCOUNT}:role/github_nwarila-platform_${SIBLINGS[1]}-admin" \
        "iam:PassedToService=string=ec2.amazonaws.com"
-assert "pass own role to a non-EC2"     implicitDeny iam:PassRole "arn:aws:iam::${ACCOUNT}:role/${THIS_REPO}-poc-role" \
+assert "pass own role to a non-EC2"     implicitDeny iam:PassRole "arn:aws:iam::${ACCOUNT}:role/nwarila-ec2-role" \
        "iam:PassedToService=string=lambda.amazonaws.com"
 
 echo "== state protection =="

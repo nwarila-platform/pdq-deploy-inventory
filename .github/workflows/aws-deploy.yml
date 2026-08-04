@@ -117,7 +117,7 @@ jobs:
                                      --max-items 1 --query 'length(Images)' --output text >/dev/null
           aws ec2 describe-instance-types --instance-types t3.medium \
                                      --query 'length(InstanceTypes)' --output text >/dev/null
-          aws iam get-instance-profile --instance-profile-name pdq-deploy-inventory-poc-profile \
+          aws iam get-instance-profile --instance-profile-name nwarila-ec2-profile \
                                      --query 'InstanceProfile.Roles[0].RoleName' --output text >/dev/null
           echo 'discovery grants intact'
 

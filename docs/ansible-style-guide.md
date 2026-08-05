@@ -65,9 +65,16 @@
   the boxed header comment (`File:`, description, version where applicable).
 - Fully-qualified collection names always (`ansible.builtin.*`, `ansible.windows.*`).
 - Asserts use `quiet: true` with actionable, templated `fail_msg`.
+- **RATIFIED (Director, 2026-08-05):** A `when:` expression referencing an
+  operator-supplied variable uses the default-and-normalize form
+  `(state | default('present') | string | lower | trim) == 'present'`, never the bare variable;
+  omission otherwise hard-fails the play.
 - Comments explain WHY (contract, failure modes), not what.
 - Service/state verification: retry loops with explicit `retries`/`delay`/`until`
   rather than fixed sleeps (wazuh_agent END-stage pattern).
+- **RATIFIED (Director, 2026-08-05):** A delivery chain that downloads and stages
+  an installer hash-verifies the pinned checksum at the execution site — the staged
+  guest copy, immediately before execution — not only at the download site.
 - **Avoid `set_fact` for role-internal derived/intermediate data — RATIFIED (R3, 2026-07-15).**
   `set_fact` registers HOST FACTS that persist for the rest of the play and BLEED into later
   roles (variable pollution + surprising precedence). Use scoped alternatives: block `vars:`
@@ -77,6 +84,9 @@
 - **RATIFIED (Director, 2026-07-31):** A task whose registered result is consumed to
   report success or failure uses `ignore_errors: true`, not `failed_when: false`;
   `failed_when: false` rewrites `.failed` and makes a real module error report success.
+- **RATIFIED (Director, 2026-08-05):** An `always:` cleanup removes a fixed staging
+  path only when gated on the register of the task that staged it; a run that never
+  reached staging never deletes the path.
 - **RATIFIED (Director, 2026-07-31):** Place a conditionally included unit's
   postconditions after and outside its `include_tasks`, so verification also runs on
   the converged path where the include is skipped.

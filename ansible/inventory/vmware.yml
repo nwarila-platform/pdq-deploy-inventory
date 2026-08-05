@@ -9,10 +9,12 @@
 # Auth: SSH key supplied by the controller's persistent ssh-agent; no key path or password
 # belongs in this file.
 #
-# The PDQ dev VM (pdq-dev) is a full clone of the windows-wsus clean baseline
+# The pdq_servers group contains the PDQ dev VM (pdq-dev), a full clone of the windows-wsus clean
+# baseline
 # (pre-ansible-clean-ssh-ready), with its own static IP 192.168.0.182 and generated MAC.
 # The windows-wsus and pdq dev VMs may run at the same time.
 # The role formats/relabels the 3 inherited blank data disks to PDQDEPLOY/PDQINVENTORY/PDQSHARE.
+# The controller group declares localhost for delegated POSIX tasks and pins the playbook Python.
 #
 # =========================================================================================== #
 ---
@@ -22,7 +24,13 @@ all:
       hosts:
         pdq-dev:
           ansible_host: '192.168.0.182'   # own static IP and generated MAC
-  vars:
-    ansible_user: 'administrator'
-    ansible_connection: 'ssh'
-    ansible_shell_type: 'powershell'
+      vars:
+        ansible_user: 'administrator'
+        ansible_connection: 'ssh'
+        ansible_shell_type: 'powershell'
+    controller:
+      hosts:
+        localhost:
+          ansible_connection: 'local'
+          ansible_shell_type: 'sh'
+          ansible_python_interpreter: "{{ ansible_playbook_python }}"

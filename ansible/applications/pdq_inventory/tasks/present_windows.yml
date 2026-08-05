@@ -65,9 +65,6 @@
         state: 'directory'
         prefix: 'pdq-inventory-'
       delegate_to: 'localhost'
-      vars:
-        ansible_shell_type: 'sh'
-      become: false
       register: __inventory_controller_temp__
 
     - name: 'CONFIGURE | Download the pinned PDQ Inventory artifact'
@@ -81,9 +78,6 @@
         region: '{{ config.inventory_installer.region }}'
         ignore_nonexistent_bucket: true
       delegate_to: 'localhost'
-      vars:
-        ansible_shell_type: 'sh'
-      become: false
     #endregion --- [ Delivery: Resolving Controller Artifact Source ] -------------------- #
 
     #region ------ [ Delivery: Verifying The Downloaded Artifact ] ----------------------- #
@@ -94,9 +88,6 @@
           config.inventory_installer.object_key | basename }}
         checksum_algorithm: 'sha256'
       delegate_to: 'localhost'
-      vars:
-        ansible_shell_type: 'sh'
-      become: false
       register: __inventory_artifact_stat__
 
     - name: 'GUARD | Verify the PDQ Inventory artifact checksum'
@@ -107,9 +98,6 @@
           PDQ Inventory artifact checksum mismatch: refusing to copy or execute the artifact.
         quiet: true
       delegate_to: 'localhost'
-      vars:
-        ansible_shell_type: 'sh'
-      become: false
     #endregion --- [ Delivery: Verifying The Downloaded Artifact ] ----------------------- #
 
     #region ------ [ Delivery: Installing On The Target ] -------------------------------- #
@@ -148,9 +136,6 @@
         path: '{{ __inventory_controller_temp__.path | default("") }}'
         state: 'absent'
       delegate_to: 'localhost'
-      vars:
-        ansible_shell_type: 'sh'
-      become: false
       when:
         - __inventory_controller_temp__ is defined
         - __inventory_controller_temp__.path is defined

@@ -200,7 +200,26 @@ clobber, verified at the module source). These stay `quiet: true` with an action
 - `become: false` at play level (framework chassis `become=sudo` is POSIX-only;
   built-in administrator over SSH is already elevated). Revisit for least-privilege
   runs (runas) when a non-admin service account is introduced — TBD.
-- **RATIFIED (Director, 2026-07-31):** In a Windows play, every task delegated to the
+- **RATIFIED (Director, 2026-08-04) — supersedes the 2026-07-31 rule below:** declare
+  connection settings PER GROUP and give the controller its own inventory host; do not
+  repeat the shell type per task. Windows connection vars on `all` reach the controller,
+  because a delegated task resolves connection vars from the delegate's own var context
+  and an implicit localhost inherits `all`. So: Windows vars on the Windows group, plus
+  an explicit `localhost` carrying `ansible_connection: local`,
+  `ansible_shell_type: 'sh'` and `ansible_python_interpreter: "{{ ansible_playbook_python }}"`.
+  The interpreter pin is mandatory, not decorative — an inventory-defined localhost is no
+  longer the implicit localhost and loses its automatic interpreter, so discovery would
+  pick the system interpreter, which carries none of the controller-side SDKs. A task-level
+  `vars: { ansible_shell_type: ... }` is then reserved for a delegate that genuinely differs
+  from its inventory declaration.
+  Evidence for the leak (verified on core 2.21.2 by inspecting `ansible_delegated_vars`
+  and `-vvv` payloads): without a controller declaration the delegated context resolves
+  `ansible_shell_type=powershell` and `ansible_user=administrator`, and controller payloads
+  are built by the PowerShell shell plugin — `powershell -EncodedCommand`, module staged to
+  a literal `\path\with\backslashes\%TEMP%\ansible-tmp-…\AnsiballZ_*.ps1`. Where a
+  PowerShell binary happens to exist on the controller, the task reports success while
+  writing that garbage into the working directory and never cleaning it up.
+- **SUPERSEDED (was RATIFIED 2026-07-31):** In a Windows play, every task delegated to the
   controller carries `vars: { ansible_shell_type: 'sh' }` alongside `become: false`;
   otherwise the inherited PowerShell shell plugin runs controller payloads incorrectly.
 - Windows modules from `ansible.windows` (fallback `community.windows`); never invoke

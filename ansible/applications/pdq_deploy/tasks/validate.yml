@@ -17,7 +17,7 @@
     quiet: true
 
 - name: 'BEGIN | Assert PDQ Deploy Artifact Bucket Provided'
-  when: state == 'present'
+  when: (state | default('present') | string | lower | trim) == 'present'
   ansible.builtin.assert:
     that:
       - (config.deploy_installer.artifact_bucket | default(none)) is string

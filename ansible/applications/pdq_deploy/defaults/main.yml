@@ -7,6 +7,15 @@
 # =========================================================================================== #
 ---
 pdq_deploy_defaults:
+  # Pinned PDQ Deploy installer. artifact_bucket is required in the pdq_deploy override dict and
+  # has no safe default.
+  deploy_installer:
+    version: '20.1.8.0'
+    object_key: 'PDQ/Deploy/20.1.8.0/PDQ_Deploy_x86-x64.exe'
+    sha256: '856dbe3dd4544d4b9ae1f382ee51f2a5f25f41714c462fa4afcff9743cc85eb9'
+    region: 'us-east-1'
+    staging_path: 'C:\Windows\Temp\PDQ_Deploy_x86-x64.exe'
+    product_id: '{4E9FA177-A200-4DFC-9DC6-9D0290FCAAC2}'
   data_disks:
     share:
       drive_letter: 'G'

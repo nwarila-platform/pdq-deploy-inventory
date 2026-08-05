@@ -2,10 +2,14 @@
 # File: '{{ role_path }}/tasks/present_windows.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# Ensures the Windows prerequisites owned by the PDQ Deploy application role.
+# Ensures the Windows prerequisites and installs the pinned PDQ Deploy artifact.
 #
 # =========================================================================================== #
 ---
+#region ------ [ Main ] ---------------------------------------------------------------------- #
+
+#region ------ [ Background Service User ] --------------------------------------------------- #
+
 - name: 'CONFIGURE | Create the PDQ Background Service User'
   block:
     - name: 'CONFIGURE | Create the local PDQ service account'
@@ -27,6 +31,12 @@
         users:
           - '.\{{ config.service_account.name }}'
         action: 'add'
+
+#endregion --- [ Background Service User ] --------------------------------------------------- #
+
+#region ------ [ PDQ Deploy ] ---------------------------------------------------------------- #
+
+#region ------ [ PDQ Deploy: App Share ] ------------------------------------------------------ #
 
 - name: 'CONFIGURE | Create the PDQ Deploy App Share'
   vars:
@@ -75,3 +85,231 @@
         full: 'Administrators'
         rule_action: 'set'
         caching_mode: 'None'
+
+#endregion --- [ PDQ Deploy: App Share ] ------------------------------------------------------ #
+
+#region ------ [ PDQ Deploy: Observing Installed State ] ------------------------------------- #
+- name: 'GUARD | Observe the PDQ Deploy uninstall registration'
+  vars:
+    __deploy_uninstall_root__: >-
+      HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall
+  ansible.windows.win_reg_stat:
+    path: '{{ __deploy_uninstall_root__ }}\{{ config.deploy_installer.product_id }}'
+  register: __deploy_registration__
+
+- name: 'GUARD | Observe the PDQ Deploy service'
+  ansible.windows.win_service_info:
+    name: 'PDQDeploy'
+  register: __deploy_service__
+#endregion --- [ PDQ Deploy: Observing Installed State ] ------------------------------------- #
+
+#region ------ [ PDQ Deploy: Delivering The Pinned Artifact ] -------------------------------- #
+- name: 'CONFIGURE | Deliver the pinned PDQ Deploy artifact'
+  when:
+    - not ansible_check_mode
+    - not __deploy_registration__.exists
+    - not __deploy_service__.exists
+  block:
+    #region ------ [ Deploy Delivery: Resolving Controller Artifact Source ] ------------- #
+    - name: 'CONFIGURE | Create the controller artifact directory'
+      ansible.builtin.tempfile:
+        state: 'directory'
+        prefix: 'pdq-deploy-'
+      delegate_to: 'localhost'
+      register: __deploy_controller_temp__
+
+    - name: 'CONFIGURE | Download the pinned PDQ Deploy artifact'
+      amazon.aws.s3_object:
+        bucket: '{{ config.deploy_installer.artifact_bucket }}'
+        object: '{{ config.deploy_installer.object_key }}'
+        dest: >-
+          {{ __deploy_controller_temp__.path }}/{{
+          config.deploy_installer.object_key | basename }}
+        mode: 'get'
+        region: '{{ config.deploy_installer.region }}'
+        ignore_nonexistent_bucket: true
+      delegate_to: 'localhost'
+    #endregion --- [ Deploy Delivery: Resolving Controller Artifact Source ] ------------- #
+
+    #region ------ [ Deploy Delivery: Verifying The Downloaded Artifact ] ---------------- #
+    - name: 'CONFIGURE | Calculate the PDQ Deploy artifact checksum'
+      ansible.builtin.stat:
+        path: >-
+          {{ __deploy_controller_temp__.path }}/{{
+          config.deploy_installer.object_key | basename }}
+        checksum_algorithm: 'sha256'
+      delegate_to: 'localhost'
+      register: __deploy_artifact_stat__
+
+    - name: 'GUARD | Verify the PDQ Deploy artifact checksum'
+      ansible.builtin.assert:
+        that:
+          - __deploy_artifact_stat__.stat.checksum == config.deploy_installer.sha256
+        fail_msg: >-
+          PDQ Deploy artifact checksum mismatch: refusing to copy or execute the artifact.
+        quiet: true
+    #endregion --- [ Deploy Delivery: Verifying The Downloaded Artifact ] ---------------- #
+
+    #region ------ [ Deploy Delivery: Installing On The Target ] ------------------------- #
+    - name: 'CONFIGURE | Stage the verified PDQ Deploy artifact'
+      ansible.windows.win_copy:
+        src: >-
+          {{ __deploy_controller_temp__.path }}/{{
+          config.deploy_installer.object_key | basename }}
+        dest: '{{ config.deploy_installer.staging_path }}'
+        force: true
+      register: __deploy_stage__
+
+    - name: 'CONFIGURE | Calculate the staged PDQ Deploy artifact checksum'
+      ansible.windows.win_stat:
+        path: '{{ config.deploy_installer.staging_path }}'
+        checksum_algorithm: 'sha256'
+      register: __deploy_guest_artifact_stat__
+
+    - name: 'GUARD | Verify the staged PDQ Deploy artifact checksum'
+      ansible.builtin.assert:
+        that:
+          - __deploy_guest_artifact_stat__.stat.checksum == config.deploy_installer.sha256
+        fail_msg: >-
+          Staged PDQ Deploy artifact checksum mismatch: refusing to execute the artifact.
+        quiet: true
+
+    - name: 'CONFIGURE | Install the verified PDQ Deploy artifact'
+      ansible.windows.win_package:
+        path: '{{ config.deploy_installer.staging_path }}'
+        product_id: '{{ config.deploy_installer.product_id }}'
+        arguments:
+          - '/s'
+        expected_return_code: [0]
+        state: 'present'
+    #endregion --- [ Deploy Delivery: Installing On The Target ] ------------------------- #
+  rescue:
+    #region ------ [ Deploy Delivery: Reporting Delivery Failure ] ---------------------------- #
+    # The always section has not run yet, so cleanup registers do not exist here; projecting
+    # cleanup results would invent an outcome rather than report one that was observed.
+    - name: 'CONFIGURE | Report the PDQ Deploy delivery failure'
+      ansible.builtin.fail:
+        msg: >-
+          {{ ansible_failed_result.msg
+          | default('PDQ Deploy installation failed', true) }}
+    #endregion --- [ Deploy Delivery: Reporting Delivery Failure ] ---------------------------- #
+  always:
+    #region ------ [ Deploy Delivery: Cleaning Up Temporary Artifacts ] ----------------------- #
+    - name: 'CLEANUP | Remove the controller artifact directory'
+      ansible.builtin.file:
+        path: '{{ __deploy_controller_temp__.path | default("") }}'
+        state: 'absent'
+      delegate_to: 'localhost'
+      when:
+        - __deploy_controller_temp__ is defined
+        - __deploy_controller_temp__.path is defined
+      ignore_errors: true
+      register: __deploy_controller_cleanup__
+
+    - name: 'CLEANUP | Remove the guest staging artifact'
+      ansible.windows.win_file:
+        path: '{{ config.deploy_installer.staging_path }}'
+        state: 'absent'
+      when:
+        - __deploy_stage__ is defined
+        - config.deploy_installer.staging_path is defined
+      ignore_errors: true
+      register: __deploy_guest_cleanup__
+    #endregion --- [ Deploy Delivery: Cleaning Up Temporary Artifacts ] ----------------------- #
+
+    #region ------ [ Deploy Delivery: Reporting Cleanup Failure ] ----------------------------- #
+    # This report is reachable after both successful and failed delivery, so it stays
+    # status-neutral about the installation and reports only observed cleanup outcomes.
+    - name: 'CLEANUP | Report the PDQ Deploy cleanup failure'
+      ansible.builtin.fail:
+        msg: >-
+          PDQ Deploy artifact cleanup failed. Cleanup results: controller cleanup failed={{
+          __deploy_controller_cleanup__.failed | default(false) }}; guest cleanup failed={{
+          __deploy_guest_cleanup__.failed | default(false) }}.
+      when: >-
+        (__deploy_controller_cleanup__.failed | default(false))
+        or (__deploy_guest_cleanup__.failed | default(false))
+    #endregion --- [ Deploy Delivery: Reporting Cleanup Failure ] ----------------------------- #
+#endregion --- [ PDQ Deploy: Delivering The Pinned Artifact ] -------------------------------- #
+
+#region ------ [ PDQ Deploy: Verifying Installed Identity ] ---------------------------------- #
+- name: 'END | Observe the installed PDQ Deploy identity'
+  vars:
+    __deploy_uninstall_root__: >-
+      HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall
+  ansible.windows.win_reg_stat:
+    path: '{{ __deploy_uninstall_root__ }}\{{ config.deploy_installer.product_id }}'
+  register: __deploy_installed_registration__
+
+- name: 'END | Observe the installed PDQ Deploy service'
+  ansible.windows.win_service_info:
+    name: 'PDQDeploy'
+  register: __deploy_installed_service__
+
+- name: 'END | Verify the installed PDQ Deploy identity'
+  vars:
+    __deploy_initial_absent__: >-
+      {{
+        not __deploy_registration__.exists
+        and not __deploy_service__.exists
+      }}
+    __deploy_initial_converged__: >-
+      {{
+        __deploy_registration__.exists
+        and 'DisplayName' in (__deploy_registration__.properties | default({}))
+        and __deploy_registration__.properties.DisplayName.value == 'PDQ Deploy'
+        and 'DisplayVersion' in (__deploy_registration__.properties | default({}))
+        and __deploy_registration__.properties.DisplayVersion.value
+        == config.deploy_installer.version
+        and __deploy_service__.exists
+      }}
+    __deploy_delivery_attempted__: >-
+      {{ not ansible_check_mode and __deploy_initial_absent__ }}
+  ansible.builtin.assert:
+    that:
+      - __deploy_installed_registration__.exists
+      - >-
+        'DisplayName' in (__deploy_installed_registration__.properties | default({}))
+        and __deploy_installed_registration__.properties.DisplayName.value == 'PDQ Deploy'
+      - >-
+        'DisplayVersion' in (__deploy_installed_registration__.properties | default({}))
+        and __deploy_installed_registration__.properties.DisplayVersion.value
+        == config.deploy_installer.version
+      - __deploy_installed_service__.exists
+    fail_msg: >-
+      {% if ansible_check_mode and __deploy_initial_absent__ %}
+      PDQ Deploy installation is not supported in check mode; run without --check to install the
+      pinned artifact.
+      {% elif not __deploy_initial_absent__ and not __deploy_initial_converged__ %}
+      Unsupported initial PDQ Deploy identity: expected both the uninstall registration and
+      PDQDeploy service to be absent, or both to be present with DisplayName PDQ Deploy and
+      DisplayVersion {{ config.deploy_installer.version }}. Upgrade, downgrade, and partial-install
+      repair are outside this piece. Observed uninstall key present={{
+      __deploy_registration__.exists }}, DisplayName property present={{ 'DisplayName' in
+      (__deploy_registration__.properties | default({})) }}, DisplayName={{
+      __deploy_registration__.properties.DisplayName.value if 'DisplayName' in
+      (__deploy_registration__.properties | default({})) else 'absent' }}, DisplayVersion property
+      present={{ 'DisplayVersion' in (__deploy_registration__.properties | default({})) }},
+      DisplayVersion={{ __deploy_registration__.properties.DisplayVersion.value if 'DisplayVersion'
+      in (__deploy_registration__.properties | default({})) else 'absent' }}, PDQDeploy service
+      present={{ __deploy_service__.exists }}.
+      {% else %}
+      PDQ Deploy postcondition failed: expected DisplayName PDQ Deploy, DisplayVersion {{
+      config.deploy_installer.version }}, and the PDQDeploy service. Delivery attempted={{
+      __deploy_delivery_attempted__ | string | lower }}. Observed uninstall key present={{
+      __deploy_installed_registration__.exists }}, DisplayName property present={{ 'DisplayName' in
+      (__deploy_installed_registration__.properties | default({})) }}, DisplayName={{
+      __deploy_installed_registration__.properties.DisplayName.value if 'DisplayName' in
+      (__deploy_installed_registration__.properties | default({})) else 'absent' }}, DisplayVersion
+      property present={{ 'DisplayVersion' in
+      (__deploy_installed_registration__.properties | default({})) }}, DisplayVersion={{
+      __deploy_installed_registration__.properties.DisplayVersion.value if 'DisplayVersion' in
+      (__deploy_installed_registration__.properties | default({})) else 'absent' }}, PDQDeploy
+      service present={{ __deploy_installed_service__.exists }}.
+      {% endif %}
+    quiet: true
+#endregion --- [ PDQ Deploy: Verifying Installed Identity ] ---------------------------------- #
+
+#endregion --- [ PDQ Deploy ] ---------------------------------------------------------------- #
+
+#endregion --- [ Main ] ---------------------------------------------------------------------- #

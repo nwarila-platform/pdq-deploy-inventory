@@ -1,9 +1,10 @@
 # PDQ Deploy & Inventory — headless automation research
 
 **Type:** Reference. Documentation and live measurements that ground the application-role build
-queue. Compiled 2026-07-27 and corrected with PDQ Inventory 20.1.8.0 measurements on 2026-07-30.
-Values that still require measurement for later work are marked **[confirm on-VM]** and are
-re-researched independently before implementation.
+queue. Compiled 2026-07-27, corrected with PDQ Inventory 20.1.8.0 measurements on 2026-07-30, and
+extended with PDQ Deploy 20.1.8.0 measurements on 2026-08-05. Values that still require measurement
+for later work are marked **[confirm on-VM]** and are re-researched independently before
+implementation.
 
 ## Current automation surface
 
@@ -12,9 +13,13 @@ PDQ Inventory 20.1.8.0 installs headlessly from the WiX Burn bundle
 service mode, service credentials, console authorization, settings, system information, and
 database maintenance. Installation alone does not configure those concerns.
 
+PDQ Deploy 20.1.8.0 installs headlessly with `/s` from its vendor stub. Installation creates its
+uninstall identity and service but does not configure or start the application.
+
 | Concern | Mechanism |
 |---|---|
 | Inventory install | WiX Burn `.exe` bundle with `/s /norestart` |
+| Deploy install | Bespoke vendor `.exe` stub wrapping one 32-bit WiX 5 MSI; silent switch `/s` |
 | Central Server enable | CLI `SetServiceMode Server` |
 | Background Service User | CLI `SetServiceCredentials` / `BackgroundService` |
 | Integration authorization | CLI `ConsoleUsers` |
@@ -87,8 +92,9 @@ Inventory, the candidate setting is:
 
 `HKLM\SOFTWARE\WOW6432Node\Admin Arsenal\PDQ Inventory\Settings\Database\FileName`
 
-The analogous Deploy path must also be placed under `WOW6432Node` if its measured installation is
-32-bit. Later relocation work must verify that root on the VM before changing it.
+The measured Deploy installation is also 32-bit, but a clean install has no `Settings` tree. Later
+relocation work must verify the Deploy settings root after the first service or console run before
+changing it.
 
 The supported procedure remains: stop the background service, create the `FileName` string with
 the full target database path, copy the database, and restart the service. Whether companion files
@@ -122,6 +128,40 @@ exited. Re-running the bundle over that existing installation changed nothing. T
 therefore supplies no idempotency signal of its own; automation must classify the installed
 identity before deciding whether to run it.
 
+## Deploy 20.1.8.0 install measurements — measured 2026-08-05
+
+The Deploy installer is a bespoke vendor stub wrapping one 32-bit WiX 5 MSI, not a WiX Burn
+bundle. Its embedded switch table is exactly `/s /S /p /P /x /X`. The measured silent invocation
+is:
+
+```text
+PDQ_Deploy_x86-x64.exe /s
+```
+
+Clean and repeat silent invocations returned `0` with no reboot, and the wrapper waited
+synchronously for installation to finish. Re-executing it over an installed product performs a
+full MSI reconfiguration; it is never a no-op. Automation must therefore classify the installed
+identity before deciding whether to run the stub.
+
+The measured uninstall identity exists only in the 32-bit registration hive; the corresponding
+native hive was empty:
+
+| Field | Measured value |
+|---|---|
+| Hive | `HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall` |
+| ProductCode / key name | `{4E9FA177-A200-4DFC-9DC6-9D0290FCAAC2}` |
+| `DisplayName` | `PDQ Deploy` |
+| `DisplayVersion` | `20.1.8.0` |
+| `Publisher` | `PDQ.com` |
+
+The install root is `C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\`. The installer creates one
+service, `PDQDeploy`, under `LocalSystem`; it was installed Stopped and Disabled and was never
+started by the installer.
+
+Before any service or console run, the application configuration registry footprint is a single
+`License` string value of length one. There is no `Settings` tree and no `%ProgramData%\Admin
+Arsenal` tree until the first service or console run.
+
 ## Download and artifact delivery
 
 The measured release endpoint was public, unauthenticated, and versioned, and its release metadata
@@ -147,5 +187,3 @@ that other account's bucket. The target holds no AWS credential.
 - Exact configuration-command parameters on the installed versions.
 - The repository setting used by later automation.
 - Companion-file behavior during database relocation.
-- The measured Deploy installer format, architecture, registry paths, and licensing behavior;
-  Inventory measurements must not be projected onto Deploy without verification.

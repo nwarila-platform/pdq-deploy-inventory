@@ -60,14 +60,6 @@
     - not __inventory_service__.exists
   block:
     #region ------ [ Delivery: Resolving Controller Artifact Source ] -------------------- #
-    - name: 'CONFIGURE | Resolve the controller AWS account'
-      amazon.aws.aws_caller_info:
-      delegate_to: 'localhost'
-      vars:
-        ansible_shell_type: 'sh'
-      become: false
-      register: __inventory_caller__
-
     - name: 'CONFIGURE | Create the controller artifact directory'
       ansible.builtin.tempfile:
         state: 'directory'
@@ -80,7 +72,7 @@
 
     - name: 'CONFIGURE | Download the pinned PDQ Inventory artifact'
       amazon.aws.s3_object:
-        bucket: '{{ __inventory_caller__.account }}-ansible'
+        bucket: '{{ config.inventory_installer.artifact_bucket }}'
         object: '{{ config.inventory_installer.object_key }}'
         dest: >-
           {{ __inventory_controller_temp__.path }}/{{

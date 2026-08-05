@@ -19,10 +19,12 @@ repository directory or SMB share.
 
 The target must be Windows and support the `ansible.windows` modules used for account management,
 registry and service observation, file transfer and removal, and package installation. The caller
-must supply the local service-account mapping.
+must supply the local service-account mapping and, for `state: present`,
+`inventory_installer.artifact_bucket`.
 
 The controller must have the `amazon.aws` collection and versions of `boto3` and `botocore`
-supported by that collection. The currently installed `amazon.aws` 10.3.2 modules require
+supported by that collection. The role uses `amazon.aws.s3_object`; the shipped playbook also uses
+`amazon.aws.aws_caller_info`. The currently installed `amazon.aws` 10.3.2 modules require
 `boto3 >= 1.34.0` and `botocore >= 1.34.0`.
 
 ## Configuration
@@ -35,6 +37,7 @@ as `config.*` after the loader merge. The installer settings have pinned default
 | `service_account.name` | yes | Name of the local PDQ Background Service User; validation rejects an empty name for `state: present` |
 | `service_account.password` | yes for account creation | Secret used by `win_user`; it has no default and must be supplied through vault or a protected extra-vars file |
 | `inventory_installer.version` | no | `20.1.8.0`; the required installed `DisplayVersion` |
+| `inventory_installer.artifact_bucket` | yes for `state: present` | S3 bucket containing the installer; it has no default, and validation rejects undefined, non-string, empty and whitespace-only values |
 | `inventory_installer.object_key` | no | `applications/pdq/Inventory_20.1.8.0.exe`; flat key in the account-local artifact bucket |
 | `inventory_installer.sha256` | no | `48a486f3682cc01218993e72a8006163616166dd5f0fdcd1fab36724710fdbbf`; verified on the controller before transfer |
 | `inventory_installer.region` | no | `us-east-1`; region used for the object download |
@@ -47,24 +50,37 @@ settings. Disk identity belongs to `windows_disk_manager.disks[].unique_id`.
 
 ## Artifact delivery and caller identity
 
-Delivery is controller-mediated for each host that needs installation. The controller resolves
-the AWS account of its ambient credentials, derives `<account-id>-ansible`, creates a unique
-temporary directory, downloads the pinned object, and verifies its SHA-256 before copying or
-executing anything on Windows. The target receives the verified bundle, never an AWS credential.
+The shipped playbook resolves the AWS account of the controller's ambient credentials in a
+`pre_tasks` call, composes `<account-id>-ansible`, and maps that value to
+`pdq_inventory.inventory_installer.artifact_bucket`. The current play has one batch, so its
+`run_once` account lookup executes once and shares the registered result with all hosts in that
+batch. The role itself neither resolves an AWS account nor composes a bucket name; another
+composition must provide the required bucket input explicitly.
 
-The role performs no identity transition. The caller's ambient credentials must themselves hold
-the artifact grant. Credentials from another account derive that other account's bucket, and an
-identity that can only assume the granting role is unsupported because this role does not perform
-that assumption.
+The account lookup is unconditional after fact gathering. It runs before any role in normal and
+check mode, for `state: clean`, and when every target is already converged. A lookup failure is
+reported directly from the pre-task: it does not enter the role's delivery `rescue` or `always`
+sections. The lookup also precedes creation of the controller and guest temporary artifacts, so
+there is no delivery artifact for those sections to clean up on that failure path.
+
+For each host that needs installation, delivery remains controller-mediated. The role creates a
+unique controller temporary directory, downloads the pinned object from the supplied bucket, and
+verifies its SHA-256 before copying or executing anything on Windows. The target receives the
+verified bundle, never an AWS credential.
+
+No component in this path performs an identity transition. The caller's ambient credentials must
+themselves hold the artifact grant. In the shipped playbook, credentials from another account
+derive that other account's bucket. An identity that can only assume the granting role is
+unsupported because neither the playbook nor the role performs that assumption.
 
 The controller AWS calls have this access contract:
 
-- `amazon.aws.aws_caller_info` calls `sts:GetCallerIdentity`; the optional
-  `iam:ListAccountAliases` result is not consumed.
+- The shipped playbook's `amazon.aws.aws_caller_info` pre-task calls `sts:GetCallerIdentity`; the
+  optional `iam:ListAccountAliases` result is not consumed.
 - `amazon.aws.s3_object` needs `s3:GetObject` on
-  `arn:aws:s3:::<account-id>-ansible/applications/pdq/*`. The shipped narrow grant also allows
-  `s3:ListBucket` on `arn:aws:s3:::<account-id>-ansible` only when `s3:prefix` matches
-  `applications/pdq/*`.
+  `arn:aws:s3:::<artifact-bucket>/applications/pdq/*`. For the shipped playbook's composed bucket,
+  the narrow grant also allows `s3:ListBucket` on `arn:aws:s3:::<account-id>-ansible` only when
+  `s3:prefix` matches `applications/pdq/*`.
 
 The download sets `ignore_nonexistent_bucket: true` because the module's initial bucket-root
 probe is denied by that prefix-bounded grant. Suppressing the convenience probe preserves the
@@ -102,7 +118,8 @@ Exactly two starting states are supported:
 Every other starting state fails closed, including a missing or incorrect display property, an
 unexpected version, or disagreement between the registration and service. Upgrade, downgrade and
 partial-install repair are outside the role's scope. Installation from clean absence is not
-supported in check mode; the role refuses it without beginning delivery.
+supported in check mode; after the shipped playbook's account lookup, the role refuses it without
+beginning delivery.
 
 This role installs only. It does not apply a licence, select Local/Client/Server mode, configure
 the service account in Inventory, or start the service. The service is left exactly as the
@@ -133,5 +150,7 @@ remove the older one; controller residue can therefore accumulate until separate
 
 ## State support
 
-`present` ensures the Background Service User and the install state described above. `clean` is
-intentionally a supported no-op. No absent-state teardown is implemented.
+`present` ensures the Background Service User and the install state described above. Within the
+role, `clean` is intentionally a supported no-op and does not require `artifact_bucket`; no
+absent-state teardown is implemented. The shipped playbook still performs its unconditional
+controller account lookup before the role on a `clean` run.

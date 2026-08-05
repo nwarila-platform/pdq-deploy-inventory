@@ -15,3 +15,16 @@
       pdq_inventory.service_account.name is REQUIRED. Declare service_account.name in the
       pdq_inventory override dict.
     quiet: true
+
+- name: 'BEGIN | Assert PDQ Inventory Artifact Bucket Provided'
+  when: (state | default('present') | string | lower | trim) == 'present'
+  ansible.builtin.assert:
+    that:
+      - (config.inventory_installer.artifact_bucket | default(none)) is string
+      - >-
+        (config.inventory_installer.artifact_bucket | default('', true) | string | trim)
+        | length > 0
+    fail_msg: >-
+      pdq_inventory.inventory_installer.artifact_bucket is REQUIRED. Declare it in the
+      pdq_inventory override dict.
+    quiet: true

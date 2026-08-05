@@ -27,6 +27,9 @@
     # Platform convention: 'env' is the operator-facing extra-var; 'ENV' is the play-var the
     # loader validates (mirrors the wazuh/wsus central playbooks).
     ENV: "{{ env }}"  # noqa var-naming[pattern] -- loader contract uses uppercase ENV
+    # Composed from the account the pre-task resolves at run time, so no account literal is
+    # committed. Mapped into each consuming role namespace rather than restated per role.
+    pdq_artifact_bucket: "{{ __pdq_caller__.account }}-ansible"
     windows_disk_manager:
       # TD-001: disable the loader's POSIX temp-dir; the role owns its Windows operations.
       # NOTE: a `-e '{"windows_disk_manager":{...}}'` override REPLACES this whole mapping, so a
@@ -59,6 +62,8 @@
     pdq_inventory:
       temp_dir: false
       service_account: "{{ pdq_service_account }}"
+      inventory_installer:
+        artifact_bucket: "{{ pdq_artifact_bucket }}"
     pdq_deploy:
       temp_dir: false
       service_account: "{{ pdq_service_account }}"
@@ -74,6 +79,15 @@
       ansible.builtin.set_fact:
         packages: {}
         cacheable: true
+
+    - name: 'PRE | Resolve the controller AWS account'
+      amazon.aws.aws_caller_info:
+      delegate_to: 'localhost'
+      run_once: true
+      become: false
+      vars:
+        ansible_shell_type: 'sh'
+      register: __pdq_caller__
 
   roles:
     - role: 'windows_disk_manager'

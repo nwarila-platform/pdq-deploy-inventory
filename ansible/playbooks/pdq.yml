@@ -30,6 +30,7 @@
     # Composed from the account the pre-task resolves at run time, so no account literal is
     # committed. Mapped into each consuming role namespace rather than restated per role.
     pdq_artifact_bucket: "{{ __pdq_caller__.account }}-ansible"
+    pdq_apprepo_bucket: "{{ __pdq_caller__.account }}-apprepo"
     windows_disk_manager:
       # TD-001: disable the loader's POSIX temp-dir; the role owns its Windows operations.
       # NOTE: a `-e '{"windows_disk_manager":{...}}'` override REPLACES this whole mapping, so a
@@ -68,6 +69,8 @@
       temp_dir: false
       service_account: "{{ pdq_service_account }}"
       repository: { dir_name: 'AppRepo', share_name: 'AppRepo' }
+      deploy_installer:
+        artifact_bucket: "{{ pdq_apprepo_bucket }}"
 
   pre_tasks:
     # TD-001: the loader's 'INIT | Loading Installed Package Facts' task runs

@@ -15,3 +15,16 @@
       pdq_deploy.service_account.name is REQUIRED. Declare service_account.name in the
       pdq_deploy override dict.
     quiet: true
+
+- name: 'BEGIN | Assert PDQ Deploy Artifact Bucket Provided'
+  when: state == 'present'
+  ansible.builtin.assert:
+    that:
+      - (config.deploy_installer.artifact_bucket | default(none)) is string
+      - >-
+        (config.deploy_installer.artifact_bucket | default('', true) | string | trim)
+        | length > 0
+    fail_msg: >-
+      pdq_deploy.deploy_installer.artifact_bucket is REQUIRED. Declare it in the
+      pdq_deploy override dict.
+    quiet: true

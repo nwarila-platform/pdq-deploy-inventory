@@ -6,7 +6,7 @@ galaxy_info:
   role_name: 'pdq_deploy'
   namespace: 'nwarila_platform'
   author: 'nwarila-platform'
-  description: 'PDQ Deploy application prerequisites and repository share for Windows Server'
+  description: 'PDQ Deploy application installation for Windows Server'
   license: 'MIT'
   min_ansible_version: '2.17'
   platforms:

@@ -22,10 +22,12 @@ registry and service observation, file transfer and removal, and package install
 must supply the local service-account mapping and, for `state: present`,
 `inventory_installer.artifact_bucket`.
 
-The controller must have the `amazon.aws` collection and versions of `boto3` and `botocore`
-supported by that collection. The role uses `amazon.aws.s3_object`; the shipped playbook also uses
-`amazon.aws.aws_caller_info`. The currently installed `amazon.aws` 10.3.2 modules require
-`boto3 >= 1.34.0` and `botocore >= 1.34.0`.
+The shipped inventory pins the controller host to `ansible_playbook_python`, so delegated modules
+run under the playbook Python. The Ansible environment must include the `amazon.aws` collection,
+and that Python environment must contain supported versions of `boto3` and `botocore`. The role
+uses `amazon.aws.s3_object`; the shipped playbook also uses `amazon.aws.aws_caller_info`. The
+currently installed `amazon.aws` 10.3.2 modules require `boto3 >= 1.34.0` and
+`botocore >= 1.34.0`.
 
 ## Configuration
 
@@ -38,7 +40,7 @@ as `config.*` after the loader merge. The installer settings have pinned default
 | `service_account.password` | yes for account creation | Secret used by `win_user`; it has no default and must be supplied through vault or a protected extra-vars file |
 | `inventory_installer.version` | no | `20.1.8.0`; the required installed `DisplayVersion` |
 | `inventory_installer.artifact_bucket` | yes for `state: present` | S3 bucket containing the installer; it has no default, and validation rejects undefined, non-string, empty and whitespace-only values |
-| `inventory_installer.object_key` | no | `applications/pdq/Inventory_20.1.8.0.exe`; flat key in the account-local artifact bucket |
+| `inventory_installer.object_key` | no | `applications/pdq/Inventory_20.1.8.0.exe`; installer object key in the caller-supplied artifact bucket |
 | `inventory_installer.sha256` | no | `48a486f3682cc01218993e72a8006163616166dd5f0fdcd1fab36724710fdbbf`; verified on the controller before transfer |
 | `inventory_installer.region` | no | `us-east-1`; region used for the object download |
 | `inventory_installer.staging_path` | no | `C:\Windows\Temp\Inventory_20.1.8.0.exe`; temporary path on the Windows target |

@@ -200,7 +200,7 @@ clobber, verified at the module source). These stay `quiet: true` with an action
 - `become: false` at play level (framework chassis `become=sudo` is POSIX-only;
   built-in administrator over SSH is already elevated). Revisit for least-privilege
   runs (runas) when a non-admin service account is introduced — TBD.
-- **RATIFIED (Director, 2026-08-04) — supersedes the 2026-07-31 rule below:** declare
+- **RATIFIED (Director, 2026-08-04) — supersedes the 2026-07-31 rule:** declare
   connection settings PER GROUP and give the controller its own inventory host; do not
   repeat the shell type per task. Windows connection vars on `all` reach the controller,
   because a delegated task resolves connection vars from the delegate's own var context
@@ -219,9 +219,6 @@ clobber, verified at the module source). These stay `quiet: true` with an action
   a literal `\path\with\backslashes\%TEMP%\ansible-tmp-…\AnsiballZ_*.ps1`. Where a
   PowerShell binary happens to exist on the controller, the task reports success while
   writing that garbage into the working directory and never cleaning it up.
-- **SUPERSEDED (was RATIFIED 2026-07-31):** In a Windows play, every task delegated to the
-  controller carries `vars: { ansible_shell_type: 'sh' }` alongside `become: false`;
-  otherwise the inherited PowerShell shell plugin runs controller payloads incorrectly.
 - Windows modules from `ansible.windows` (fallback `community.windows`); never invoke
   raw PowerShell where a module exists — escape-hatch threshold decided at C05, see the
   PROPOSED (C05) rule below.

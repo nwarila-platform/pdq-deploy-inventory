@@ -84,9 +84,6 @@
       amazon.aws.aws_caller_info:
       delegate_to: 'localhost'
       run_once: true
-      become: false
-      vars:
-        ansible_shell_type: 'sh'
       register: __pdq_caller__
 
   roles:

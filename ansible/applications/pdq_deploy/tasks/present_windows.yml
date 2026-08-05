@@ -2,7 +2,7 @@
 # File: '{{ role_path }}/tasks/present_windows.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# Ensures the Windows prerequisites owned by the PDQ Deploy application role.
+# Ensures the Windows prerequisites and installs the pinned PDQ Deploy artifact.
 #
 # =========================================================================================== #
 ---

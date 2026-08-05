@@ -126,6 +126,10 @@ BOTH prongs clear:
   for a state a module would reject anyway is NOT sufficient justification.
 - **(b) Configure, don't assert.** Never assert a state you can idempotently CONFIGURE — configure
   it (`win_initialize_disk online:true` MAKES the disk online/writable; do not assert it is).
+**Required-input exception.** An assert in `tasks/validate.yml` may enforce a documented
+"REQUIRED in the override dict, no safe default" input contract when its `fail_msg` names the
+missing input and the override that must declare it. This is a distinct admission class; ordinary
+friendlier or earlier-failure asserts remain forbidden by (a).
 An assert is **RETAINED only** when a wrong state is **SILENT-WRONG or DESTRUCTIVE and no Ansible
 action catches it before the damage** — e.g. two logical volumes declared onto one physical disk
 (equal ids → both resolve to one disk → half-provisioned), or a foreign/occupied initialized disk

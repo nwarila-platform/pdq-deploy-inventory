@@ -28,3 +28,48 @@
       pdq_inventory.inventory_installer.artifact_bucket is REQUIRED. Declare it in the
       pdq_inventory override dict.
     quiet: true
+
+- name: 'BEGIN | Assert PDQ Inventory License Provided'
+  when: (state | default('present') | string | lower | trim) == 'present'
+  vars:
+    __inventory_license_provided__: >-
+      {{
+        (config.license | default(none)) is string
+        and (config.license | default('', true) | string | trim) | length > 0
+      }}
+  ansible.builtin.assert:
+    that:
+      - __inventory_license_provided__
+    fail_msg: >-
+      pdq_inventory.license is REQUIRED. Declare license in the pdq_inventory override dict.
+    quiet: true
+
+- name: 'BEGIN | Assert PDQ Inventory License Markers Valid'
+  when: (state | default('present') | string | lower | trim) == 'present'
+  vars:
+    __inventory_license_start_marker__: '--- START LICENSE ---'
+    __inventory_license_end_marker__: '--- END LICENSE ---'
+    __inventory_license_lines__: >-
+      {{ (config.license | default('', true) | string).splitlines() | list }}
+    __inventory_license_markers_valid__: >-
+      {{
+        (config.license | default(none)) is string
+        and ((__inventory_license_lines__ | list)
+        | select('equalto', __inventory_license_start_marker__)
+        | list | length) == 1
+        and ((__inventory_license_lines__ | list)
+        | select('equalto', __inventory_license_end_marker__)
+        | list | length) == 1
+        and (((__inventory_license_lines__ | list) + [__inventory_license_start_marker__]
+        ).index(__inventory_license_start_marker__) | int)
+        < (((__inventory_license_lines__ | list) + [__inventory_license_end_marker__]
+        ).index(__inventory_license_end_marker__) | int)
+      }}
+  ansible.builtin.assert:
+    that:
+      - __inventory_license_markers_valid__
+    fail_msg: >-
+      pdq_inventory.license is malformed. Expected exactly one whole-line
+      --- START LICENSE --- marker followed by exactly one whole-line
+      --- END LICENSE --- marker.
+    quiet: true

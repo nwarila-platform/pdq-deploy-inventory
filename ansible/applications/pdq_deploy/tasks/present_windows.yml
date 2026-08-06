@@ -310,6 +310,67 @@
     quiet: true
 #endregion --- [ PDQ Deploy: Verifying Installed Identity ] ---------------------------------- #
 
+#region ------ [ PDQ Deploy: Writing License Registry Payload ] ------------------------------- #
+- name: 'GUARD | Observe the PDQ Deploy WOW6432Node key before the license write'
+  no_log: true
+  ansible.windows.win_reg_stat:
+    path: 'HKLM:\SOFTWARE\WOW6432Node\Admin Arsenal\PDQ Deploy'
+  register: __deploy_wow6432_before__
+
+- name: 'CONFIGURE | Write the PDQ Deploy license registry payload'
+  no_log: true
+  vars:
+    __deploy_license_start_marker__: '--- START LICENSE ---'
+    __deploy_license_end_marker__: '--- END LICENSE ---'
+    __deploy_license_line_separator__: "\r\n"
+    __deploy_license_lines__: >-
+      {{ (config.license | default('', true) | string).splitlines() | list }}
+    __deploy_license_start_index__: >-
+      {{ (((__deploy_license_lines__ | list) + [__deploy_license_start_marker__]).index(__deploy_license_start_marker__)) | int }}
+    __deploy_license_end_index__: >-
+      {{ (((__deploy_license_lines__ | list) + [__deploy_license_end_marker__]).index(__deploy_license_end_marker__)) | int }}
+    __deploy_license_payload__: >-
+      {{
+        (__deploy_license_lines__ | list)[
+          (__deploy_license_start_index__ | int):((__deploy_license_end_index__ | int) + 1)
+        ] | join(__deploy_license_line_separator__)
+      }}
+    __deploy_license_payload_valid__: >-
+      {{
+        (config.license | default(none)) is string
+        and ((__deploy_license_lines__ | list)
+        | select('equalto', __deploy_license_start_marker__)
+        | list | length) == 1
+        and ((__deploy_license_lines__ | list)
+        | select('equalto', __deploy_license_end_marker__)
+        | list | length) == 1
+        and (__deploy_license_start_index__ | int) < (__deploy_license_end_index__ | int)
+      }}
+  when: __deploy_license_payload_valid__
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy'
+    name: 'License'
+    data: '{{ __deploy_license_payload__ }}'
+    type: 'string'
+
+- name: 'END | Observe the PDQ Deploy WOW6432Node key after the license write'
+  no_log: true
+  ansible.windows.win_reg_stat:
+    path: 'HKLM:\SOFTWARE\WOW6432Node\Admin Arsenal\PDQ Deploy'
+  register: __deploy_wow6432_after__
+
+- name: 'END | Verify the PDQ Deploy WOW6432Node key is unchanged'
+  vars:
+    __deploy_wow6432_unchanged__: >-
+      {{ __deploy_wow6432_before__ == __deploy_wow6432_after__ }}
+  ansible.builtin.assert:
+    that:
+      - __deploy_wow6432_unchanged__
+    fail_msg: >-
+      PDQ Deploy WOW6432Node registry state changed while writing the native license value.
+    quiet: true
+#endregion --- [ PDQ Deploy: Writing License Registry Payload ] ------------------------------- #
+
 #endregion --- [ PDQ Deploy ] ---------------------------------------------------------------- #
 
 #endregion --- [ Main ] ---------------------------------------------------------------------- #

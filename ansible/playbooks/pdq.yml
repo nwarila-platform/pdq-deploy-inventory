@@ -63,11 +63,13 @@
     pdq_inventory:
       temp_dir: false
       service_account: "{{ pdq_service_account }}"
+      license: "{{ pdq_inventory_license }}"
       inventory_installer:
         artifact_bucket: "{{ pdq_artifact_bucket }}"
     pdq_deploy:
       temp_dir: false
       service_account: "{{ pdq_service_account }}"
+      license: "{{ pdq_deploy_license }}"
       repository: { dir_name: 'AppRepo', share_name: 'AppRepo' }
       deploy_installer:
         artifact_bucket: "{{ pdq_apprepo_bucket }}"

@@ -28,3 +28,48 @@
       pdq_deploy.deploy_installer.artifact_bucket is REQUIRED. Declare it in the
       pdq_deploy override dict.
     quiet: true
+
+- name: 'BEGIN | Assert PDQ Deploy License Provided'
+  when: (state | default('present') | string | lower | trim) == 'present'
+  vars:
+    __deploy_license_provided__: >-
+      {{
+        (config.license | default(none)) is string
+        and (config.license | default('', true) | string | trim) | length > 0
+      }}
+  ansible.builtin.assert:
+    that:
+      - __deploy_license_provided__
+    fail_msg: >-
+      pdq_deploy.license is REQUIRED. Declare license in the pdq_deploy override dict.
+    quiet: true
+
+- name: 'BEGIN | Assert PDQ Deploy License Markers Valid'
+  when: (state | default('present') | string | lower | trim) == 'present'
+  vars:
+    __deploy_license_start_marker__: '--- START LICENSE ---'
+    __deploy_license_end_marker__: '--- END LICENSE ---'
+    __deploy_license_lines__: >-
+      {{ (config.license | default('', true) | string).splitlines() | list }}
+    __deploy_license_markers_valid__: >-
+      {{
+        (config.license | default(none)) is string
+        and ((__deploy_license_lines__ | list)
+        | select('equalto', __deploy_license_start_marker__)
+        | list | length) == 1
+        and ((__deploy_license_lines__ | list)
+        | select('equalto', __deploy_license_end_marker__)
+        | list | length) == 1
+        and (((__deploy_license_lines__ | list) + [__deploy_license_start_marker__]
+        ).index(__deploy_license_start_marker__) | int)
+        < (((__deploy_license_lines__ | list) + [__deploy_license_end_marker__]
+        ).index(__deploy_license_end_marker__) | int)
+      }}
+  ansible.builtin.assert:
+    that:
+      - __deploy_license_markers_valid__
+    fail_msg: >-
+      pdq_deploy.license is malformed. Expected exactly one whole-line
+      --- START LICENSE --- marker followed by exactly one whole-line
+      --- END LICENSE --- marker.
+    quiet: true

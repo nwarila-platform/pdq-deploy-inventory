@@ -22,4 +22,5 @@ pdq_deploy_defaults:
   repository:
     dir_name: 'AppRepo'
     share_name: 'AppRepo'
-# service_account is required in the pdq_deploy override dict and has no safe default.
+# service_account and license are required in the pdq_deploy override dict and have no safe
+# defaults.

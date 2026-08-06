@@ -1,9 +1,10 @@
 # `pdq_inventory` role
 
 Ensures the shared PDQ Background Service User and installs the pinned PDQ Inventory bundle on
-Windows. It does not create or publish the PDQ Deploy repository/App Share. Installation is the
-only application operation in scope: the role does not license Inventory, select its operating
-mode, configure its service credentials, or start it.
+Windows. It does not create or publish the PDQ Deploy repository/App Share. The application
+operations in scope are installation and writing the supplied licence value; the role does not
+select Inventory's operating mode, configure its service credentials, start it, or verify
+Enterprise mode.
 
 ## Composition and prerequisites
 
@@ -38,6 +39,7 @@ as `config.*` after the loader merge. The installer settings have pinned default
 |---|---|---|
 | `service_account.name` | yes | Name of the local PDQ Background Service User; validation rejects an empty name for `state: present` |
 | `service_account.password` | yes for account creation | Secret used by `win_user`; it has no default and must be supplied through vault or a protected extra-vars file |
+| `license` | yes for `state: present` | Licence text containing exactly one whole-line start marker, body content with at least one alphanumeric character (an ASCII letter or digit), and exactly one later whole-line end marker; it has no default and must be supplied through vault or a protected extra-vars file; written to the native 64-bit registry |
 | `inventory_installer.version` | no | `20.1.8.0`; the required installed `DisplayVersion` |
 | `inventory_installer.artifact_bucket` | yes for `state: present` | S3 bucket containing the installer; it has no default, and validation rejects undefined, non-string, empty and whitespace-only values |
 | `inventory_installer.object_key` | no | `applications/pdq/Inventory_20.1.8.0.exe`; installer object key in the caller-supplied artifact bucket |
@@ -47,8 +49,8 @@ as `config.*` after the loader merge. The installer settings have pinned default
 | `inventory_installer.product_id` | no | `{47D90CDF-2CE4-4B71-87DD-1223B1DA0AB2}`; uninstall-registration key and package identity |
 | `temp_dir` | no | Generic loader control; the shipped playbook sets it to `false` because this Windows role does not use the loader's POSIX staging directory |
 
-The role does not accept disk IDs, a licence key, Deploy repository settings, or Deploy disk
-settings. Disk identity belongs to `windows_disk_manager.disks[].unique_id`.
+The role does not accept disk IDs, Deploy repository settings, or Deploy disk settings. Disk
+identity belongs to `windows_disk_manager.disks[].unique_id`.
 
 ## Artifact delivery and caller identity
 
@@ -123,9 +125,10 @@ partial-install repair are outside the role's scope. Installation from clean abs
 supported in check mode; after the shipped playbook's account lookup, the role refuses it without
 beginning delivery.
 
-This role installs only. It does not apply a licence, select Local/Client/Server mode, configure
-the service account in Inventory, or start the service. The service is left exactly as the
-installer delivers it, measured for this bundle as Stopped and Disabled.
+This role installs Inventory and writes the supplied licence value. It does not select
+Local/Client/Server mode, configure the service account in Inventory, start the service, or verify
+Enterprise mode. The service is left exactly as the installer delivers it, measured for this
+bundle as Stopped and Disabled.
 
 ## Cleanup limits
 

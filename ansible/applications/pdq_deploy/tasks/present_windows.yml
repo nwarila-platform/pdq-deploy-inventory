@@ -310,6 +310,39 @@
     quiet: true
 #endregion --- [ PDQ Deploy: Verifying Installed Identity ] ---------------------------------- #
 
+#region ------ [ PDQ Deploy: Writing License Registry Payload ] ------------------------------- #
+- name: 'CONFIGURE | Write the PDQ Deploy license registry payload'
+  no_log: true
+  vars:
+    __deploy_license_start_marker__: '--- START LICENSE ---'
+    __deploy_license_end_marker__: '--- END LICENSE ---'
+    __deploy_license_line_separator__: "\r\n"
+    __deploy_license_cr__: "\r"
+    __deploy_license_lf__: "\n"
+    __deploy_license_lines__: >-
+      {{
+        (config.license | default('', true) | string)
+        .replace(__deploy_license_line_separator__, __deploy_license_lf__)
+        .replace(__deploy_license_cr__, __deploy_license_lf__)
+        .split(__deploy_license_lf__)
+      }}
+    __deploy_license_start_index__: >-
+      {{ (((__deploy_license_lines__ | list) + [__deploy_license_start_marker__]).index(__deploy_license_start_marker__)) | int }}
+    __deploy_license_end_index__: >-
+      {{ (((__deploy_license_lines__ | list) + [__deploy_license_end_marker__]).index(__deploy_license_end_marker__)) | int }}
+    __deploy_license_payload__: >-
+      {{
+        (__deploy_license_lines__ | list)[
+          (__deploy_license_start_index__ | int):((__deploy_license_end_index__ | int) + 1)
+        ] | join(__deploy_license_line_separator__)
+      }}
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy'
+    name: 'License'
+    data: '{{ __deploy_license_payload__ }}'
+    type: 'string'
+#endregion --- [ PDQ Deploy: Writing License Registry Payload ] ------------------------------- #
+
 #endregion --- [ PDQ Deploy ] ---------------------------------------------------------------- #
 
 #endregion --- [ Main ] ---------------------------------------------------------------------- #

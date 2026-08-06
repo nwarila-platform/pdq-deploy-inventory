@@ -15,8 +15,8 @@ A Windows Server 2025 guest in VMware Workstation with:
 - A clean-baseline snapshot (running VM, memory included), e.g. `pre-ansible-clean-ssh-ready`.
 
 The role provisions the data disks, repository share, and local service account on this machine.
-It installs the pinned PDQ Inventory bundle, but Inventory is not yet licensed, mode-configured,
-or started, and PDQ Deploy is not yet installed or configured.
+It installs the pinned PDQ Inventory and Deploy applications and writes their supplied licence
+values, but does not select mode or port, start their services, or verify Enterprise mode.
 
 ## 2. Snapshot discipline (identical to windows-wsus)
 

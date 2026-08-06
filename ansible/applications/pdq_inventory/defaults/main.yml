@@ -16,4 +16,5 @@ pdq_inventory_defaults:
     region: 'us-east-1'
     staging_path: 'C:\Windows\Temp\Inventory_20.1.8.0.exe'
     product_id: '{47D90CDF-2CE4-4B71-87DD-1223B1DA0AB2}'
-# service_account is required in the pdq_inventory override dict and has no safe default.
+# service_account and license are required in the pdq_inventory override dict and have no safe
+# defaults.

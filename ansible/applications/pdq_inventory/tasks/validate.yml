@@ -29,47 +29,38 @@
       pdq_inventory override dict.
     quiet: true
 
-- name: 'BEGIN | Assert PDQ Inventory License Provided'
-  when: (state | default('present') | string | lower | trim) == 'present'
-  vars:
-    __inventory_license_provided__: >-
-      {{
-        (config.license | default(none)) is string
-        and (config.license | default('', true) | string | trim) | length > 0
-      }}
-  ansible.builtin.assert:
-    that:
-      - __inventory_license_provided__
-    fail_msg: >-
-      pdq_inventory.license is REQUIRED. Declare license in the pdq_inventory override dict.
-    quiet: true
-
-- name: 'BEGIN | Assert PDQ Inventory License Markers Valid'
+- name: 'BEGIN | Assert PDQ Inventory License Valid'
   when: (state | default('present') | string | lower | trim) == 'present'
   vars:
     __inventory_license_start_marker__: '--- START LICENSE ---'
     __inventory_license_end_marker__: '--- END LICENSE ---'
+    __inventory_license_crlf__: "\r\n"
+    __inventory_license_cr__: "\r"
+    __inventory_license_lf__: "\n"
     __inventory_license_lines__: >-
-      {{ (config.license | default('', true) | string).splitlines() | list }}
-    __inventory_license_markers_valid__: >-
+      {{
+        (config.license | default('', true) | string)
+        .replace(__inventory_license_crlf__, __inventory_license_lf__)
+        .replace(__inventory_license_cr__, __inventory_license_lf__)
+        .split(__inventory_license_lf__)
+      }}
+    __inventory_license_valid__: >-
       {{
         (config.license | default(none)) is string
-        and ((__inventory_license_lines__ | list)
-        | select('equalto', __inventory_license_start_marker__)
-        | list | length) == 1
-        and ((__inventory_license_lines__ | list)
-        | select('equalto', __inventory_license_end_marker__)
-        | list | length) == 1
-        and (((__inventory_license_lines__ | list) + [__inventory_license_start_marker__]
-        ).index(__inventory_license_start_marker__) | int)
-        < (((__inventory_license_lines__ | list) + [__inventory_license_end_marker__]
-        ).index(__inventory_license_end_marker__) | int)
+        and (__inventory_license_lines__
+        | select('equalto', __inventory_license_start_marker__) | list | length) == 1
+        and (__inventory_license_lines__
+        | select('equalto', __inventory_license_end_marker__) | list | length) == 1
+        and (__inventory_license_lines__ + [__inventory_license_end_marker__]
+        ).index(__inventory_license_end_marker__)
+        > (__inventory_license_lines__ + [__inventory_license_start_marker__]
+        ).index(__inventory_license_start_marker__) + 1
       }}
   ansible.builtin.assert:
     that:
-      - __inventory_license_markers_valid__
+      - __inventory_license_valid__
     fail_msg: >-
-      pdq_inventory.license is malformed. Expected exactly one whole-line
-      --- START LICENSE --- marker followed by exactly one whole-line
+      pdq_inventory.license is required and must be a string containing exactly one whole-line
+      --- START LICENSE --- marker, at least one body line, and exactly one later whole-line
       --- END LICENSE --- marker.
     quiet: true

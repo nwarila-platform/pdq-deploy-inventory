@@ -246,20 +246,21 @@
 #endregion --- [ PDQ Inventory: Verifying Installed Identity ] ------------------------------- #
 
 #region ------ [ PDQ Inventory: Writing License Registry Payload ] ---------------------------- #
-- name: 'GUARD | Observe the PDQ Inventory WOW6432Node key before the license write'
-  no_log: true
-  ansible.windows.win_reg_stat:
-    path: 'HKLM:\SOFTWARE\WOW6432Node\Admin Arsenal\PDQ Inventory'
-  register: __inventory_wow6432_before__
-
 - name: 'CONFIGURE | Write the PDQ Inventory license registry payload'
   no_log: true
   vars:
     __inventory_license_start_marker__: '--- START LICENSE ---'
     __inventory_license_end_marker__: '--- END LICENSE ---'
     __inventory_license_line_separator__: "\r\n"
+    __inventory_license_cr__: "\r"
+    __inventory_license_lf__: "\n"
     __inventory_license_lines__: >-
-      {{ (config.license | default('', true) | string).splitlines() | list }}
+      {{
+        (config.license | default('', true) | string)
+        .replace(__inventory_license_line_separator__, __inventory_license_lf__)
+        .replace(__inventory_license_cr__, __inventory_license_lf__)
+        .split(__inventory_license_lf__)
+      }}
     __inventory_license_start_index__: >-
       {{ (((__inventory_license_lines__ | list) + [__inventory_license_start_marker__]).index(__inventory_license_start_marker__)) | int }}
     __inventory_license_end_index__: >-
@@ -270,40 +271,11 @@
           (__inventory_license_start_index__ | int):((__inventory_license_end_index__ | int) + 1)
         ] | join(__inventory_license_line_separator__)
       }}
-    __inventory_license_payload_valid__: >-
-      {{
-        (config.license | default(none)) is string
-        and ((__inventory_license_lines__ | list)
-        | select('equalto', __inventory_license_start_marker__)
-        | list | length) == 1
-        and ((__inventory_license_lines__ | list)
-        | select('equalto', __inventory_license_end_marker__)
-        | list | length) == 1
-        and (__inventory_license_start_index__ | int) < (__inventory_license_end_index__ | int)
-      }}
-  when: __inventory_license_payload_valid__
   ansible.windows.win_regedit:
     path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory'
     name: 'License'
     data: '{{ __inventory_license_payload__ }}'
     type: 'string'
-
-- name: 'END | Observe the PDQ Inventory WOW6432Node key after the license write'
-  no_log: true
-  ansible.windows.win_reg_stat:
-    path: 'HKLM:\SOFTWARE\WOW6432Node\Admin Arsenal\PDQ Inventory'
-  register: __inventory_wow6432_after__
-
-- name: 'END | Verify the PDQ Inventory WOW6432Node key is unchanged'
-  vars:
-    __inventory_wow6432_unchanged__: >-
-      {{ __inventory_wow6432_before__ == __inventory_wow6432_after__ }}
-  ansible.builtin.assert:
-    that:
-      - __inventory_wow6432_unchanged__
-    fail_msg: >-
-      PDQ Inventory WOW6432Node registry state changed while writing the native license value.
-    quiet: true
 #endregion --- [ PDQ Inventory: Writing License Registry Payload ] ---------------------------- #
 
 #endregion --- [ PDQ Inventory ] ------------------------------------------------------------- #

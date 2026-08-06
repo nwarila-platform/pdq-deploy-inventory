@@ -55,12 +55,20 @@
         ).index(__inventory_license_end_marker__)
         > (__inventory_license_lines__ + [__inventory_license_start_marker__]
         ).index(__inventory_license_start_marker__) + 1
+        and ((__inventory_license_lines__ | list)[
+          (((__inventory_license_lines__ | list)
+          + [__inventory_license_start_marker__]).index(
+          __inventory_license_start_marker__) | int) + 1:
+          (((__inventory_license_lines__ | list)
+          + [__inventory_license_end_marker__]).index(
+          __inventory_license_end_marker__) | int)
+        ] | join('') | trim | length) > 0
       }}
   ansible.builtin.assert:
     that:
       - __inventory_license_valid__
     fail_msg: >-
       pdq_inventory.license is required and must be a string containing exactly one whole-line
-      --- START LICENSE --- marker, at least one body line, and exactly one later whole-line
+      --- START LICENSE --- marker, non-blank body content, and exactly one later whole-line
       --- END LICENSE --- marker.
     quiet: true

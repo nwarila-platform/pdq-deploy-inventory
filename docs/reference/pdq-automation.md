@@ -66,8 +66,10 @@ The measured Inventory 20.1.8.0 installation is 32-bit:
 - Default database directory:
   `%ProgramData%\Admin Arsenal\PDQ Inventory\`, with `Database.db` as the primary SQLite file.
 - Install directory: `C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\`.
-- Application registry root:
-  `HKLM\SOFTWARE\WOW6432Node\Admin Arsenal\PDQ Inventory`.
+- Native 64-bit licence registry roots written by the roles:
+  `HKLM\SOFTWARE\Admin Arsenal\<Product>`, where `<Product>` is `PDQ Inventory` or `PDQ Deploy`.
+- MSI-owned 32-bit application registry roots:
+  `HKLM\SOFTWARE\WOW6432Node\Admin Arsenal\<Product>`.
 - Uninstall hive:
   `HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall`.
 

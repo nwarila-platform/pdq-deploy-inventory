@@ -1,9 +1,9 @@
 # `pdq_deploy` role
 
 Ensures the shared PDQ Background Service User, creates the Deploy repository/App Share, and
-installs the pinned PDQ Deploy artifact on Windows. Installation is the only application operation
-in scope: the role does not apply a licence, select an operating mode or port, configure the
-service credentials, or start the service.
+installs the pinned PDQ Deploy artifact on Windows. The application operations in scope are
+installation and writing the supplied licence value; the role does not select an operating mode or
+port, configure the service credentials, start the service, or verify Enterprise mode.
 
 ## Composition and prerequisites
 
@@ -38,6 +38,7 @@ Role-specific overrides are supplied in the `pdq_deploy` dictionary and exposed 
 |---|---|---|
 | `service_account.name` | yes | Name of the local PDQ Background Service User; validation rejects an empty name for `state: present` |
 | `service_account.password` | yes for account creation | Secret used by `win_user`; it has no default and must be supplied through vault or a protected extra-vars file |
+| `license` | yes for `state: present` | Licence text containing exactly one whole-line start marker, non-blank body content, and exactly one later whole-line end marker; written to the native 64-bit registry |
 | `deploy_installer.version` | no | `20.1.8.0`; the required installed `DisplayVersion` |
 | `deploy_installer.artifact_bucket` | yes for `state: present` | S3 bucket containing the installer; it has no safe default, and validation rejects undefined, non-string, empty, and whitespace-only values |
 | `deploy_installer.object_key` | no | `PDQ/Deploy/20.1.8.0/PDQ_Deploy_x86-x64.exe`; installer object key in the caller-supplied artifact bucket |
@@ -50,8 +51,7 @@ Role-specific overrides are supplied in the `pdq_deploy` dictionary and exposed 
 | `repository.share_name` | no | `AppRepo`; SMB share name |
 | `temp_dir` | no | Generic loader control; the shipped playbook sets it to `false` because this Windows role does not use the loader's POSIX staging directory |
 
-The role does not accept disk IDs or a licence key. Disk identity belongs to
-`windows_disk_manager.disks[].unique_id`.
+The role does not accept disk IDs. Disk identity belongs to `windows_disk_manager.disks[].unique_id`.
 
 ## Artifact delivery and controller caller identity
 
@@ -129,10 +129,10 @@ service. Upgrade, downgrade, and partial-install repair are outside the role's s
 from clean absence is not supported in check mode; the role skips delivery and reports that the
 pinned artifact must be installed by a normal run.
 
-The final verification checks only the uninstall identity and service existence. This role does
-not apply a licence, select an operating mode or port, configure the Deploy service credentials, or
-start the service. The service state is not enforced; the pinned installer was observed to create
-`PDQDeploy` Stopped and Disabled.
+The final verification checks only the uninstall identity and service existence. This role writes
+the supplied licence value but does not select an operating mode or port, configure the Deploy
+service credentials, start the service, or verify Enterprise mode. The service state is not
+enforced; the pinned installer was observed to create `PDQDeploy` Stopped and Disabled.
 
 ## Cleanup behavior and limits
 

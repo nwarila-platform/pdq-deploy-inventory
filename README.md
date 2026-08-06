@@ -51,6 +51,7 @@ the static gate and the style guide, then merged with an audit-ledger row.
 The `pdq-dev` VM and its clean baseline snapshot were provisioned 2026-07-27. The automation
 provisions the three data volumes, creates `G:\AppRepo` with its ACLs and publishes it as an SMB
 share, creates the local service account used by both applications, and installs the pinned PDQ
-Inventory and PDQ Deploy 20.1.8.0 bundles. Neither application is yet licensed, mode-configured,
-or started. The AWS-PoC layer (workflows / terraform / IAM) is
+Inventory and PDQ Deploy 20.1.8.0 bundles. Both applications receive their supplied licence
+registry values but are not mode-configured or started; Enterprise mode is not verified. The
+AWS-PoC layer (workflows / terraform / IAM) is
 intentionally deferred — see the upstream IAM, which must be finalized before it is cloned here.

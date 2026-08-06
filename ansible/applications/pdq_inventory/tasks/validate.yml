@@ -62,13 +62,13 @@
           (((__inventory_license_lines__ | list)
           + [__inventory_license_end_marker__]).index(
           __inventory_license_end_marker__) | int)
-        ] | join('') | trim | length) > 0
+        ] | join('') | regex_search('[A-Za-z0-9]')) is not none
       }}
   ansible.builtin.assert:
     that:
       - __inventory_license_valid__
     fail_msg: >-
       pdq_inventory.license is required and must be a string containing exactly one whole-line
-      --- START LICENSE --- marker, non-blank body content, and exactly one later whole-line
-      --- END LICENSE --- marker.
+      --- START LICENSE --- marker, body content with at least one alphanumeric character, and
+      exactly one later whole-line --- END LICENSE --- marker.
     quiet: true

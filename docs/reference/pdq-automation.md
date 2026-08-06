@@ -25,7 +25,7 @@ uninstall identity and service but does not configure or start the application.
 | Integration authorization | CLI `ConsoleUsers` |
 | Database location | 32-bit registry `Settings\Database\FileName` |
 | Repository / App Share | `Settings` CLI or registry **[confirm on-VM]**, plus share and ACL management |
-| Licence | No applicable install property or CLI command was found; later work must establish the supported mechanism |
+| Licence | Roles write the supplied `License` value under native 64-bit `HKLM\SOFTWARE\Admin Arsenal\<Product>` |
 | Firewall | Explicit firewall rule |
 | Verification | Uninstall identity, service state, and CLI `SystemInfo` where the database exists |
 
@@ -115,8 +115,8 @@ and its port are post-install configuration, not installer arguments.
 The inner table does contain uppercase `LICENSE`, but passing `LICENSE=` during a measured install
 had no visible effect: the registry `License` value remained one character, and licensing
 information was not available from the CLI before the database existed. Together with the
-measured absence of a licensing CLI command, this places licensing in later mode/licensing work.
-The install step does not apply a licence.
+measured absence of a licensing CLI command, this confirms the installer does not apply a licence.
+The roles write the supplied value to the native 64-bit registry; mode selection remains later work.
 
 The measured silent invocation is:
 

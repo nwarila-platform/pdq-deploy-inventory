@@ -38,7 +38,7 @@ Role-specific overrides are supplied in the `pdq_deploy` dictionary and exposed 
 |---|---|---|
 | `service_account.name` | yes | Name of the local PDQ Background Service User; validation rejects an empty name for `state: present` |
 | `service_account.password` | yes for account creation | Secret used by `win_user`; it has no default and must be supplied through vault or a protected extra-vars file |
-| `license` | yes for `state: present` | Licence text containing exactly one whole-line start marker, non-blank body content, and exactly one later whole-line end marker; written to the native 64-bit registry |
+| `license` | yes for `state: present` | Licence text containing exactly one whole-line start marker, body content with at least one alphanumeric character (an ASCII letter or digit), and exactly one later whole-line end marker; it has no default and must be supplied through vault or a protected extra-vars file; written to the native 64-bit registry |
 | `deploy_installer.version` | no | `20.1.8.0`; the required installed `DisplayVersion` |
 | `deploy_installer.artifact_bucket` | yes for `state: present` | S3 bucket containing the installer; it has no safe default, and validation rejects undefined, non-string, empty, and whitespace-only values |
 | `deploy_installer.object_key` | no | `PDQ/Deploy/20.1.8.0/PDQ_Deploy_x86-x64.exe`; installer object key in the caller-supplied artifact bucket |

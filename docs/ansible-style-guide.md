@@ -319,9 +319,9 @@ clobber, verified at the module source). These stay `quiet: true` with an action
 - **RATIFIED (C12c seed → M, 2026-07-17) — never put a backslash immediately before a closing quote
   (`\'` / `\"`) in `win_shell`/`win_command` free-form; enforced by an automated gate.** Ansible parses
   the free-form module arg with `split_args`, which honors `\` as an escape **even inside single quotes**.
-  A literal backslash right before a closing quote — `Replace('/','\')`, `'IIS:\Sites\'`, `'C:\'` —
+  A literal backslash right before a closing quote — `Replace('/','\')`, `'C:\Build\stage\'`, `'C:\'` —
   escapes the quote, unbalances the parser, and fails the task at **LOAD time**
-  (`failed at splitting arguments…`). Interior backslashes are fine (`'IIS:\Sites\Default Web Site'`);
+  (`failed at splitting arguments…`). Interior backslashes are fine;
   only backslash-adjacent-to-a-closing-quote breaks. **RULE:** build such strings with `[char]92`
   (`$dir.TrimEnd([char]92) + [char]92`) and never end a quoted literal with `\`. **GATE:**
   `scripts/check-winshell-splitargs.py` (run with the ansible-core venv python) fails on any
@@ -350,8 +350,9 @@ clobber, verified at the module source). These stay `quiet: true` with an action
 - pipx-installed `ansible-core` pinned to the framework's supported range
   (currently 2.21.x), plus `ansible-lint`, `yamllint`. Collections pinned:
   `ansible.windows`, `community.windows`.
-- Windows targets are never long-lived dev state: revert the lab VM to the clean
-  baseline snapshot before every playbook execution (`scripts/revert-vm.sh`).
+- The operator default is to revert the lab VM to the clean baseline snapshot before every
+  playbook execution (`scripts/revert-vm.sh`). `SKIP_REVERT=1` is limited to an immediate
+  idempotency re-run, a declared precondition-state negative test, or composition testing.
 - **Lint from the composed tree** (proof S4b, 2026-07-15): the playbook's role
   resolves only inside the composed framework checkout, so `ansible-lint` runs from
   `.compose/ansible-framework/` (which also supplies the chassis `.ansible-lint`

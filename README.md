@@ -16,8 +16,8 @@ explicit sibling reference [`windows-wsus`](../windows-wsus).
 | F: | `PDQINVENTORY` | PDQ Inventory database |
 | G: | `PDQSHARE` | PDQ Deploy repository and application share |
 
-Both applications run on `pdq-dev` in Central Server mode under a shared Background
-Service User. Client consoles connect on TCP 7337.
+The intended topology places both applications on `pdq-dev` in Central Server mode under a
+shared Background Service User, with client consoles connecting on TCP 7337.
 
 ## Quickstart (lab)
 

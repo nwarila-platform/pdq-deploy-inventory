@@ -18,14 +18,15 @@ contract is to begin deployment evidence from a known snapshot; the explicit
 
 ## 2. Supported execution modes
 
-- **Normal:** `scripts/compose-and-run.sh -e env=dev -e @<operator-vars-file>` reverts
-  first, composes the pinned framework with this repository, and runs `pdq.yml`. The
-  operator vars file must live outside the repository with mode `600` and supply
-  `pdq_service_account_password`, `pdq_inventory_license`, and `pdq_deploy_license`;
-  no safe defaults exist by design, the file must never be committed, and the
-  default-deny allowlist cannot admit it.
-- **Rolling snapshot:** `REVERT_TO=pre-<change> scripts/compose-and-run.sh -e env=dev`
+- **Normal:** `scripts/compose-and-run.sh -e env=dev -e @<absolute-operator-vars-file>` reverts
+  first, composes the pinned framework with this repository, and runs `pdq.yml`.
+- **Rolling snapshot:**
+  `REVERT_TO=pre-<change> scripts/compose-and-run.sh -e env=dev -e @<absolute-operator-vars-file>`
   starts from a previously verified snapshot named for the next planned change.
+- In both commands, `<absolute-operator-vars-file>` must be an absolute path to a file outside
+  the repository with mode `600` that supplies `pdq_service_account_password`,
+  `pdq_inventory_license`, and `pdq_deploy_license`; no safe defaults exist, the file must
+  never be committed, and the default-deny allowlist cannot admit it.
 - **No-revert exception:** `SKIP_REVERT=1` is limited to an immediate idempotency rerun,
   a declared precondition-state negative test, or composition testing. It supplies no
   clean-baseline evidence and must not be snapshotted.

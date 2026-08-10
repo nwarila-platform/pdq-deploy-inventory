@@ -1,20 +1,14 @@
 # Tech debt register
 
-## TD-001 — ansible-framework v3 loader is not Windows-aware
+## TD-001 — CLOSED — pinned v3 loader supports Windows
 
-- **Recorded:** 2026-07-15.
-- **Where:** `ansible/applications/pdq_deploy/tasks/main.yml` and
-  `ansible/applications/pdq_inventory/tasks/main.yml` use local loader v3.1.0.
-- **Gaps:** the generic loader invokes POSIX-oriented package facts and temporary-file
-  behavior. The Windows play also needs explicit fact gathering and `become: false`.
-- **Workarounds:** `ansible/playbooks/pdq.yml` gathers facts, disables the loader temporary
-  directory for both roles, seeds an empty package map without replacing `ansible_facts`,
-  and disables privilege escalation. An extra-vars role dictionary replaces the playbook
-  dictionary, so an override must restate `temp_dir: false`.
-- **Proper fix:** add generic Windows support to the shared loader, validate it under the
-  loader-change policy, advance `.framework-pin`, and remove the playbook workarounds.
-- **Exit criteria:** the pinned framework loader supports Windows and both local loader
-  copies can be replaced byte-for-byte without the workarounds.
+- **Recorded:** 2026-07-15. **Corrected:** 2026-08-10.
+- **Original premise:** the shared loader needed Windows support before the two local v3.1.0
+  copies and their playbook compatibility settings could be retired.
+- **Correction:** the pinned framework loader v3.3.0 is Windows-aware; no future framework
+  version is needed to supply that support.
+- **Result:** the remaining work is the local-loader refresh and deployment proof tracked
+  only in TD-003. That proof determines which compatibility settings can be retired.
 
 ## TD-002 — CLOSED — chassis lint treatment of region banners
 

@@ -172,9 +172,10 @@ clobber, verified at the module source). These stay `quiet: true` with an action
   distinguishable (e.g. distinct identifiers).
 - The declared CONFIG contract (post-merge `config.*`) is validated in ONE place where `config` is
   in scope — the role's `tasks/validate.yml`, run by the
-  `INIT | Validating Merged Configuration` hook (local v3.1.0; framework v3.3.0 at
-  the pin, verified 2026-08-10) — **never** `meta/argument_specs.yml` (structurally
-  blind to the merged `config`; see §8).
+  local v3.1.0 loader's `INIT | Validating Merged Configuration` hook. Version numbering
+  verifies that the pinned framework loader is v3.3.0; its hook was not byte-inspected.
+  This validation must **never** use `meta/argument_specs.yml` (it is structurally blind
+  to the merged `config`; see §8).
 - Guards carry a negative proof: deliberately wrong input fails on the intended assert
   while sibling specifications still pass.
 
@@ -189,7 +190,7 @@ clobber, verified at the module source). These stay `quiet: true` with an action
 - **Named exception (Director, 2026-07-31): pinned shared `windows_disk_manager`.** It
   brings declared disks online and writable before classification and accumulates
   `__resolved_disks__` with `set_fact`. Its attachment guard resolves each declared
-  `unique_id` exactly once; its later classifier repeats selection and uses `| first`.
+  `unique_id` to exactly one match; its later classifier repeats selection and uses `| first`.
   Its foreign-layout assert still precedes initialization, partitioning, and formatting.
   This exception does not weaken the general rules for roles authored here.
 
@@ -316,7 +317,7 @@ clobber, verified at the module source). These stay `quiet: true` with an action
   4. Idempotency by a normalized compare → mutate-on-diff → **re-acquire-and-verify** → deterministic
      `changed`/`nochange` (or a read-only probe with `changed_when: false`), never blind mutation.
   5. Embedded PowerShell follows OTBS (above).
-- **RATIFIED (C12c seed → M, 2026-07-17) — never put a backslash immediately before a closing quote
+- **RATIFIED 2026-07-17 — never put a backslash immediately before a closing quote
   (`\'` / `\"`) in `win_shell`/`win_command` free-form; enforced by an automated gate.** Ansible parses
   the free-form module arg with `split_args`, which honors `\` as an escape **even inside single quotes**.
   A literal backslash right before a closing quote — `Replace('/','\')`, `'C:\Build\stage\'`, `'C:\'` —
@@ -327,8 +328,8 @@ clobber, verified at the module source). These stay `quiet: true` with an action
   `scripts/check-winshell-splitargs.py` (run with the ansible-core venv python) fails on any
   `split_args` error OR any backslash-before-quote across every `win_shell`/`win_command` block — this
   is the ONLY static check that catches the class: yamllint, ansible-lint, AND
-  `ansible-playbook --syntax-check` all pass an unbalanced-`\'` regression (proven M, 2026-07-17; it is
-  exactly how the C12c bug shipped). Part of the standard gate now.
+  `ansible-playbook --syntax-check` all pass an unbalanced-`\'` regression; a measured production
+  escape established the failure mode on 2026-07-17. Part of the standard gate now.
 - **RATIFIED (Director, 2026-08-06) — treat `win_*_info` results as list-shaped contracts.**
   Default list fields with `| default([])`, prove cardinality before `[0]` indexing,
   and quantify over all items. An absent key must neither error nor false-pass, and a
@@ -353,14 +354,14 @@ clobber, verified at the module source). These stay `quiet: true` with an action
 - The operator default is to revert the lab VM to the clean baseline snapshot before every
   playbook execution (`scripts/revert-vm.sh`). `SKIP_REVERT=1` is limited to an immediate
   idempotency re-run, a declared precondition-state negative test, or composition testing.
-- **Lint from the composed tree** (proof S4b, 2026-07-15): the playbook's role
+- **Lint from the composed tree** (proven 2026-07-15): the playbook's role
   resolves only inside the composed framework checkout, so `ansible-lint` runs from
   `.compose/ansible-framework/` (which also supplies the chassis `.ansible-lint`
   profile). Repo-side `ansible-lint <playbook>` fails `syntax-check` by design — do
   not "fix" that by vendoring a roles_path shim without a ratified rule.
 - SSH multiplexing is isolated per-repo (`.compose/.cp`, pre-cleaned every run) —
   stale ControlMaster sockets from killed runs or VM reverts hang plays silently
-  (proof S3, 2026-07-15).
+  (proven 2026-07-15).
 
 ## 7. Commits & process — SEEDED
 
@@ -383,9 +384,8 @@ clobber, verified at the module source). These stay `quiet: true` with an action
 - Argument specs (`meta/argument_specs.yml`) — **DECIDED (V, 2026-07-15): NOT adopted for
   enforcement.** The auto-inserted arg-spec validator runs BEFORE the v3 loader builds the merged
   `config` (verified empirically), so it is structurally blind to `config.*` and only duplicates the
-  loader's ENV/state assert. Merged-config validation lives in the role's `tasks/validate.yml` (run
-  by the local v3.1.0 or pinned framework v3.3.0 loader's
-  `INIT | Validating Merged Configuration` hook (versions verified 2026-08-10, §4b).
+  loader's ENV/state assert. Merged-config validation lives in the role's
+  `tasks/validate.yml`; see §4b.
   `argument_specs` is
   permissible only as description-only documentation of the `<role>:` dict shape. _(superseded note)_ wazuh roles use them; python3_pip's
   meta shape TBD against it.

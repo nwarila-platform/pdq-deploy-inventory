@@ -14,10 +14,6 @@
 #
 # Usage: scripts/compose-and-run.sh [-e env=dev] [any extra ansible-playbook args...]
 #        COMPOSE_PLAYBOOK=<name>.yml to select a playbook under ansible/playbooks/ (default pdq.yml).
-#        SKIP_REVERT=1 to bypass the snapshot-revert gate for an idempotency re-run,
-#        declared precondition-state negatives, or composition testing.
-#        REVERT_TO=pre-<change> to revert to the rolling per-step snapshot instead of
-#        the fresh-OS baseline (passed through to revert-vm.sh; VM-LIFECYCLE.md §2).
 #
 # =========================================================================================== #
 set -euo pipefail
@@ -66,20 +62,13 @@ esac
 COMPOSE_PLAYBOOK_PATH="${target}"
 
 # --- 0b. SSH mux isolation (stale ControlMaster sockets hang runs indefinitely) ------------ #
-# A VM revert invalidates any live SSH multiplex socket to the guest, and a killed run can
-# leave a zombie socket behind — either one stalls the next play at its first task. Keep
-# Ansible's control sockets repo-local and start every run with a clean dir. (Proven: S3
-# proof-out 2026-07-15 stalled on a stale ~/.ansible/cp socket; clean run after removal.)
+# An interrupted or killed run can leave a stale SSH multiplex socket to the target, which
+# stalls the next play at its first task. Keep Ansible's control sockets repo-local and start
+# every run with a clean dir. (Observed 2026-07-15: a stale ~/.ansible/cp socket stalled a run,
+# which completed after the socket was removed.)
 export ANSIBLE_SSH_CONTROL_PATH_DIR="${COMPOSE_DIR}/.cp"
 rm -rf "${ANSIBLE_SSH_CONTROL_PATH_DIR}"
 mkdir -p "${ANSIBLE_SSH_CONTROL_PATH_DIR}"
-
-# --- 0c. Snapshot-revert gate (discipline: clean VM before every run) ---------------------- #
-if [ "${SKIP_REVERT:-0}" != "1" ]; then
-    "${REPO_ROOT}/scripts/revert-vm.sh"
-else
-    echo ">> SKIP_REVERT=1 — running against the VM's CURRENT (possibly dirty) state."
-fi
 
 # --- 1. Framework checkout at the pin ------------------------------------------------------- #
 mkdir -p "${COMPOSE_DIR}"

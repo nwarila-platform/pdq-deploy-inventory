@@ -2,18 +2,14 @@
 # File: 'ansible/inventory/vmware.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# DEV inventory — VMware Workstation lab VM.
-# Discipline: revert the VM to its clean baseline snapshot before EVERY playbook execution
-# (scripts/revert-vm.sh). Never run against a dirty VM.
+# DEV inventory for the current PDQ target.
 #
 # Auth: SSH key supplied by the controller's persistent ssh-agent; no key path or password
 # belongs in this file.
 #
-# The pdq_servers group contains the PDQ dev VM (pdq-dev), a full clone of the windows-wsus clean
-# baseline
-# (pre-ansible-clean-ssh-ready), with its own static IP 192.168.0.182 and generated MAC.
-# The windows-wsus and pdq dev VMs may run at the same time.
-# The role formats/relabels the 3 inherited blank data disks to PDQDEPLOY/PDQINVENTORY/PDQSHARE.
+# The pdq_servers group contains the PDQ dev host (pdq-dev), with its own static IP
+# 192.168.0.182 and generated MAC. The windows-wsus and PDQ dev targets may run at the same time.
+# The role formats/relabels the 3 attached blank data disks to PDQDEPLOY/PDQINVENTORY/PDQSHARE.
 # The controller group declares localhost for delegated POSIX tasks and pins the playbook Python.
 #
 # =========================================================================================== #

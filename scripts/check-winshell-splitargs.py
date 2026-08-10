@@ -3,18 +3,18 @@
 # File: 'scripts/check-winshell-splitargs.py'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# Static gate for the wsus role's inline PowerShell. Every win_shell / win_command free-form
+# Static gate for this repository's non-recursive applications/*/tasks/*.yml scan. Every
 # block MUST (a) parse cleanly through Ansible's split_args and (b) contain NO backslash
 # immediately before a quote (\' or \").
 #
-# WHY THIS EXISTS (proven 2026-07-17, maturity pass M1): Ansible parses the free-form arg of
+# WHY THIS EXISTS (ratified 2026-07-17 after a measured production escape): Ansible parses the free-form arg of
 # win_shell/win_command with split_args, which honors backslash as an escape EVEN INSIDE single
-# quotes. A backslash right before a closing quote — Replace('/','\'), 'IIS:\Sites\', 'C:\' —
+# quotes. A backslash right before a closing quote — Replace('/','\'), 'C:\Build\stage\', 'C:\' —
 # escapes the quote, unbalances the parser, and fails the task at LOAD time
 # ("failed at splitting arguments, either an unbalanced jinja2 block or quotes"). The regular
 # static gate does NOT catch this: yamllint lints YAML only; ansible-lint lints YAML only; and
 # `ansible-playbook --syntax-check` was empirically shown to pass an unbalanced-\' regression.
-# The failure surfaces only at real playbook runtime (this is exactly how the C12c bug escaped).
+# The failure surfaces only at real playbook runtime, as the measured production escape proved.
 # This dedicated check closes that gap. Fix any hit with [char]92 (and keep \ off closing quotes).
 #
 # Usage (run with the ansible-core venv python — it provides both yaml and ansible.parsing):

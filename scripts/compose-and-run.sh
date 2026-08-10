@@ -12,10 +12,11 @@
 #   3. Runs the selected playbook with the framework's ansible.cfg as the chassis
 #      (its roles_path resolves roles by bare name).
 #
-# Usage: scripts/compose-and-run.sh [-e env=int] [any extra ansible-playbook args...]
+# Usage: scripts/compose-and-run.sh [-e env=dev] [any extra ansible-playbook args...]
 #        COMPOSE_PLAYBOOK=<name>.yml to select a playbook under ansible/playbooks/ (default pdq.yml).
-#        SKIP_REVERT=1 to bypass the snapshot-revert gate (composition testing only).
-#        REVERT_TO=pre-<piece> to revert to the rolling per-step snapshot instead of
+#        SKIP_REVERT=1 to bypass the snapshot-revert gate for an idempotency re-run,
+#        declared precondition-state negatives, or composition testing.
+#        REVERT_TO=pre-<change> to revert to the rolling per-step snapshot instead of
 #        the fresh-OS baseline (passed through to revert-vm.sh; VM-LIFECYCLE.md §2).
 #
 # =========================================================================================== #
@@ -108,7 +109,7 @@ validated_roles=()
 # rsync pass: validating and overlaying in one loop lets a valid role be written to the
 # framework tree before a later invalid one aborts the run, leaving a partial overlay behind.
 # Same rule the composer already applies to COMPOSE_PLAYBOOK (0a) — no side effect precedes
-# validation. (Review repair, WDM-0.)
+# validation.
 for role_source in "${role_sources[@]}"; do
     role_name="$(basename "${role_source}")"
 

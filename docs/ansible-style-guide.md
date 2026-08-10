@@ -1,6 +1,6 @@
 # nwarila-platform — Ansible style & design guide
 
-> **STATUS: DRAFT — rules are ratified one at a time during build cycles.**
+> **STATUS: DRAFT — rules are ratified as the implementation evolves.**
 > Each rule carries a status: `RATIFIED` (Director-approved, enforceable),
 > `SEEDED` (decided at kickoff, pending in-cycle validation), or `TBD`.
 > Golden references: `wazuh_agent` (task-file authoring idiom, newest wazuh-repo role)
@@ -8,7 +8,8 @@
 
 ## 1. Repo & composition model — SEEDED (kickoff 2026-07-15)
 
-- One single-purpose role per application repo; the repo composes into a
+- One coherent capability per role; this repository carries the separate
+  `pdq_inventory` and `pdq_deploy` application roles and composes them into a
   version-pinned `ansible-framework` checkout at execution time (`.framework-pin`,
   `scripts/compose-and-run.sh`). Roles must be drop-in compatible with the framework's
   `applications/` namespace (`roles_path` resolution by bare name).
@@ -18,9 +19,9 @@
 
 ## 2. Naming — SEEDED
 
-- Repo: `windows-wsus` (OS-prefixed product). Role: `wsus` (bare product name,
-  resolves via framework `roles_path`). Playbook: `wsus.yml`. Inventory group:
-  `wsus_servers` (pluralized component, mirrors `wazuh_indexers`).
+- Repo: `pdq-deploy-inventory`. Roles: `pdq_inventory` and `pdq_deploy` (bare
+  capability names resolved via framework `roles_path`). Playbook: `pdq.yml`.
+  Inventory group: `pdq_servers`.
 - Role defaults live under `<role>_defaults` in `defaults/main.yml`; the merged
   running config materializes as `<role>_running`; playbook overrides use the bare
   `<role>:` dict. (Loader v3 contract.)
@@ -32,9 +33,13 @@
   role directory is present and every retired role directory is absent; overlay
   composition does not remove sources that no longer exist.
 
-## 3. Loader contract — SEEDED (framework v3.0.0)
+## 3. Loader contract — SEEDED
 
-- Every role ships the framework's generic loader as `tasks/main.yml`,
+The two local loaders are currently v3.1.0 and diverge from the pinned framework
+loader v3.3.0 (verified 2026-08-10); the difference is tracked in
+`docs/TECH-DEBT.md`.
+
+- Every role must ship the framework's generic loader as `tasks/main.yml`,
   **byte-identical, never edited per-role**. Loader changes are governance-surface →
   upstream framework PR only.
 - **RATIFIED (Director, 2026-07-15):** `tasks/main.yml` is intentionally a generic,
@@ -81,6 +86,11 @@
   (lazily evaluated, block-scoped), task `vars:`, or `register`. Reserve `set_fact` for values
   that persist BY CONTRACT (e.g. the loader's `<role>_running` merged config) and namespace them
   (`<role>_*` / `__dunder__`).
+- **RATIFIED (Director, 2026-08-06) — never rebind a gated-block predicate variable.**
+  A task inside a `when:`-gated block must not rebind through task `vars:` any name
+  referenced by the inherited condition. Use a distinct data name and restate the
+  predicate over later data; keep both expressions synchronized. Static lint does not
+  detect this skipped-task failure.
 - **RATIFIED (Director, 2026-07-31):** A task whose registered result is consumed to
   report success or failure uses `ignore_errors: true`, not `failed_when: false`;
   `failed_when: false` rewrites `.failed` and makes a real module error report success.
@@ -106,26 +116,28 @@
 
 ## 4a. Role scope — the "handed machine" contract — RATIFIED (Director, 2026-07-15)
 
-- The application role configures the target **end-to-end**. Its input contract is a
+- **RATIFIED (Director, 2026-07-31) — composed-play ownership amendment.** The
+  composed play and its ordered roles configure the target end-to-end. Their input is a
   machine handed to it as **OS + reachable SSH + attached-but-blank data disks** —
   exactly what a fresh Terraform-provisioned (today: snapshot) VM provides. From that
-  point the role owns **all guest OS state**: storage init (Initialize/format/label/
-  assign), features, app install, configuration, and verification.
+  point the shared `windows_disk_manager` role owns disk initialization through drive
+  assignment; each application role owns its application installation, configuration,
+  and verification.
 - **Boundary:** *hardware provisioning* (disk count/size/attachment, vCPU/RAM, NIC)
-  belongs to the deploy layer (baseline snapshot now, proxmox-terraform-framework
-  later). *Guest OS state* belongs to the role. Formatting a disk into the baseline
+  belongs to the deploy layer (baseline snapshot now, AWS direction recorded
+  2026-08-10). *Guest OS state* belongs to the composed play. Formatting a disk into the baseline
   image is FORBIDDEN — it must be role-declared code, proven on every clean revert.
 - This intentionally **diverges from wazuh**, where storage prep is an operator/packer
-  prerequisite outside the app role. For nwarila-platform Windows app repos the app
-  role is the single E2E configurator of the machine it is handed.
+  prerequisite outside the composed play. Here the composed play is the end-to-end
+  configurator of the machine it is handed.
 - Disk identification is **declarative by a stable per-disk identifier — never
-  disk-number- nor size-coupled** (amended C01r, 2026-07-15): select the target disk
+  disk-number- nor size-coupled** (amended 2026-07-15): select the target disk
   by its declared `unique_id` (Windows Get-Disk `UniqueId` / `win_disk_facts.unique_id`,
   e.g. `eui.<hex>`), supplied as a REQUIRED input — never by size and never by
   enumeration number, so the role is robust to enumeration order AND size changes.
   (`unique_id` is populated on RAW/blank disks and stable through GPT initialization.)
 
-## 4b. Guards earn their keep — RATIFIED (C01/C01r seeded; policy ratified V, 2026-07-15)
+## 4b. Guards earn their keep — RATIFIED (2026-07-15)
 
 **Prefer the Ansible action; assert only when load-bearing.** An assert is admitted only if
 BOTH prongs clear:
@@ -151,32 +163,36 @@ clobber, verified at the module source). These stay `quiet: true` with an action
 - The guard stage is **read-only on the target**: facts gathering, asserts, and **scoped
   resolution vars** — a block `vars:` attribute deriving a declared-spec → resolved-object from
   gathered facts (no mutation, and NEVER `set_fact`, which bleeds across roles — see §4). The
-  first *mutating* task belongs to the piece that owns it, never a guard. (Exercised: R3 —
-  `__data_disks__[].matches` resolves each disk once, reused by the Attached assert + safety guard.)
-- Facts are gathered **once**, at the superset the load-bearing path needs; a mutating piece owns
+  first *mutating* task belongs to the component that owns it, never a guard.
+- Facts are gathered **once**, at the superset the load-bearing path needs; a mutating component owns
   its own post-mutation refresh.
 - Declarative resource selection resolves to **exactly one** match per declared spec (assert
   `length == 1`, enumerating fail_msg; then reuse the resolved object — never re-select with a bare
   `| first`). Zero and multiple are both hand-off failures. Declared specs must be mutually
   distinguishable (e.g. distinct identifiers).
 - The declared CONFIG contract (post-merge `config.*`) is validated in ONE place where `config` is
-  in scope — the role's `tasks/validate.yml`, run by the v3.1.0 loader's
-  `INIT | Validating Merged Configuration` hook — **never** `meta/argument_specs.yml` (structurally
-  blind to the merged `config`; see §8).
-- Guard pieces carry a negative proof (deliberately-wrong input fails on the intended assert;
-  sibling specs still pass). (Exercised: C01 / C01r / C02a / C02b / V.)
+  in scope — the role's `tasks/validate.yml`, run by the
+  local v3.1.0 loader's `INIT | Validating Merged Configuration` hook. Version numbering
+  verifies that the pinned framework loader is v3.3.0; its hook was not byte-inspected.
+  This validation must **never** use `meta/argument_specs.yml` (it is structurally blind
+  to the merged `config`; see §8).
+- Guards carry a negative proof: deliberately wrong input fails on the intended assert
+  while sibling specifications still pass.
 
-## 4c. Mutation safety — SEEDED (C02b, 2026-07-15)
+## 4c. Mutation safety — SEEDED (2026-07-15)
 
-- A piece that MUTATES a declared resource carries a **state-aware safety assert BEFORE
+- A component that MUTATES a declared resource carries a **state-aware safety assert BEFORE
   the first mutation** — the destructive analog of the §4b read-only guard. It refuses
   to clobber a resource that does not match the managed layout, recognizing an
-  already-managed target by a **declared convention** (e.g. the disk's target drive
-  letter), NEVER by size or enumeration number. Blank/RAW, already-ours, and neutral
-  (unlettered) states proceed; a foreign/occupied state refuses loudly with an
-  actionable `fail_msg`. (Exercised: C02b — RAW or our-drive-letter → provision; a
-  foreign drive letter → refuse. Idempotency: recognizing 'ours' lets a converged
-  resource pass, which a blank-only guard would wrongly reject.)
+  already-managed target by a **declared convention** such as an NTFS volume label,
+  NEVER by size or enumeration number. Blank/RAW, already-ours, and positively
+  recognized unformatted states proceed; a foreign/occupied state refuses loudly.
+- **Named exception (Director, 2026-07-31): pinned shared `windows_disk_manager`.** It
+  brings declared disks online and writable before classification and accumulates
+  `__resolved_disks__` with `set_fact`. Its attachment guard resolves each declared
+  `unique_id` to exactly one match; its later classifier repeats selection and uses `| first`.
+  Its foreign-layout assert still precedes initialization, partitioning, and formatting.
+  This exception does not weaken the general rules for roles authored here.
 
 ## 4d. Role scope — the application boundary — RATIFIED (Director, 2026-07-31)
 
@@ -234,8 +250,7 @@ clobber, verified at the module source). These stay `quiet: true` with an action
   PowerShell binary happens to exist on the controller, the task reports success while
   writing that garbage into the working directory and never cleaning it up.
 - Windows modules from `ansible.windows` (fallback `community.windows`); never invoke
-  raw PowerShell where a module exists — escape-hatch threshold decided at C05, see the
-  PROPOSED (C05) rule below.
+  raw PowerShell where a module exists — use the proposed escape-hatch rule below.
 - Loader Windows gaps are TD-001 workarounds in the playbook, not role hacks — see
   `docs/TECH-DEBT.md`.
 - **RATIFIED (Director, 2026-07-31):** `ansible.windows.win_reg_stat` with `name:`
@@ -251,76 +266,76 @@ clobber, verified at the module source). These stay `quiet: true` with an action
   `FileSystemRights`, expect `ReadAndExecute, Synchronize` for a declared
   `win_acl` right of `ReadAndExecute`; Windows generic mapping adds `Synchronize`, so
   do not change the declared right to match the observed string.
-- **RATIFIED (C02a, 2026-07-15 — supersedes the C01r §5-ext) — required per-target
+- **RATIFIED (2026-07-15) — required per-target
   inputs live in the `<role>:` override dict, consumed via `config`.** Environment-
-  specific inputs the role cannot default (e.g. disk identifiers `wid_disk_id` /
-  `wsus_disk_id`) are declared inside the `<role>:` override dict (playbook /
-  group_vars / host_vars) and read as `config.<key>`, matching the framework/wazuh
+  specific inputs the role cannot default (for example, `server_address` for an
+  application or `disks[].unique_id` for `windows_disk_manager`) are declared inside
+  the corresponding `<role>:` override dict and read from that role's `config`, matching the framework/wazuh
   idiom and the loader's `defaults -> overlays -> <role> override -> config` merge.
   Only `ENV`/`state` stay top-level (loader-level). NOTE: a `-e '{"<role>":{...}}'`
   override REPLACES the whole dict, so co-locate loader-read keys (`temp_dir`) with any
   `-e`/override-provided keys, and any override must re-state them. The README documents
   these as merged config, not top-level vars.
-- **PROPOSED (C01):** never `set_fact` the name `ansible_facts` — the resulting
+- **PROPOSED:** never `set_fact` the name `ansible_facts` — the resulting
   set_fact variable shadows the live facts store and silently hides every later
-  facts module's results (proven C01/P4: `win_disk_facts` results invisible until
+  facts module's results (verified 2026-07-15: `win_disk_facts` results were invisible until
   the TD-001 seed was rewritten to `packages: {} / cacheable: true`).
-- **PROPOSED (C05, P2-refined) — the escape-hatch policy.** Native module FIRST, always
-  (C05 verified the gap empirically: 0 of 118 modules across `ansible.windows` +
-  `community.windows` cover WSUS server ops). Where no module exists:
+- **PROPOSED — the escape-hatch policy.** Native module FIRST, always. Where no module exists:
   1. `ansible.windows.win_command` in **`argv` form** is the sanctioned escape hatch
      (each element auto-quoted per Win32 rules — spaced paths are a non-issue; no shell
      parsing surface).
   2. `win_shell` ONLY for genuine shell semantics — e.g. a PowerShell **cmdlet**
-     (`Get-WsusServer`), pipes, redirects. Never for plain .exe invocation.
+     (`Get-Service`), pipes, redirects. Never for plain .exe invocation.
   3. Idempotency: `creates:`/`removes:` ONLY when the marker reliably represents
      **completed** desired state. An artifact the command creates EARLY in its run does
      NOT qualify — a midway failure leaves it behind and every later run silently
-     false-converges (C05/P2 rejected the community-standard `creates: ...\WSUSContent`
-     for exactly this). Where no reliable completion file exists, use the
+     false-converges. Where no reliable completion file exists, use the
      **probe-gates-actor idiom**: a read-only registered probe
      (`changed_when: false`, `failed_when: false` — nonzero rc IS the signal, not an
-     error) gating the mutating command via `when:` (C05: `Get-WsusServer` gating
-     `wsusutil postinstall`; the UpdateServicesDsc model, implemented natively).
+     error) gating the mutating command through `when:`.
   4. No `chdir` when the tool has no working-directory requirement; invoke by absolute
      path. No asserts on undocumented/localizable stdout — rc + a functional probe are
      the contract.
-- **RATIFIED (C06c P4.5, Director 2026-07-16) — embedded PowerShell follows OTBS.** Any
+- **RATIFIED (Director 2026-07-16) — embedded PowerShell follows OTBS.** Any
   multi-statement PowerShell inside a `win_shell` block scalar uses One True Brace Style:
   opening brace on the statement line; cuddled `} elseif (...) {` / `} else {`; multi-statement
   bodies on their own indented lines (4-space); NO semicolon statement-chaining; blank lines
   between logical sections. Idiomatic one-line pipeline filter blocks
   (`Where-Object { ... }`) stay inline — OTBS governs control statements. First applied:
-  the C06c relocation probe; binding on all later embedded scripts (C06e/C06g+).
+  a relocation probe and binding on later embedded scripts.
 - **RATIFIED (M, 2026-07-17) — the native-module template for `win_shell` §8 escape hatches.**
   Every mutating `win_shell` block that stands in for a missing native module MUST act like one:
   1. `$ErrorActionPreference = 'Stop'` is the FIRST statement (a mid-script non-terminating error
      must not pass silently).
   2. Inputs arrive via `environment:` (env-passing), NEVER Jinja-interpolated into the PowerShell
      source (`'{{ x }}'`) — env-passing removes an injection + `split_args` surface. Architectural
-     constants (e.g. the WID pipe connection string `__wid_conn_master__`) are defined ONCE in the
+     constants are defined ONCE in the
      task file's `vars:` block and env-passed, not duplicated per block.
   3. Any external resource (a `SqlConnection`) is opened inside `try { } finally { <close-only> }`
      — the `finally` closes and does nothing else (no `catch`, no swallow); intentional
-     fail-closed `throw`s (e.g. Attach's DROP-on-unhealthy) stay inside `try` before the finally.
+     fail-closed `throw`s stay inside `try` before the finally.
   4. Idempotency by a normalized compare → mutate-on-diff → **re-acquire-and-verify** → deterministic
      `changed`/`nochange` (or a read-only probe with `changed_when: false`), never blind mutation.
-  5. Embedded PowerShell follows OTBS (above). First applied wholesale across the C06 SqlClient
-     blocks; the C09b Grant-SYSTEM block is the reference implementation.
-- **RATIFIED (C12c seed → M, 2026-07-17) — never put a backslash immediately before a closing quote
+  5. Embedded PowerShell follows OTBS (above).
+- **RATIFIED 2026-07-17 — never put a backslash immediately before a closing quote
   (`\'` / `\"`) in `win_shell`/`win_command` free-form; enforced by an automated gate.** Ansible parses
   the free-form module arg with `split_args`, which honors `\` as an escape **even inside single quotes**.
-  A literal backslash right before a closing quote — `Replace('/','\')`, `'IIS:\Sites\'`, `'C:\'` —
+  A literal backslash right before a closing quote — `Replace('/','\')`, `'C:\Build\stage\'`, `'C:\'` —
   escapes the quote, unbalances the parser, and fails the task at **LOAD time**
-  (`failed at splitting arguments…`). Interior backslashes are fine (`'IIS:\Sites\Default Web Site'`);
+  (`failed at splitting arguments…`). Interior backslashes are fine;
   only backslash-adjacent-to-a-closing-quote breaks. **RULE:** build such strings with `[char]92`
   (`$dir.TrimEnd([char]92) + [char]92`) and never end a quoted literal with `\`. **GATE:**
   `scripts/check-winshell-splitargs.py` (run with the ansible-core venv python) fails on any
   `split_args` error OR any backslash-before-quote across every `win_shell`/`win_command` block — this
   is the ONLY static check that catches the class: yamllint, ansible-lint, AND
-  `ansible-playbook --syntax-check` all pass an unbalanced-`\'` regression (proven M, 2026-07-17; it is
-  exactly how the C12c bug shipped). Part of the standard gate now.
-- **SEEDED (U1, 2026-07-16 — Director directive, P2-narrowed) — Users browse-access ACL
+  `ansible-playbook --syntax-check` all pass an unbalanced-`\'` regression; a measured production
+  escape established the failure mode on 2026-07-17. Part of the standard gate now.
+- **RATIFIED (Director, 2026-08-06) — treat `win_*_info` results as list-shaped contracts.**
+  Default list fields with `| default([])`, prove cardinality before `[0]` indexing,
+  and quantify over all items. An absent key must neither error nor false-pass, and a
+  healthy first item must not mask an unhealthy later item. Derive shapes from module
+  source; item fields must not be read as top-level fields.
+- **SEEDED (Director, 2026-07-16) — Users browse-access ACL
   hygiene.** Role-created directories INTENDED FOR INTERACTIVE ADMINISTRATION/BROWSING,
   under an explicitly documented trust model ("all interactive users are admins"), get an
   explicit `BUILTIN\Users` ReadAndExecute grant (`win_acl`, allow,
@@ -328,32 +343,32 @@ clobber, verified at the module source). These stay `quiet: true` with an action
   folder makes Explorer offer "Continue", which stamps the browsing admin's PERSONAL ACE
   onto the ACL — stale/orphaned SIDs after they depart. Explicit, never inherited-by-luck
   (format-default root ACLs evaporate under hardening). EXCLUDED BY DEFAULT: secrets,
-  private service data, product-managed ACL boundaries (e.g. WSUSContent — postinstall
-  owns it). `E:\WID\Data` is an explicit Director-approved exception in this role.
+  private service data, and product-managed ACL boundaries. An explicitly declared
+  application data directory may be granted a reviewed exception.
 
 ## 6. Controller & toolchain — SEEDED
 
 - pipx-installed `ansible-core` pinned to the framework's supported range
   (currently 2.21.x), plus `ansible-lint`, `yamllint`. Collections pinned:
   `ansible.windows`, `community.windows`.
-- Windows targets are never long-lived dev state: revert the lab VM to the clean
-  baseline snapshot before every playbook execution (`scripts/revert-vm.sh`).
-- **Lint from the composed tree** (proof S4b, 2026-07-15): the playbook's role
+- The operator default is to revert the lab VM to the clean baseline snapshot before every
+  playbook execution (`scripts/revert-vm.sh`). `SKIP_REVERT=1` is limited to an immediate
+  idempotency re-run, a declared precondition-state negative test, or composition testing.
+- **Lint from the composed tree** (proven 2026-07-15): the playbook's role
   resolves only inside the composed framework checkout, so `ansible-lint` runs from
   `.compose/ansible-framework/` (which also supplies the chassis `.ansible-lint`
   profile). Repo-side `ansible-lint <playbook>` fails `syntax-check` by design — do
   not "fix" that by vendoring a roles_path shim without a ratified rule.
 - SSH multiplexing is isolated per-repo (`.compose/.cp`, pre-cleaned every run) —
   stale ControlMaster sockets from killed runs or VM reverts hang plays silently
-  (proof S3, 2026-07-15).
+  (proven 2026-07-15).
 
 ## 7. Commits & process — SEEDED
 
 - Conventional Commits, scope = role name or `framework` (framework CI enforces
   upstream; this repo follows the same format).
-- Build process: one command per cycle;
-  every cycle ends with a ledger row and any style-rule ratifications recorded here
-  with the cycle ID.
+- Build changes remain small and independently verifiable; style-rule ratifications are
+  recorded here with their decision dates.
 - **RATIFIED (Director, 2026-07-31):** A repository contract states which roles the
   repository carries and why that decomposition is correct; a bare role count makes a
   structural premise unreviewable.
@@ -361,7 +376,7 @@ clobber, verified at the module source). These stay `quiet: true` with an action
 ## 8. Open questions (moved to RATIFIED/rule sections as cycles decide them)
 
 - ~~`win_shell`/`win_command` escape-hatch policy and idempotency guards~~ — **DECIDED
-  (C05, 2026-07-16):** moved to the PROPOSED (C05) rule in §5; pending Director
+  (2026-07-16):** moved to the proposed rule in §5; pending Director
   ratification.
 - Handler usage & service-restart conventions on Windows.
 - Molecule (or equivalent) test story for Windows roles — framework roles ship
@@ -369,8 +384,9 @@ clobber, verified at the module source). These stay `quiet: true` with an action
 - Argument specs (`meta/argument_specs.yml`) — **DECIDED (V, 2026-07-15): NOT adopted for
   enforcement.** The auto-inserted arg-spec validator runs BEFORE the v3 loader builds the merged
   `config` (verified empirically), so it is structurally blind to `config.*` and only duplicates the
-  loader's ENV/state assert. Merged-config validation lives in the role's `tasks/validate.yml` (run
-  by the loader's v3.1.0 `INIT | Validating Merged Configuration` hook, §4b). argument_specs is
+  loader's ENV/state assert. Merged-config validation lives in the role's
+  `tasks/validate.yml`; see §4b.
+  `argument_specs` is
   permissible only as description-only documentation of the `<role>:` dict shape. _(superseded note)_ wazuh roles use them; python3_pip's
   meta shape TBD against it.
 - Secrets handling for Windows (no vault usage yet in this repo).

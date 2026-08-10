@@ -5,7 +5,7 @@
 # WHY THIS EXISTS
 #
 # The AWS IAM pattern in this repo was cloned from a sibling. Four independent audit rounds
-# found that the dangerous clone failure is NOT a total
+# (see the sibling-repository IAM audit) found that the dangerous clone failure is NOT a total
 # substitution miss — that fails closed and loudly. It is a PARTIAL miss: a foreign repository
 # identity or state prefix left behind in one statement, which silently grants this repo
 # authority over a SIBLING's live resources in the shared AWS account, while this repo's own

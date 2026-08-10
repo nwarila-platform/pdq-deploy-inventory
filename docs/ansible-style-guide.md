@@ -35,10 +35,11 @@
 
 ## 3. Loader contract — SEEDED
 
-The two local loaders are v3.1.0; the framework loader is v3.3.0 at the pin
-(verified 2026-08-10). The difference is tracked in `docs/TECH-DEBT.md`.
+The two local loaders are currently v3.1.0 and diverge from the pinned framework
+loader v3.3.0 (verified 2026-08-10); the difference is tracked in
+`docs/TECH-DEBT.md`.
 
-- Every role ships the framework's generic loader as `tasks/main.yml`,
+- Every role must ship the framework's generic loader as `tasks/main.yml`,
   **byte-identical, never edited per-role**. Loader changes are governance-surface →
   upstream framework PR only.
 - **RATIFIED (Director, 2026-07-15):** `tasks/main.yml` is intentionally a generic,
@@ -283,7 +284,7 @@ clobber, verified at the module source). These stay `quiet: true` with an action
      (each element auto-quoted per Win32 rules — spaced paths are a non-issue; no shell
      parsing surface).
   2. `win_shell` ONLY for genuine shell semantics — e.g. a PowerShell **cmdlet**
-     (`Get-WsusServer`), pipes, redirects. Never for plain .exe invocation.
+     (`Get-Service`), pipes, redirects. Never for plain .exe invocation.
   3. Idempotency: `creates:`/`removes:` ONLY when the marker reliably represents
      **completed** desired state. An artifact the command creates EARLY in its run does
      NOT qualify — a midway failure leaves it behind and every later run silently

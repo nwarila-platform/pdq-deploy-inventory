@@ -23,8 +23,13 @@ Service User. Client consoles connect on TCP 7337.
 
 ```bash
 # Reverts by default, composes the pinned framework, and runs pdq.yml
-scripts/compose-and-run.sh -e env=dev
+scripts/compose-and-run.sh -e env=dev -e @<operator-vars-file>
 ```
+
+`<operator-vars-file>` must live outside the repository with mode `600` and supply
+`pdq_service_account_password`, `pdq_inventory_license`, and `pdq_deploy_license`;
+no safe defaults exist by design, the file must never be committed, and the
+default-deny allowlist cannot admit it.
 
 Use `scripts/revert-vm.sh` separately for snapshot recovery or connectivity diagnosis.
 

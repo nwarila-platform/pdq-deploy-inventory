@@ -5,7 +5,7 @@ or `git commit` fails signing — usually right after this workstation/WSL reboo
 
 **Cause:** the persistent ssh-agent survives, but it starts EMPTY after a reboot and
 both private keys are passphrase-encrypted. Nothing is wrong with the server. Check
-first: `ssh-add -l` — if it does not list the key you need, that is the whole problem.
+first: `ssh-add -l` — if it doesn't list the key you need, that's the whole problem.
 
 ## The two commands
 
@@ -14,8 +14,8 @@ ssh-add ~/.ssh/hellbomb-ssh-key     # RSA: pdq-dev / 192.168.0.182 access
 ssh-add ~/.ssh/github-ssh-key       # ECDSA: commit signing and GitHub auth
 ```
 
-Each prompts once for its passphrase. One-line variant:
-`ssh-add ~/.ssh/hellbomb-ssh-key ~/.ssh/github-ssh-key`.
+Each prompts once for its passphrase. (One-liner variant:
+`ssh-add ~/.ssh/hellbomb-ssh-key ~/.ssh/github-ssh-key`)
 
 **Verify:**
 

@@ -119,14 +119,13 @@ loader v3.3.0 (verified 2026-08-10); the difference is tracked in
 - **RATIFIED (Director, 2026-07-31) — composed-play ownership amendment.** The
   composed play and its ordered roles configure the target end-to-end. Their input is a
   machine handed to it as **OS + reachable SSH + attached-but-blank data disks** —
-  exactly what a fresh Terraform-provisioned (today: snapshot) VM provides. From that
-  point the shared `windows_disk_manager` role owns disk initialization through drive
-  assignment; each application role owns its application installation, configuration,
-  and verification.
+  the contract for a freshly provisioned machine. From that point the shared
+  `windows_disk_manager` role owns disk initialization through drive assignment; each
+  application role owns its application installation, configuration, and verification.
 - **Boundary:** *hardware provisioning* (disk count/size/attachment, vCPU/RAM, NIC)
-  belongs to the deploy layer (baseline snapshot now, AWS direction recorded
-  2026-08-10). *Guest OS state* belongs to the composed play. Formatting a disk into the baseline
-  image is FORBIDDEN — it must be role-declared code, proven on every clean revert.
+  belongs to the deploy layer. *Guest OS state* belongs to the composed play. Formatting
+  a disk into the source machine image is FORBIDDEN — it must be role-declared code,
+  proven on every fresh provision.
 - This intentionally **diverges from wazuh**, where storage prep is an operator/packer
   prerequisite outside the composed play. Here the composed play is the end-to-end
   configurator of the machine it is handed.
@@ -135,7 +134,7 @@ loader v3.3.0 (verified 2026-08-10); the difference is tracked in
   by its declared `unique_id` (Windows Get-Disk `UniqueId` / `win_disk_facts.unique_id`,
   e.g. `eui.<hex>`), supplied as a REQUIRED input — never by size and never by
   enumeration number, so the role is robust to enumeration order AND size changes.
-  (`unique_id` is populated on RAW/blank disks and stable through GPT initialization.)
+  (`unique_id` is populated on RAW/blank disks and stable through partition-table initialization.)
 
 ## 4b. Guards earn their keep — RATIFIED (2026-07-15)
 
@@ -351,16 +350,13 @@ clobber, verified at the module source). These stay `quiet: true` with an action
 - pipx-installed `ansible-core` pinned to the framework's supported range
   (currently 2.21.x), plus `ansible-lint`, `yamllint`. Collections pinned:
   `ansible.windows`, `community.windows`.
-- The operator default is to revert the lab VM to the clean baseline snapshot before every
-  playbook execution (`scripts/revert-vm.sh`). `SKIP_REVERT=1` is limited to an immediate
-  idempotency re-run, a declared precondition-state negative test, or composition testing.
 - **Lint from the composed tree** (proven 2026-07-15): the playbook's role
   resolves only inside the composed framework checkout, so `ansible-lint` runs from
   `.compose/ansible-framework/` (which also supplies the chassis `.ansible-lint`
   profile). Repo-side `ansible-lint <playbook>` fails `syntax-check` by design — do
   not "fix" that by vendoring a roles_path shim without a ratified rule.
 - SSH multiplexing is isolated per-repo (`.compose/.cp`, pre-cleaned every run) —
-  stale ControlMaster sockets from killed runs or VM reverts hang plays silently
+  stale ControlMaster sockets from interrupted or killed runs hang plays silently
   (proven 2026-07-15).
 
 ## 7. Commits & process — SEEDED
@@ -372,6 +368,19 @@ clobber, verified at the module source). These stay `quiet: true` with an action
 - **RATIFIED (Director, 2026-07-31):** A repository contract states which roles the
   repository carries and why that decomposition is correct; a bare role count makes a
   structural premise unreviewable.
+
+### Engineering register — 2026-08-10
+
+- **RATIFIED (Director, 2026-08-10):** Changes to a default-deny file allowlist must
+  prove bidirectional set equality between allowed and tracked files, prove allowance
+  entries contain no glob metacharacters, and probe an ignored sentinel under every
+  remaining directory-spine entry.
+- **RATIFIED (Director, 2026-08-10):** Claims about configuration at a pinned revision
+  require direct inspection at that revision or execution against it; ancestry alone is
+  insufficient.
+- **RATIFIED (Director, 2026-08-10):** Advertised run commands must execute to convergence
+  as written: declare inputs at their point of use, express paths from the tool's resolution
+  directory, and name prerequisites beside the command.
 
 ## 8. Open questions (moved to RATIFIED/rule sections as cycles decide them)
 

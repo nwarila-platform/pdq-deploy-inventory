@@ -79,7 +79,6 @@
 # Enumerated: local working notes live alongside these on disk and are never published.
 !/docs/KEY-RELOAD.md
 !/docs/TECH-DEBT.md
-!/docs/VM-LIFECYCLE.md
 !/docs/ansible-style-guide.md
 !/docs/reference/aws-iam/README.md
 !/docs/reference/aws-iam/policies/github_nwarila-platform_pdq-deploy-inventory.json
@@ -94,14 +93,11 @@
 !/docs/reference/pdq-automation.md
 
 # --- [ allowed: scripts ] ------------------------------------------------------------------- #
-!/scripts/adopt-lab-vmx.py
 !/scripts/bootstrap-iam.sh
 !/scripts/check-iam-literals.sh
 !/scripts/check-winshell-splitargs.py
 !/scripts/check-workflow-trigger.sh
 !/scripts/compose-and-run.sh
-!/scripts/revert-vm.sh
-!/scripts/snapshot-step.sh
 !/scripts/test-iam-policies.sh
 
 # --- [ allowed: terraform (skeleton, NOT ACTIVE) ] ------------------------------------------ #

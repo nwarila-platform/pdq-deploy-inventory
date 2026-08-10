@@ -19,10 +19,14 @@ explicit sibling reference [`windows-wsus`](../windows-wsus).
 The intended topology places both applications on `pdq-dev` in Central Server mode under a
 shared Background Service User, with client consoles connecting on TCP 7337.
 
-## Quickstart (lab)
+## Quickstart
+
+Prerequisites: the controller has `git`, `rsync`, and Ansible installed; its SSH identity
+can read the framework repository; and the inventory target is reachable with authenticated
+SSH access.
 
 ```bash
-# Reverts by default, composes the pinned framework, and runs pdq.yml
+# Composes the pinned framework and runs pdq.yml
 scripts/compose-and-run.sh -e env=dev -e @<absolute-operator-vars-file>
 ```
 
@@ -32,10 +36,8 @@ supply `pdq_service_account_password`, `pdq_inventory_license`, and
 `pdq_deploy_license`; no safe defaults exist by design, the file must never be committed,
 and the default-deny allowlist cannot admit it.
 
-The S3 delivery path requires live AWS credentials exported into the controller environment
+The artifact delivery path requires live AWS credentials exported into the controller environment
 before the run.
-
-Use `scripts/revert-vm.sh` separately for snapshot recovery or connectivity diagnosis.
 
 ## Layout
 
@@ -45,7 +47,7 @@ Use `scripts/revert-vm.sh` separately for snapshot recovery or connectivity diag
 | `ansible/applications/pdq_deploy/` | PDQ Deploy application role and application share owner |
 | `ansible/playbooks/pdq.yml` | Composed play: framework disk manager, Inventory, then Deploy |
 | `ansible/inventory/vmware.yml` | `pdq-dev` inventory over SSH and PowerShell |
-| `scripts/` | Composition, validation, snapshot, and IAM helpers |
+| `scripts/` | Composition, validation, and IAM helpers |
 | `terraform/` | Inactive deploy-layer skeleton; see its README |
 | `docs/ansible-style-guide.md` | Ansible design and authoring rules |
 | `docs/TECH-DEBT.md` | Current engineering debt |
@@ -55,10 +57,10 @@ directory in this repository.
 
 ## Status
 
-The `pdq-dev` baseline was provisioned 2026-07-27. The automation provisions E:, F:, and
-G:, publishes `G:\AppRepo`, creates the shared local service account, and installs pinned
-PDQ Inventory and PDQ Deploy 20.1.8.0 bundles. Licence values are written, but application
-mode, service startup, and Enterprise-mode verification are not implemented.
+The automation for `pdq-dev` provisions E:, F:, and G:, publishes `G:\AppRepo`, creates the
+shared local service account, and installs pinned PDQ Inventory and PDQ Deploy 20.1.8.0
+bundles. Licence values are written, but application mode, service startup, and
+Enterprise-mode verification are not implemented.
 
 As of 2026-08-10, repository workflows are tracked and provide their configured gates; the
 IAM foundation in `docs/reference/aws-iam/` is live and has been applied by

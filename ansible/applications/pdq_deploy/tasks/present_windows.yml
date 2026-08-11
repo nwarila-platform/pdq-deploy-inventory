@@ -403,6 +403,9 @@
     __deploy_expected_service_usernames__:
       - '.\{{ config.service_account.name }}'
       - '{{ ansible_hostname ~ "\\" ~ config.service_account.name }}'
+      - >-
+        {{ (ansible_netbios_name | default(ansible_hostname))
+        ~ "\\" ~ config.service_account.name }}
   ansible.builtin.assert:
     that:
       - __deploy_configured_service__.services[0].start_mode == 'auto'
@@ -417,12 +420,14 @@
       configure the service.
       {% else %}
       PDQ Deploy service postcondition failed: expected automatic startup, started state, and the
-      configured local service account. Observed state={{
+      configured local service account. Observed start mode={{
+      __deploy_configured_service__.services[0].start_mode | default('unknown') }}, state={{
       __deploy_configured_service__.services[0].state | default('unknown') }}, win32 exit code={{
       __deploy_configured_service__.services[0].win32_exitcode | default('unknown') }}, service
       exit code={{ __deploy_configured_service__.services[0].service_exit_code
       | default('unknown') }}, dependencies={{
-      __deploy_configured_service__.services[0].dependencies | default([]) | join(', ') }}.
+      __deploy_configured_service__.services[0].dependencies | default([]) | join(', ') }},
+      username={{ __deploy_configured_service__.services[0].username | default('unknown') }}.
       {% endif %}
     quiet: true
 #endregion --- [ PDQ Deploy: Verifying Background Service ] ---------------------------------- #

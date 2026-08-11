@@ -29,7 +29,7 @@ The controller uses `ansible.builtin.tempfile`, `ansible.builtin.stat`, `ansible
 the shipped play also uses `amazon.aws.aws_caller_info`. Its Ansible environment must include the
 `amazon.aws` collection and supported `boto3` and `botocore` versions. The Windows path uses
 `ansible.windows.win_user`, `win_user_right`, `win_file`, `win_acl`, `win_share`, `win_reg_stat`,
-`win_service`, `win_service_info`, `win_copy`, `win_stat`, and `win_package`.
+`win_regedit`, `win_service`, `win_service_info`, `win_copy`, `win_stat`, and `win_package`.
 
 ## Configuration
 

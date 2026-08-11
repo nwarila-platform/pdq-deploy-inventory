@@ -1,9 +1,10 @@
 # `pdq_deploy` role
 
-Ensures the shared PDQ Background Service User, creates the Deploy repository/App Share, and
-installs the pinned PDQ Deploy artifact on Windows. The application operations in scope are
-installation and writing the supplied licence value; the role does not select an operating mode or
-port, configure the service credentials, start the service, or verify Enterprise mode.
+Ensures the shared PDQ Background Service User, creates the Deploy repository/App Share, installs
+the pinned PDQ Deploy artifact, writes the supplied licence value, and configures `PDQDeploy` to
+use the local service account with automatic startup and a running state. The role does not select
+an operating mode, configure a port or firewall, relocate the database, rotate or repair service
+passwords, or verify Enterprise mode.
 
 ## Composition and prerequisites
 
@@ -14,10 +15,11 @@ before the repository is created.
 
 `windows_disk_manager` plus `pdq_deploy` is a supported independent composition: with its required
 inputs, it produces the complete Deploy result currently implemented without relying on
-`pdq_inventory`. It ensures the Background Service User and App Share and installs Deploy.
+`pdq_inventory`. It ensures the Background Service User and App Share, installs Deploy, and
+configures the Deploy service.
 
 The target must be Windows and support the `ansible.windows` modules used for account management,
-registry and service observation, file transfer and removal, ACL and share management, and package
+registry and service management, file transfer and removal, ACL and share management, and package
 installation. The configured share drive must already have been provisioned. The caller must
 supply the local service-account mapping and, for `state: present`,
 `deploy_installer.artifact_bucket`.
@@ -27,7 +29,7 @@ The controller uses `ansible.builtin.tempfile`, `ansible.builtin.stat`, `ansible
 the shipped play also uses `amazon.aws.aws_caller_info`. Its Ansible environment must include the
 `amazon.aws` collection and supported `boto3` and `botocore` versions. The Windows path uses
 `ansible.windows.win_user`, `win_user_right`, `win_file`, `win_acl`, `win_share`, `win_reg_stat`,
-`win_service_info`, `win_copy`, `win_stat`, and `win_package`.
+`win_service`, `win_service_info`, `win_copy`, `win_stat`, and `win_package`.
 
 ## Configuration
 
@@ -37,7 +39,7 @@ Role-specific overrides are supplied in the `pdq_deploy` dictionary and exposed 
 | Key | Required | Default / notes |
 |---|---|---|
 | `service_account.name` | yes | Name of the local PDQ Background Service User; validation rejects an empty name for `state: present` |
-| `service_account.password` | yes for account creation | Secret used by `win_user`; it has no default and must be supplied through vault or a protected extra-vars file |
+| `service_account.password` | yes for `state: present` | Secret consumed by the local-account and `PDQDeploy` service-logon tasks; it has no default and must be supplied through vault or a protected extra-vars file |
 | `license` | yes for `state: present` | Licence text containing exactly one whole-line start marker, body content with at least one alphanumeric character (an ASCII letter or digit), and exactly one later whole-line end marker; it has no default and must be supplied through vault or a protected extra-vars file; written to the native 64-bit registry |
 | `deploy_installer.version` | no | `20.1.8.0`; the required installed `DisplayVersion` |
 | `deploy_installer.artifact_bucket` | yes for `state: present` | S3 bucket containing the installer; it has no safe default, and validation rejects undefined, non-string, empty, and whitespace-only values |
@@ -94,13 +96,25 @@ caching, and replaces the share permission set with `Administrators` as the full
 Inherited filesystem ACEs from the drive may also be present; the role's contract concerns the
 three explicit ACEs it declares.
 
-## Background Service User and one-identity contract
+## Background Service User and service contract
 
 For `state: present`, the role ensures a local account with password updates limited to account
 creation, adds it to `Administrators`, prevents password expiry and user-initiated password
 changes, and grants `SeServiceLogonRight`. The account task is protected with `no_log: true`.
 Changing the configured password does not rotate an existing account because
 `update_password: on_create` is used.
+
+The role configures only `PDQDeploy` to log on as
+`.\<config.service_account.name>`, sets `start_mode: auto`, and enforces state `started`. The
+service credential task also uses `update_password: on_create`: a username transition writes the
+supplied password, while a steady-state run does not rewrite it. A password change alone therefore
+does not rotate the service password or repair password drift. A credential change restarts an
+already-running service; otherwise the role starts it.
+
+Final verification requires exactly one `PDQDeploy` service, checks its automatic and started
+state, and accepts only the configured local username in dot-qualified or host-qualified form,
+case-insensitively. Check mode skips service mutations and succeeds only when these postconditions
+are already satisfied.
 
 PDQ Deploy and PDQ Inventory remain co-located in the shipped topology, in the same operating
 mode, under one Background Service User. The playbook defines `pdq_service_account` once and maps
@@ -129,10 +143,10 @@ service. Upgrade, downgrade, and partial-install repair are outside the role's s
 from clean absence is not supported in check mode; the role skips delivery and reports that the
 pinned artifact must be installed by a normal run.
 
-The final verification checks only the uninstall identity and service existence. This role writes
-the supplied licence value but does not select an operating mode or port, configure the Deploy
-service credentials, start the service, or verify Enterprise mode. The service state is not
-enforced; the pinned installer was observed to create `PDQDeploy` Stopped and Disabled.
+Installation verification checks only the uninstall identity and service existence. After the
+licence write, the separate service contract above configures and verifies logon identity, start
+mode, and running state. Operating-mode, port/firewall, database-relocation, and Enterprise-mode
+configuration remain outside this role.
 
 ## Cleanup behavior and limits
 

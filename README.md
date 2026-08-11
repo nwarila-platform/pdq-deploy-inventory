@@ -59,8 +59,10 @@ directory in this repository.
 
 The automation for `pdq-dev` provisions E:, F:, and G:, publishes `G:\AppRepo`, creates the
 shared local service account, and installs pinned PDQ Inventory and PDQ Deploy 20.1.8.0
-bundles. Licence values are written, but application mode, service startup, and
-Enterprise-mode verification are not implemented.
+bundles. Licence values are written, and the `pdq_deploy` role configures only `PDQDeploy` to use
+that account, start automatically, and remain running. That service contract does not extend to
+application mode, ports or firewall rules, database relocation, `pdq_inventory`, or
+Enterprise-mode verification.
 
 As of 2026-08-10, repository workflows are tracked and provide their configured gates; the
 IAM foundation in `docs/reference/aws-iam/` is live and has been applied by

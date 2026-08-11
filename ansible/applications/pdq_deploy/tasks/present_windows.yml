@@ -402,10 +402,13 @@
   vars:
     __deploy_expected_service_usernames__:
       - '.\{{ config.service_account.name }}'
-      - '{{ ansible_hostname ~ "\\" ~ config.service_account.name }}'
       - >-
-        {{ (ansible_netbios_name | default(ansible_hostname))
-        ~ "\\" ~ config.service_account.name }}
+        {{ ansible_facts.hostname | default('.', true) }}\{{
+        config.service_account.name }}
+      - >-
+        {{ ansible_facts.netbios_name
+        | default(ansible_facts.hostname | default('.', true), true) }}\{{
+        config.service_account.name }}
   ansible.builtin.assert:
     that:
       - __deploy_configured_service__.services[0].start_mode == 'auto'

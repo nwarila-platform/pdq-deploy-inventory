@@ -343,6 +343,90 @@
     type: 'string'
 #endregion --- [ PDQ Deploy: Writing License Registry Payload ] ------------------------------- #
 
+#region ------ [ PDQ Deploy: Configuring Background Service ] -------------------------------- #
+- name: 'CONFIGURE | Configure the PDQ Deploy service logon'
+  when: not ansible_check_mode
+  no_log: true
+  ansible.windows.win_service:
+    name: 'PDQDeploy'
+    username: '.\{{ config.service_account.name }}'
+    password: '{{ config.service_account.password }}'
+    update_password: 'on_create'
+  register: __deploy_service_credentials__
+
+- name: 'CONFIGURE | Configure and start the PDQ Deploy service'
+  when: not ansible_check_mode
+  ansible.windows.win_service:
+    name: 'PDQDeploy'
+    start_mode: 'auto'
+    state: >-
+      {{
+        'restarted'
+        if __deploy_service_credentials__.changed
+        and (__deploy_service__.services | default([]) | length) == 1
+        and (__deploy_service__.services | default([])
+        | selectattr('state', 'equalto', 'started') | list | length) == 1
+        else 'started'
+      }}
+#endregion --- [ PDQ Deploy: Configuring Background Service ] -------------------------------- #
+
+#region ------ [ PDQ Deploy: Verifying Background Service ] ---------------------------------- #
+- name: 'END | Observe the configured PDQ Deploy service'
+  ansible.windows.win_service_info:
+    name: 'PDQDeploy'
+  register: __deploy_configured_service__
+  retries: 5
+  delay: 2
+  until: >-
+    ansible_check_mode
+    or (
+      (__deploy_configured_service__.services | default([]) | length) == 1
+      and (__deploy_configured_service__.services | default([])
+      | selectattr('state', 'equalto', 'started') | list | length) == 1
+    )
+
+- name: 'END | Verify the configured PDQ Deploy service cardinality'
+  ansible.builtin.assert:
+    that:
+      - (__deploy_configured_service__.services | default([]) | length) == 1
+    fail_msg: >-
+      {% if ansible_check_mode %}
+      PDQ Deploy service configuration is not supported in check mode; run without --check to
+      configure the service.
+      {% else %}
+      PDQ Deploy service postcondition failed: expected exactly one service named PDQDeploy.
+      {% endif %}
+    quiet: true
+
+- name: 'END | Verify the configured PDQ Deploy service'
+  vars:
+    __deploy_expected_service_usernames__:
+      - '.\{{ config.service_account.name }}'
+      - '{{ ansible_hostname ~ "\\" ~ config.service_account.name }}'
+  ansible.builtin.assert:
+    that:
+      - __deploy_configured_service__.services[0].start_mode == 'auto'
+      - __deploy_configured_service__.services[0].state == 'started'
+      - >-
+        (__deploy_configured_service__.services[0].username
+        | default('') | string | lower)
+        in (__deploy_expected_service_usernames__ | map('lower') | list)
+    fail_msg: >-
+      {% if ansible_check_mode %}
+      PDQ Deploy service configuration is not supported in check mode; run without --check to
+      configure the service.
+      {% else %}
+      PDQ Deploy service postcondition failed: expected automatic startup, started state, and the
+      configured local service account. Observed state={{
+      __deploy_configured_service__.services[0].state | default('unknown') }}, win32 exit code={{
+      __deploy_configured_service__.services[0].win32_exitcode | default('unknown') }}, service
+      exit code={{ __deploy_configured_service__.services[0].service_exit_code
+      | default('unknown') }}, dependencies={{
+      __deploy_configured_service__.services[0].dependencies | default([]) | join(', ') }}.
+      {% endif %}
+    quiet: true
+#endregion --- [ PDQ Deploy: Verifying Background Service ] ---------------------------------- #
+
 #endregion --- [ PDQ Deploy ] ---------------------------------------------------------------- #
 
 #endregion --- [ Main ] ---------------------------------------------------------------------- #

@@ -16,6 +16,18 @@
       pdq_deploy override dict.
     quiet: true
 
+- name: 'BEGIN | Assert PDQ Deploy Background Service User Password Provided'
+  when: (state | default('present') | string | lower | trim) == 'present'
+  no_log: true
+  ansible.builtin.assert:
+    that:
+      - (config.service_account.password | default(none)) is string
+      - (config.service_account.password | default('') | string) | length > 0
+    fail_msg: >-
+      pdq_deploy.service_account.password is REQUIRED. Declare service_account.password in the
+      pdq_deploy override dict.
+    quiet: true
+
 - name: 'BEGIN | Assert PDQ Deploy Artifact Bucket Provided'
   when: (state | default('present') | string | lower | trim) == 'present'
   ansible.builtin.assert:

@@ -136,7 +136,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
           role-session-name: aws-deploy-${{ github.run_id }}
-          role-duration-seconds: 3600
+          role-duration-seconds: 2700
 
       # actions/checkout cannot read a file into ref:, so validated immutable SHAs pass through
       # step outputs. Reject malformed/multiline pins before any external framework checkout.
@@ -231,7 +231,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
           role-session-name: aws-deploy-apply-${{ github.run_id }}
-          role-duration-seconds: 3600
+          role-duration-seconds: 2700
 
       # The environment and deployment identity are individual -var flags — the highest-
       # precedence source, so the tfvars cannot override who this fresh deployment says it is.
@@ -257,7 +257,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
           role-session-name: aws-deploy-configure-${{ github.run_id }}
-          role-duration-seconds: 7200
+          role-duration-seconds: 6300
 
       # Guest disk discovery is destructive by design. Prove that every live attachment and EIP
       # association belongs to this exact run, and that each expected PDQ data disk is singular,
@@ -396,7 +396,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
           role-session-name: aws-deploy-idempotence-${{ github.run_id }}
-          role-duration-seconds: 7200
+          role-duration-seconds: 6300
 
       - name: Prove a second converge is idempotent
         timeout-minutes: 100
@@ -442,7 +442,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
           role-session-name: aws-deploy-destroy-${{ github.run_id }}
-          role-duration-seconds: 3600
+          role-duration-seconds: 2700
 
       # An administrator can alter attachments outside Terraform. Re-read the dependency graph
       # immediately before destroy and leave an incident, rather than mutate a cross-owned edge.

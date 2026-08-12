@@ -426,9 +426,15 @@ class Inventory:
                     raise GraphError(f"instance {instance_id} has no exact root device name")
                 system_volumes = [volume for device, volume in attached_volumes if device == root_device]
                 data_volumes = [volume for device, volume in attached_volumes if device != root_device]
-                if len(attached_volumes) != 4 or len(system_volumes) != 1 or len(data_volumes) != 3:
+                expected_data = len(EXPECTED_DATA_FUNCTIONS)
+                if (
+                    len(attached_volumes) != expected_data + 1
+                    or len(system_volumes) != 1
+                    or len(data_volumes) != expected_data
+                ):
                     raise GraphError(
-                        f"instance {instance_id} must have one root and exactly three data volumes"
+                        f"instance {instance_id} must have one root and exactly "
+                        f"{expected_data} data volume(s); got {len(data_volumes)}"
                     )
                 if tags(system_volumes[0]).get("Function") in EXPECTED_DATA_FUNCTIONS:
                     raise GraphError(

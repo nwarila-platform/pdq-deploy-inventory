@@ -12,8 +12,11 @@
 #     443, and the EIP exists purely so that outbound path works (pre-created ENIs never get
 #     auto public IPs; the account has no NAT). readiness_gate=false because the framework's
 #     gate dials the instance directly; the playbook's first play waits over SSM-SSH instead.
-#   * Credentials re-exchange per stage (MaxSessionDuration < job runtime); a destroy with
-#     dead credentials strands paid resources.
+#   * ONE credential exchange, sized to the whole job. Re-exchanging per stage bought nothing:
+#     an STS session stays valid for its full duration regardless of when its stage ends, so
+#     staged refreshes left several credentials simultaneously valid rather than fewer. The job
+#     is bounded well inside the session so a destroy can never run with dead credentials and
+#     strand paid resources.
 #   * One fixed state key; this workflow's concurrency group prevents overlapping applies and
 #     never cancels a live lifecycle. The separately serialized reaper is only a conservative,
 #     age-gated fallback for a run killed before destroy.
@@ -59,7 +62,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     # Reserve room for both independently bounded 100-minute converges and the always-destroy path.
-    timeout-minutes: 360
+    timeout-minutes: 150
     permissions:
       id-token: write
       contents: read
@@ -136,7 +139,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
           role-session-name: aws-deploy-${{ github.run_id }}
-          role-duration-seconds: 2700
+          role-duration-seconds: 9600
 
       # actions/checkout cannot read a file into ref:, so validated immutable SHAs pass through
       # step outputs. Reject malformed/multiline pins before any external framework checkout.
@@ -201,7 +204,7 @@ jobs:
       # longer exists. Never adopt it: destroy under the same lock, prove the repository inventory
       # is empty, then apply with a fresh key. A live/out-of-band lock makes this fail closed.
       - name: Remove interrupted predecessor state before apply
-        timeout-minutes: 30
+        timeout-minutes: 20
         working-directory: .frameworks/aws-terraform-framework/terraform
         env:
           GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
@@ -224,19 +227,11 @@ jobs:
           GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
         run: bash scripts/assert-aws-clean.sh
 
-      - name: Refresh AWS credentials before fresh apply (OIDC)
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ env.DEPLOY_ROLE }}
-          aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
-          role-session-name: aws-deploy-apply-${{ github.run_id }}
-          role-duration-seconds: 2700
 
       # The environment and deployment identity are individual -var flags — the highest-
       # precedence source, so the tfvars cannot override who this fresh deployment says it is.
       - name: Terraform apply
-        timeout-minutes: 30
+        timeout-minutes: 20
         working-directory: .frameworks/aws-terraform-framework/terraform
         run: |
           set -euo pipefail
@@ -250,14 +245,6 @@ jobs:
 
       # Fresh two-hour session for the longest stage: the play's disk resolver and artifact
       # delivery use AWS late in a converge whose hard timeout is 100 minutes.
-      - name: Refresh AWS credentials before configure (OIDC)
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ env.DEPLOY_ROLE }}
-          aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
-          role-session-name: aws-deploy-configure-${{ github.run_id }}
-          role-duration-seconds: 6300
 
       # Guest disk discovery is destructive by design. Prove that every live attachment and EIP
       # association belongs to this exact run, and that each expected PDQ data disk is singular,
@@ -373,7 +360,7 @@ jobs:
       # Readiness, configuration and the PDQ proof all live in the playbook. The exact runtime
       # inventory above is derived from Terraform output and independently ownership-checked.
       - name: Run the PDQ playbook
-        timeout-minutes: 100
+        timeout-minutes: 40
         working-directory: .frameworks/ansible-framework
         env:
           ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
@@ -389,17 +376,9 @@ jobs:
             -e aws_account_id="${AWS_ACCOUNT_ID}" \
             -e aws_region="${AWS_REGION}"
 
-      - name: Refresh AWS credentials before second converge (OIDC)
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ env.DEPLOY_ROLE }}
-          aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
-          role-session-name: aws-deploy-idempotence-${{ github.run_id }}
-          role-duration-seconds: 6300
 
       - name: Prove a second converge is idempotent
-        timeout-minutes: 100
+        timeout-minutes: 40
         working-directory: .frameworks/ansible-framework
         env:
           ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
@@ -434,15 +413,6 @@ jobs:
             || { echo "::error::Second converge recap did not contain the EC2 target."; exit 1; }
 
       # The originals are dead by now; a destroy with dead credentials strands paid resources.
-      - name: Refresh AWS credentials before destroy (OIDC)
-        if: always() && steps.tf-init.outcome == 'success'
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ env.DEPLOY_ROLE }}
-          aws-region: ${{ env.AWS_REGION }}
-          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
-          role-session-name: aws-deploy-destroy-${{ github.run_id }}
-          role-duration-seconds: 2700
 
       # An administrator can alter attachments outside Terraform. Re-read the dependency graph
       # immediately before destroy and leave an incident, rather than mutate a cross-owned edge.
@@ -464,7 +434,7 @@ jobs:
           always() &&
           steps.tf-init.outcome == 'success' &&
           steps.destroy-graph.outcome == 'success'
-        timeout-minutes: 30
+        timeout-minutes: 20
         working-directory: .frameworks/aws-terraform-framework/terraform
         env:
           GITHUB_REPOSITORY_ID: ${{ github.repository_id }}

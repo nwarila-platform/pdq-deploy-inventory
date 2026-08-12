@@ -51,11 +51,16 @@
 # --- [ allowed: top-level documents ] ------------------------------------------------------- #
 !/LICENSE
 !/README.md
+!/quality-tools.env
+!/requirements-quality.txt
+!/requirements-quality.yml
 
 # --- [ allowed: GitHub configuration ] ------------------------------------------------------ #
 !/.github/CODEOWNERS
 !/.github/workflows/aws-deploy.yml
 !/.github/workflows/iam.yml
+!/.github/terraform-framework-pin
+!/.github/ansible-framework-pin
 
 # --- [ allowed: the ansible tree ] ---------------------------------------------------------- #
 !/ansible/applications/pdq_deploy/README.md
@@ -77,6 +82,7 @@
 !/ansible/applications/pdq_inventory/tasks/validate.yml
 !/ansible/applications/pdq_inventory/vars/windows.yml
 !/ansible/playbooks/pdq.yml
+!/ansible/playbooks/pdq-aws.yml
 
 # --- [ allowed: published documentation ] --------------------------------------------------- #
 # Enumerated: local working notes live alongside these on disk and are never published.
@@ -96,6 +102,8 @@
 !/docs/reference/pdq-automation.md
 
 # --- [ allowed: scripts ] ------------------------------------------------------------------- #
+!/scripts/assert-aws-clean.sh
+!/scripts/assert-aws-resource-graph.py
 !/scripts/bootstrap-iam.sh
 !/scripts/check-iam-literals.sh
 !/scripts/check-winshell-splitargs.py
@@ -103,8 +111,9 @@
 !/scripts/compose-and-run.sh
 !/scripts/test-iam-policies.sh
 
-# --- [ allowed: terraform (skeleton, NOT ACTIVE) ] ------------------------------------------ #
+# --- [ allowed: terraform (data-only; resources live in the pinned framework) ] -------------- #
 !/terraform/README.md
+!/terraform/aws.tfvars
 
 # --- [ never tracked, even by a future allowance ] ------------------------------------------ #
 # Composition build tree (framework checkout + overlaid roles) and build worktrees.

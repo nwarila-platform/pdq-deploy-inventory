@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 # =========================================================================================== #
-# check-workflow-trigger.sh — assert this repo's aws-deploy.yml trigger matches the org contract
+# check-workflow-trigger.sh — assert the AWS deploy workflow's trigger contract
 # ------------------------------------------------------------------------------------------- #
 # WHY THIS EXISTS
 #
-# Three sibling repositories must share ONE trigger behaviour for their AWS deploy workflow. They
-# drifted within an hour of the second one being written, and the drift was invisible on reading:
-# one repo DECLARED `types:` while another OMITTED the key entirely. Omitting it looks like less
-# configuration but means "inherit GitHub's default", which includes `synchronize` — so the two
-# files behaved differently while appearing merely differently verbose.
+# The deploy workflow is the only path in this repository that can obtain AWS credentials. Its
+# trigger set is therefore a security control, not a convenience. Reading does not catch drift
+# in this class: an ABSENT key silently inherits a default, so a file can gain or lose an entire
+# execution path while looking merely differently verbose. Only an assertion catches it.
 #
-# That is the same failure as two IAM defects found the same day: the semantics of an ABSENT key.
-# A condition with `...IfExists` passes when the key is absent; a condition on a key invalid for a
-# resource type fails when absent; an absent `types:` silently changes which events fire. Reading
-# does not catch this class. Only an assertion does.
+# The contract, stated once:
 #
-# The IAM sources have such an assertion and consequently never drifted. This is the equivalent
-# for the workflow trigger.
+#   * Exactly three events: push (branches [main] only), schedule, workflow_dispatch.
+#   * NO pull_request and NO pull_request_target. A fork or feature branch must never be able
+#     to start a job holding id-token: write.
+#   * NO path filters on push. A deploy proves the whole repository composes; skipping it
+#     because a change "looked unrelated" is how a broken deploy reaches main unnoticed.
+#   * Workflow-level permissions must be declared and empty; jobs elevate only what they need.
 #
 #   ./scripts/check-workflow-trigger.sh
 #
@@ -27,33 +27,13 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WF="${ROOT}/.github/workflows/aws-deploy.yml"
 
-# The contract, stated once. Changing intended behaviour means changing THIS, deliberately, in every
-# repository — which is the point.
-readonly -a REQUIRED_TYPES=(opened reopened ready_for_review synchronize)
-readonly -a FORBIDDEN_TYPES=(labeled unlabeled)
-readonly -a REQUIRED_PATHS=(
-    'ansible/**'
-    'docs/reference/aws-iam/**'
-    'scripts/check-iam-literals.sh'
-    'scripts/test-iam-policies.sh'
-    '.github/workflows/aws-deploy.yml'
-)
-
 fail() { printf 'check-workflow-trigger: FAIL — %s\n' "$1" >&2; exit 1; }
 [ -f "${WF}" ] || fail "no aws-deploy.yml at ${WF}"
 
-PY="$(command -v python3)"
-"${PY}" - "${WF}" "${REQUIRED_TYPES[*]}" "${FORBIDDEN_TYPES[*]}" "${REQUIRED_PATHS[*]}" <<'PYEOF'
+python3 - "${WF}" <<'PYEOF'
 import sys
 
-wf, req_types, forbidden_types, req_paths = sys.argv[1:5]
-try:
-    import yaml
-except ModuleNotFoundError:
-    # PyYAML is not guaranteed on a bare runner; fall back to a targeted parse of the on: block so
-    # the gate still runs rather than silently passing.
-    yaml = None
-
+wf = sys.argv[1]
 status = 0
 
 
@@ -63,58 +43,53 @@ def bad(msg):
     status = 1
 
 
-text = open(wf).read()
-if yaml:
-    doc = yaml.safe_load(text)
-    # PyYAML parses the bare key `on` as the boolean True
-    on = doc.get(True, doc.get("on"))
-    pr = (on or {}).get("pull_request") or {}
-    types = pr.get("types") or []
-    paths = pr.get("paths") or []
-    has_dispatch = "workflow_dispatch" in (on or {})
-else:
-    import re
-    block = re.search(r"^on:\s*\n((?:[ \t].*\n|\n)*?)(?=^\S)", text, re.M)
-    block = block.group(1) if block else ""
-    m = re.search(r"types:\s*\[([^\]]*)\]", block)
-    types = [t.strip() for t in m.group(1).split(",")] if m else []
-    paths = re.findall(r"^\s+-\s+(\S+)\s*$", block, re.M)
-    has_dispatch = "workflow_dispatch:" in block
+try:
+    import yaml
+except ModuleNotFoundError:
+    print("check-workflow-trigger: PyYAML is required to parse the workflow", file=sys.stderr)
+    sys.exit(1)
 
-# `types:` must be DECLARED, not inherited. An omitted key is the exact shape that caused the drift:
-# it inherits a default that happens to be close to correct, so nobody notices it is not the same
-# decision as the sibling repo's explicit list.
-if not types:
-    bad("pull_request declares no types:. Inheriting GitHub's default is how the three repos "
-        "drifted — declare the list explicitly even when it matches the default.")
+with open(wf) as handle:
+    doc = yaml.safe_load(handle)
 
-for t in req_types.split():
-    if t not in types:
-        bad(f"pull_request types must include '{t}' (missing). "
-            + ("Without synchronize, editing a task file or variable in an already-open PR does "
-               "not re-run the proof." if t == "synchronize" else ""))
-for t in forbidden_types.split():
-    if t in types:
-        bad(f"pull_request types must NOT include '{t}': that path is reachable by a "
-            "TRIAGE-permission user, who could spend real money without holding write access. "
-            "Manual re-runs go through workflow_dispatch.")
+# PyYAML parses the bare key `on` as the boolean True unless it is quoted.
+on = doc.get(True, doc.get("on"))
+if not isinstance(on, dict):
+    bad("the `on:` block must be a mapping of events")
+    sys.exit(status)
 
-for p in req_paths.split():
-    if p not in paths:
-        bad(f"paths must include '{p}' (missing).")
+events = set(on)
+expected = {"push", "schedule", "workflow_dispatch"}
+if events != expected:
+    bad(
+        f"events must be exactly {sorted(expected)}; got {sorted(str(e) for e in events)}. "
+        "A pull_request trigger would hand credentials to unreviewed code."
+    )
 
-# terraform must be covered somehow, but HOW legitimately differs: a repo carrying a
-# proxmox.tfvars alongside aws.tfvars must name aws.tfvars so a Proxmox edit cannot fire an AWS
-# deploy, while a repo with no Proxmox inputs keeps terraform/** so a first real tfvars is covered
-# the day it lands.
-if not any(p.startswith("terraform/") for p in paths):
-    bad("paths must cover terraform/ (either terraform/** or the specific AWS tfvars).")
+for forbidden in ("pull_request", "pull_request_target"):
+    if forbidden in on:
+        bad(
+            f"`{forbidden}` must be absent: it would let a job holding id-token: write start "
+            "from a ref that has not been reviewed and merged."
+        )
 
-if not has_dispatch:
-    bad("workflow_dispatch must be present: it is the manual-execution path.")
+push = on.get("push") or {}
+if not isinstance(push, dict) or push.get("branches") != ["main"]:
+    bad("push.branches must be exactly ['main'] — the only ref the deploy trust accepts")
+if isinstance(push, dict) and ("paths" in push or "paths-ignore" in push):
+    bad(
+        "push must carry NO path filters: a deploy proves the whole repository composes, and a "
+        "skipped deploy is how a broken main reaches production unnoticed."
+    )
+
+if "workflow_dispatch" not in on:
+    bad("workflow_dispatch must be present: it is the protected break-glass execution path")
+
+if "permissions" not in doc or doc.get("permissions") != {}:
+    bad("workflow-level `permissions:` must be declared and empty ({})")
 
 sys.exit(status)
 PYEOF
 rc=$?
-[ ${rc} -eq 0 ] || fail 'the aws-deploy.yml trigger does not match the org contract (see above).'
-printf 'check-workflow-trigger: OK — types declared explicitly, synchronize present, labeled absent, paths covered.\n'
+[ ${rc} -eq 0 ] || fail 'the aws-deploy.yml trigger does not match the contract (see above).'
+printf 'check-workflow-trigger: OK — push[main] + schedule + workflow_dispatch, no pull_request, no path filters.\n'

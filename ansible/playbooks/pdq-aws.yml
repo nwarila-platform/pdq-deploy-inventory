@@ -80,29 +80,76 @@
 # stays cmd — the boot default, which passes ansible's module bootstrap argv through verbatim (a
 # PowerShell login shell re-parses it and breaks -EncodedCommand). Nothing in the roles needs a
 # PowerShell login shell: win_* modules execute inside their own PowerShell wrapper regardless.
-- name: 'PLAY | Wait for Windows readiness (sshd, EC2Launch)'
+#
+# READINESS IS TWO PHASES, AND THE ORDER IS THE POINT.
+#
+# Phase one waits on the SSM agent through the control-plane API, which opens no tunnel and
+# leaves nothing behind. Phase two only then probes SSH. Probing SSH from the start instead
+# defeats itself: a hardened image spends minutes in sysprep, every attempt during that window
+# is doomed, and each one leaves an `aws ssm start-session` child holding a session open. By the
+# time sshd finally listens it is already past its MaxStartups ceiling (ten concurrent
+# unauthenticated connections by default) and drops precisely the connections being retried.
+# Measured on this account: twenty-nine sessions survived one run whose instance was already
+# terminated, and sshd logged `drop connection ... past MaxStartups` while the probe retried
+# against it.
+#
+# Each SSH attempt is therefore bounded by an outer timeout and its tunnel is reaped afterwards,
+# rather than trusting ssh's own ConnectTimeout to tidy up a child that outlives it.
+- name: 'PLAY | Wait for Windows readiness (SSM agent, sshd, EC2Launch)'
   hosts: 'pdq_servers'
   gather_facts: false
   become: false
   any_errors_fatal: true
 
   vars:
-    # The same connection the inventory composes, spelled out for the controller-side probe
-    # below (an unreachable `raw` task is never retried by retries/until, so the WAIT must run
-    # on the controller, where a failing ssh is an ordinary command failure).
+    __aws_region__: "{{ aws_region | default('us-east-1') }}"
+    # One attempt: bounded, then its tunnel is reaped. A lingering session-manager-plugin holds
+    # an SSM session open long after the ssh that spawned it has gone.
     __ssh_probe__: >-
+      timeout --kill-after=5s 25s
       ssh {{ ansible_ssh_common_args }} -i {{ ansible_ssh_private_key_file }}
       -o BatchMode=yes -o ConnectTimeout=10
       {{ ansible_user }}@{{ ansible_host }} exit
 
   tasks:
-    - name: 'READY | Wait for the SSM-SSH path (agent registered, sshd up, launch key installed)'
+    # Costs one API call and leaks nothing, so it can be polled freely while the guest boots.
+    - name: 'READY | Wait for the SSM agent to register'
       delegate_to: 'localhost'
       ansible.builtin.command:
-        cmd: "{{ __ssh_probe__ }}"
+        argv:
+          - 'aws'
+          - 'ssm'
+          - 'describe-instance-information'
+          - '--region'
+          - "{{ __aws_region__ }}"
+          - '--filters'
+          - "Key=InstanceIds,Values={{ ansible_host }}"
+          - '--query'
+          - "length(InstanceInformationList[?PingStatus=='Online'])"
+          - '--output'
+          - 'text'
+      register: '__ssm_online__'
+      retries: 40
+      delay: 15
+      until: __ssm_online__.stdout | trim == '1'
+      changed_when: false
+
+    # Only now is an SSH attempt worth making. Reap the tunnel each time so concurrent
+    # unauthenticated connections stay at one and cannot reach sshd's MaxStartups ceiling.
+    - name: 'READY | Wait for the SSM-SSH path (sshd up, launch key installed)'
+      delegate_to: 'localhost'
+      ansible.builtin.shell:
+        cmd: |
+          set -uo pipefail
+          {{ __ssh_probe__ }}
+          rc=$?
+          pkill -f "ssm start-session --target {{ ansible_host }}" >/dev/null 2>&1 || true
+          pkill -f 'session-manager-plugin' >/dev/null 2>&1 || true
+          exit "${rc}"
+        executable: '/bin/bash'
       register: '__ssh_ready__'
-      retries: 90
-      delay: 10
+      retries: 30
+      delay: 20
       until: __ssh_ready__.rc == 0
       failed_when: __ssh_ready__.rc != 0
       changed_when: false

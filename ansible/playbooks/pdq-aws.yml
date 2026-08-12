@@ -93,8 +93,11 @@
 # terminated, and sshd logged `drop connection ... past MaxStartups` while the probe retried
 # against it.
 #
-# Each SSH attempt is therefore bounded by an outer timeout and its tunnel is reaped afterwards,
-# rather than trusting ssh's own ConnectTimeout to tidy up a child that outlives it.
+# The probe therefore opens NO tunnel until the guest can actually answer one. Terminating the
+# local session-manager process does not help: an SSM session is a server-side object, so the
+# agent ON THE GUEST holds its [::1]->:22 connection open until the session is terminated through
+# the API or times out. Reaping on the runner cannot close it, which is why an earlier attempt to
+# do exactly that still accumulated fourteen sessions and twelve established connections.
 - name: 'PLAY | Wait for Windows readiness (SSM agent, sshd, EC2Launch)'
   hosts: 'pdq_servers'
   gather_facts: false
@@ -103,16 +106,9 @@
 
   vars:
     __aws_region__: "{{ aws_region | default('us-east-1') }}"
-    # One attempt: bounded, then its tunnel is reaped. A lingering session-manager-plugin holds
-    # an SSM session open long after the ssh that spawned it has gone.
-    __ssh_probe__: >-
-      timeout --kill-after=5s 25s
-      ssh {{ ansible_ssh_common_args }} -i {{ ansible_ssh_private_key_file }}
-      -o BatchMode=yes -o ConnectTimeout=10
-      {{ ansible_user }}@{{ ansible_host }} exit
 
   tasks:
-    # Costs one API call and leaks nothing, so it can be polled freely while the guest boots.
+    # Costs one API call and opens no session, so it can be polled freely while the guest boots.
     - name: 'READY | Wait for the SSM agent to register'
       delegate_to: 'localhost'
       ansible.builtin.command:
@@ -134,22 +130,49 @@
       until: __ssm_online__.stdout | trim == '1'
       changed_when: false
 
-    # Only now is an SSH attempt worth making. Reap the tunnel each time so concurrent
-    # unauthenticated connections stay at one and cannot reach sshd's MaxStartups ceiling.
-    - name: 'READY | Wait for the SSM-SSH path (sshd up, launch key installed)'
+    # Ask the agent whether sshd is listening. Run Command carries the question over the agent's
+    # existing channel and creates no session, so this can also be polled freely — unlike an SSH
+    # attempt, which leaves a connection the runner cannot close.
+    - name: 'READY | Wait for sshd to listen (asked over the agent, no tunnel)'
       delegate_to: 'localhost'
       ansible.builtin.shell:
         cmd: |
           set -uo pipefail
-          {{ __ssh_probe__ }}
-          rc=$?
-          pkill -f "ssm start-session --target {{ ansible_host }}" >/dev/null 2>&1 || true
-          pkill -f 'session-manager-plugin' >/dev/null 2>&1 || true
-          exit "${rc}"
+          command_id="$(aws ssm send-command --region '{{ __aws_region__ }}' \
+            --instance-ids '{{ ansible_host }}' \
+            --document-name AWS-RunPowerShellScript \
+            --parameters 'commands=["(Get-NetTCPConnection -LocalPort 22 -State Listen -ErrorAction SilentlyContinue | Measure-Object).Count"]' \
+            --query Command.CommandId --output text)" || exit 1
+          for _ in $(seq 1 20); do
+            status="$(aws ssm get-command-invocation --region '{{ __aws_region__ }}' \
+              --command-id "${command_id}" --instance-id '{{ ansible_host }}' \
+              --query Status --output text 2>/dev/null || echo Pending)"
+            case "${status}" in Success|Failed|Cancelled|TimedOut) break ;; esac
+            sleep 3
+          done
+          aws ssm get-command-invocation --region '{{ __aws_region__ }}' \
+            --command-id "${command_id}" --instance-id '{{ ansible_host }}' \
+            --query StandardOutputContent --output text 2>/dev/null | tr -d '[:space:]'
         executable: '/bin/bash'
+      register: '__sshd_listening__'
+      retries: 40
+      delay: 15
+      until: __sshd_listening__.stdout | default('') | trim is match('^[1-9]')
+      changed_when: false
+
+    # sshd is listening and the launch key is installed, so this succeeds almost immediately.
+    # The retry budget is deliberately small: every attempt costs a session that only the API can
+    # close, and sshd drops connections past MaxStartups once ten are pending unauthenticated.
+    - name: 'READY | Confirm the SSM-SSH path end to end'
+      delegate_to: 'localhost'
+      ansible.builtin.command:
+        cmd: >-
+          ssh {{ ansible_ssh_common_args }} -i {{ ansible_ssh_private_key_file }}
+          -o BatchMode=yes -o ConnectTimeout=15
+          {{ ansible_user }}@{{ ansible_host }} exit
       register: '__ssh_ready__'
-      retries: 30
-      delay: 20
+      retries: 5
+      delay: 15
       until: __ssh_ready__.rc == 0
       failed_when: __ssh_ready__.rc != 0
       changed_when: false

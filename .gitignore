@@ -1,0 +1,112 @@
+# =========================================================================================== #
+# File: '.gitignore'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# DEFAULT-DENY, EXPLICIT INCLUDES ONLY. Nothing in this working tree is tracked unless it is
+# explicitly allowed below, by name — no wildcard allowances. Adding a new file therefore
+# requires allowing it here first — that is deliberate: it makes publishing a file an
+# explicit act rather than an accident.
+#
+# =========================================================================================== #
+
+# Ignore everything ...
+**
+
+# --- [ directory spine ] -------------------------------------------------------------------- #
+# Git does not descend into an excluded directory, so every directory on the path to an
+# allowed file is re-included by name. This publishes no files by itself: files inside these
+# directories stay ignored until named in a section below.
+!/.github/
+!/.github/workflows/
+!/ansible/
+!/ansible/applications/
+!/ansible/applications/pdq_deploy/
+!/ansible/applications/pdq_deploy/defaults/
+!/ansible/applications/pdq_deploy/files/
+!/ansible/applications/pdq_deploy/meta/
+!/ansible/applications/pdq_deploy/tasks/
+!/ansible/applications/pdq_deploy/templates/
+!/ansible/applications/pdq_deploy/vars/
+!/ansible/applications/pdq_inventory/
+!/ansible/applications/pdq_inventory/defaults/
+!/ansible/applications/pdq_inventory/meta/
+!/ansible/applications/pdq_inventory/tasks/
+!/ansible/applications/pdq_inventory/vars/
+!/ansible/inventory/
+!/ansible/playbooks/
+!/docs/
+!/docs/reference/
+!/docs/reference/aws-iam/
+!/docs/reference/aws-iam/policies/
+!/docs/reference/aws-iam/roles/
+!/scripts/
+!/terraform/
+
+# --- [ allowed: repository configuration ] -------------------------------------------------- #
+!/.editorconfig
+!/.framework-pin
+!/.gitignore
+!/.yamllint.yml
+
+# --- [ allowed: top-level documents ] ------------------------------------------------------- #
+!/LICENSE
+!/README.md
+
+# --- [ allowed: GitHub configuration ] ------------------------------------------------------ #
+!/.github/CODEOWNERS
+!/.github/workflows/aws-deploy.yml
+!/.github/workflows/iam.yml
+
+# --- [ allowed: the ansible tree ] ---------------------------------------------------------- #
+!/ansible/applications/pdq_deploy/README.md
+!/ansible/applications/pdq_deploy/defaults/main.yml
+!/ansible/applications/pdq_deploy/files/.gitkeep
+!/ansible/applications/pdq_deploy/meta/main.yml
+!/ansible/applications/pdq_deploy/tasks/clean_windows.yml
+!/ansible/applications/pdq_deploy/tasks/main.yml
+!/ansible/applications/pdq_deploy/tasks/present_windows.yml
+!/ansible/applications/pdq_deploy/tasks/validate.yml
+!/ansible/applications/pdq_deploy/templates/.gitkeep
+!/ansible/applications/pdq_deploy/vars/windows.yml
+!/ansible/applications/pdq_inventory/README.md
+!/ansible/applications/pdq_inventory/defaults/main.yml
+!/ansible/applications/pdq_inventory/meta/main.yml
+!/ansible/applications/pdq_inventory/tasks/clean_windows.yml
+!/ansible/applications/pdq_inventory/tasks/main.yml
+!/ansible/applications/pdq_inventory/tasks/present_windows.yml
+!/ansible/applications/pdq_inventory/tasks/validate.yml
+!/ansible/applications/pdq_inventory/vars/windows.yml
+!/ansible/playbooks/pdq.yml
+
+# --- [ allowed: published documentation ] --------------------------------------------------- #
+# Enumerated: local working notes live alongside these on disk and are never published.
+!/docs/KEY-RELOAD.md
+!/docs/TECH-DEBT.md
+!/docs/ansible-style-guide.md
+!/docs/reference/aws-iam/README.md
+!/docs/reference/aws-iam/policies/github_nwarila-platform_pdq-deploy-inventory.json
+!/docs/reference/aws-iam/policies/pdq-deploy-inventory_artifact-read.json
+!/docs/reference/aws-iam/policies/pdq-deploy-inventory_deploy-discovery-iam.json
+!/docs/reference/aws-iam/policies/pdq-deploy-inventory_deploy-ec2-launch.json
+!/docs/reference/aws-iam/policies/pdq-deploy-inventory_deploy-ec2-lifecycle.json
+!/docs/reference/aws-iam/policies/pdq-deploy-inventory_deploy-sg-ssm-kms.json
+!/docs/reference/aws-iam/roles/github_nwarila-platform_pdq-deploy-inventory-admin.trust.json
+!/docs/reference/aws-iam/roles/github_nwarila-platform_pdq-deploy-inventory.trust.json
+!/docs/reference/aws-iam/roles/nwarila-ec2-role.trust.json
+!/docs/reference/pdq-automation.md
+
+# --- [ allowed: scripts ] ------------------------------------------------------------------- #
+!/scripts/bootstrap-iam.sh
+!/scripts/check-iam-literals.sh
+!/scripts/check-winshell-splitargs.py
+!/scripts/check-workflow-trigger.sh
+!/scripts/compose-and-run.sh
+!/scripts/test-iam-policies.sh
+
+# --- [ allowed: terraform (skeleton, NOT ACTIVE) ] ------------------------------------------ #
+!/terraform/README.md
+
+# --- [ never tracked, even by a future allowance ] ------------------------------------------ #
+# Composition build tree (framework checkout + overlaid roles) and build worktrees.
+/.compose/
+/.worktrees/

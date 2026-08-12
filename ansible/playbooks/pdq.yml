@@ -1,0 +1,20 @@
+# =========================================================================================== #
+# File: 'ansible/playbooks/pdq.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Deploys the PDQ Deploy all-in-one Central Server to the 'pdq_servers' inventory group. Runs
+# from the COMPOSED tree only — scripts/compose-and-run.sh overlays the roles into a pinned
+# ansible-framework checkout and executes this playbook with the framework chassis.
+#
+# Ground-up rebuild in progress: the play is a stub. Targeting moves to the AWS dynamic
+# inventory when the deploy pipeline lands; play wiring returns as each capability lands.
+#
+# =========================================================================================== #
+---
+- name: 'PLAY | PDQ Deploy (all-in-one Central Server)'
+  hosts: 'pdq_servers'
+  gather_facts: true
+  become: false
+
+  roles:
+    - role: 'pdq_deploy'

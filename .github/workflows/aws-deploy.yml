@@ -16,7 +16,9 @@
 #     an STS session stays valid for its full duration regardless of when its stage ends, so
 #     staged refreshes left several credentials simultaneously valid rather than fewer. The job
 #     is bounded well inside the session so a destroy can never run with dead credentials and
-#     strand paid resources.
+#     strand paid resources. The stage bounds sum to less than the job bound deliberately:
+#     the job timeout kills every remaining step, teardown included, so a job that dies on
+#     time is a job that strands what it built.
 #   * One fixed state key; this workflow's concurrency group prevents overlapping applies and
 #     never cancels a live lifecycle. The separately serialized reaper is only a conservative,
 #     age-gated fallback for a run killed before destroy.
@@ -62,7 +64,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     # Reserve room for both independently bounded 100-minute converges and the always-destroy path.
-    timeout-minutes: 150
+    timeout-minutes: 120
     permissions:
       id-token: write
       contents: read
@@ -139,7 +141,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
           role-session-name: aws-deploy-${{ github.run_id }}
-          role-duration-seconds: 9600
+          role-duration-seconds: 7800
 
       # actions/checkout cannot read a file into ref:, so validated immutable SHAs pass through
       # step outputs. Reject malformed/multiline pins before any external framework checkout.
@@ -204,7 +206,7 @@ jobs:
       # longer exists. Never adopt it: destroy under the same lock, prove the repository inventory
       # is empty, then apply with a fresh key. A live/out-of-band lock makes this fail closed.
       - name: Remove interrupted predecessor state before apply
-        timeout-minutes: 20
+        timeout-minutes: 15
         working-directory: .frameworks/aws-terraform-framework/terraform
         env:
           GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
@@ -231,7 +233,7 @@ jobs:
       # The environment and deployment identity are individual -var flags — the highest-
       # precedence source, so the tfvars cannot override who this fresh deployment says it is.
       - name: Terraform apply
-        timeout-minutes: 20
+        timeout-minutes: 15
         working-directory: .frameworks/aws-terraform-framework/terraform
         run: |
           set -euo pipefail
@@ -360,7 +362,7 @@ jobs:
       # Readiness, configuration and the PDQ proof all live in the playbook. The exact runtime
       # inventory above is derived from Terraform output and independently ownership-checked.
       - name: Run the PDQ playbook
-        timeout-minutes: 40
+        timeout-minutes: 30
         working-directory: .frameworks/ansible-framework
         env:
           ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
@@ -378,7 +380,7 @@ jobs:
 
 
       - name: Prove a second converge is idempotent
-        timeout-minutes: 40
+        timeout-minutes: 30
         working-directory: .frameworks/ansible-framework
         env:
           ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
@@ -434,7 +436,7 @@ jobs:
           always() &&
           steps.tf-init.outcome == 'success' &&
           steps.destroy-graph.outcome == 'success'
-        timeout-minutes: 20
+        timeout-minutes: 15
         working-directory: .frameworks/aws-terraform-framework/terraform
         env:
           GITHUB_REPOSITORY_ID: ${{ github.repository_id }}

@@ -1,0 +1,185 @@
+# =========================================================================================== #
+# File: 'ansible/playbooks/pdq-aws.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Provisions the declared Windows data disk on the EPHEMERAL EC2 instance, then applies the PDQ
+# Deploy role. Runs from the COMPOSED tree only — in CI, .github/workflows/aws-deploy.yml
+# overlays this repository's roles into the pinned ansible-framework checkout and executes this
+# playbook against an exact JSON inventory built from Terraform output and verified against live
+# EC2 tags, reached by instance id over SSH-in-SSM — zero inbound.
+#
+#   * windows_disk_manager.platform is 'aws'. Disk identities are declared by EBS `Function`
+#     tag — volume ids only exist after terraform apply, so the role resolves each tag itself
+#     (one controller-side describe per host, Nitro serial == volume-id match). The Function
+#     value here must match the ebs_block_devices tags in terraform/aws.tfvars.
+#
+#   * The `pdq_deploy` role is currently a scaffold: it applies cleanly and changes nothing.
+#     The load-bearing guest proof in this pipeline is therefore the disk provisioning and the
+#     idempotence of a second converge. Capability proof arrives as the role is rebuilt.
+#
+# =========================================================================================== #
+---
+# An inventory can contain zero hosts, which Ansible normally treats as a successful no-op. Make
+# cardinality and immutable deployment identity an explicit controller-side contract before any
+# SSH/SSM connection is attempted.
+- name: 'PLAY | Validate The Ephemeral AWS Inventory Contract'
+  hosts: 'localhost'
+  gather_facts: false
+  become: false
+
+  vars:
+    __pdq_inventory_hosts__: "{{ groups['pdq_servers'] | default([]) }}"
+    __expected_repository_id__: "{{ lookup('ansible.builtin.env', 'GITHUB_REPOSITORY_ID') | trim }}"
+    __expected_run_id__: "{{ lookup('ansible.builtin.env', 'GITHUB_RUN_ID') | trim }}"
+    __expected_region__: "{{ aws_region | default('') | trim }}"
+
+  tasks:
+    - name: 'INVENTORY | Require One Host And An Immutable Repository Identity'
+      ansible.builtin.assert:
+        that:
+          - __pdq_inventory_hosts__ | length == 1
+          - __expected_repository_id__ is match('^[0-9]+$')
+          - __expected_run_id__ is match('^[0-9]+$')
+          - __expected_region__ is match('^[a-z]{2}(-[a-z]+)+-[0-9]$')
+        fail_msg: >-
+          Refusing to configure: expected exactly one running Function=pdq instance and a
+          numeric GITHUB_REPOSITORY_ID and GITHUB_RUN_ID, but inventory
+          hosts={{ __pdq_inventory_hosts__ }}, repository_id='{{ __expected_repository_id__ }}',
+          run_id='{{ __expected_run_id__ }}', region='{{ __expected_region__ }}'. A zero-host
+          inventory is not a successful deployment proof.
+        quiet: true
+
+    - name: 'INVENTORY | Select The Sole Terraform Instance'
+      ansible.builtin.set_fact:
+        __pdq_inventory_host__: "{{ __pdq_inventory_hosts__ | first }}"
+
+    - name: 'INVENTORY | Assert Instance, Platform, Region, And Ownership Tags'
+      vars:
+        __selected__: "{{ hostvars[__pdq_inventory_host__] }}"
+        __selected_tags__: "{{ __selected__.ec2_tags | default({}) }}"
+      ansible.builtin.assert:
+        that:
+          - __selected__.ec2_instance_id is match('^i-[0-9a-f]+$')
+          - __pdq_inventory_host__ == __selected__.ec2_instance_id
+          - (__selected__.ec2_platform | default('') | lower) == 'windows'
+          - (__selected__.ec2_state.name | default('')) == 'running'
+          - (__selected_tags__.Function | default('')) == 'pdq'
+          - (__selected_tags__['RepositoryId'] | default('') | string) == __expected_repository_id__
+          - (__selected__.ec2_placement.availability_zone | default('')).startswith(__expected_region__)
+          - (__selected_tags__['RunId'] | default('') | string) == __expected_run_id__
+        fail_msg: >-
+          Refusing to configure {{ __pdq_inventory_host__ }}: it is not the one running Windows
+          instance owned by repository id {{ __expected_repository_id__ }} in
+          {{ __expected_region__ }}, or its tags do not contain current run id
+          '{{ __expected_run_id__ }}'. tags={{ __selected_tags__ }}.
+        quiet: true
+
+#region ------ [ Play: Windows Readiness ] ---------------------------------------------------- #
+# Runs BEFORE any Windows module can work: wait for sshd (EC2Launch installs the launch key
+# minutes after boot) and for EC2Launch itself to finish provisioning. The OpenSSH DefaultShell
+# stays cmd — the boot default, which passes ansible's module bootstrap argv through verbatim (a
+# PowerShell login shell re-parses it and breaks -EncodedCommand). Nothing in the roles needs a
+# PowerShell login shell: win_* modules execute inside their own PowerShell wrapper regardless.
+- name: 'PLAY | Wait for Windows readiness (sshd, EC2Launch)'
+  hosts: 'pdq_servers'
+  gather_facts: false
+  become: false
+  any_errors_fatal: true
+
+  vars:
+    # The same connection the inventory composes, spelled out for the controller-side probe
+    # below (an unreachable `raw` task is never retried by retries/until, so the WAIT must run
+    # on the controller, where a failing ssh is an ordinary command failure).
+    __ssh_probe__: >-
+      ssh {{ ansible_ssh_common_args }} -i {{ ansible_ssh_private_key_file }}
+      -o BatchMode=yes -o ConnectTimeout=10
+      {{ ansible_user }}@{{ ansible_host }} exit
+
+  tasks:
+    - name: 'READY | Wait for the SSM-SSH path (agent registered, sshd up, launch key installed)'
+      delegate_to: 'localhost'
+      ansible.builtin.command:
+        cmd: "{{ __ssh_probe__ }}"
+      register: '__ssh_ready__'
+      retries: 90
+      delay: 10
+      until: __ssh_ready__.rc == 0
+      failed_when: __ssh_ready__.rc != 0
+      changed_when: false
+
+    - name: 'READY | Wait for EC2Launch provisioning to complete'
+      ansible.builtin.raw: '"C:\Program Files\Amazon\EC2Launch\EC2Launch.exe" status -b'
+      changed_when: false
+#endregion --- [ Play: Windows Readiness ] ---------------------------------------------------- #
+
+- name: 'PLAY | PDQ Deploy (all-in-one Central Server, ephemeral AWS)'
+  hosts: 'pdq_servers'
+  # Roles gather the facts they need themselves at present-time; the play gathers nothing.
+  gather_facts: false
+  # The framework chassis ansible.cfg sets become=sudo (POSIX-only). The admin account over SSH
+  # already holds an elevated token on Windows, so this transport setting remains explicit.
+  become: false
+  any_errors_fatal: true
+
+  vars:
+    # Platform convention: 'env' is the operator-facing extra-var; 'ENV' is the play-var the
+    # loader validates.
+    ENV: "{{ env }}"
+    # One literal layout feeds the disk role and, as the application role is rebuilt, its path
+    # consumers — so identity, format and application paths cannot drift apart because a drive
+    # letter was edited in only one declaration.
+    pdq_disk_layout:
+      data:
+        function: 'PDQDATA'
+        drive_letter: 'E'
+        label: 'PDQDATA'
+        allocation_unit: 65536
+
+  #region ------ [ Pre-Tasks ] ---------------------------------------------------------------- #
+  pre_tasks:
+
+    # The ROLE never reaches into an environment variable: account-derived values are passed
+    # EXPLICITLY on the ansible-playbook invocation (-e aws_account_id=… -e aws_region=…), the
+    # same way the Terraform framework receives its deployment-identity variables — the workflow
+    # supplies both from its own environment, so the play and the deploy identity cannot disagree.
+    - name: 'PRE | Assert the AWS deployment identity was provided'
+      ansible.builtin.assert:
+        that:
+          - aws_account_id is defined
+          - aws_account_id is match('^[0-9]{12}$')
+          - aws_region is defined
+          - aws_region is match('^[a-z]{2}(-[a-z]+)+-[0-9]$')
+        fail_msg: >-
+          aws_account_id and aws_region must be provided as extra-vars. The aws-deploy workflow
+          passes them from its own environment (the same values the OIDC role ARN and region
+          use); a local run must pass both explicitly.
+        quiet: true
+
+  #endregion --- [ Pre-Tasks ] ---------------------------------------------------------------- #
+
+  #region ------ [ Roles ] -------------------------------------------------------------------- #
+  roles:
+
+    #region ------ [ Roles: Windows Disk Manager ] -------------------------------------------- #
+    # Guest disk provisioning is delegated to the composed framework role — this repository
+    # never duplicates it. `function` names the EBS volume's Function tag (declared in
+    # terraform/aws.tfvars) and the role resolves it to the attached disk itself, because a
+    # volume id only exists after apply.
+    - role: 'windows_disk_manager'
+      vars:
+        windows_disk_manager:
+          platform: 'aws'
+          disks:
+            - function: "{{ pdq_disk_layout.data.function }}"
+              drive_letter: "{{ pdq_disk_layout.data.drive_letter }}"
+              label: "{{ pdq_disk_layout.data.label }}"
+              allocation_unit: "{{ pdq_disk_layout.data.allocation_unit }}"
+    #endregion --- [ Roles: Windows Disk Manager ] -------------------------------------------- #
+
+    #region ------ [ Roles: PDQ Deploy ] ------------------------------------------------------ #
+    # Currently a scaffold: it applies cleanly and changes nothing. It is invoked here so the
+    # composition path, the loader merge and its idempotence are proven continuously as the
+    # role's capabilities are rebuilt one region at a time.
+    - role: 'pdq_deploy'
+    #endregion --- [ Roles: PDQ Deploy ] ------------------------------------------------------ #
+  #endregion --- [ Roles ] -------------------------------------------------------------------- #

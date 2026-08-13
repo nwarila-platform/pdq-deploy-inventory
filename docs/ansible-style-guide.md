@@ -114,6 +114,45 @@ loader v3.3.0 (verified 2026-08-10); the difference is tracked in
   mode carries `not ansible_check_mode` explicitly, so `--check` skips it honestly
   instead of beginning work and failing.
 
+## 4f. Task file shape — three stages, one region per action set — RATIFIED (Director, 2026-08-13)
+
+An OS task file is exactly **three top-level stages**, each a single named task carrying a
+`block:` so the whole stage folds and its contents indent under it:
+
+- **BEGIN** — read the machine and decide ONE action. No mutation.
+- **PROCESS** — act on that decision, and nothing else.
+- **END** — prove the result, and clean up. `always:` belongs to END, never to PROCESS.
+
+Inside a stage, **one `#region` per action set** — the smallest group of steps that accomplishes
+one thing. The region is a folding unit: a reader collapses everything they are not looking at.
+A region wrapping a single task is correct and expected; regions are not reserved for groups.
+Region labels carry their stage: `#region ------ [ Process: Stage The Installer ] --- #`.
+
+Within a task, the **module call goes last**, separated from everything above it by one blank
+line, and every Ansible-level modifier (`changed_when`, `delegate_to`, `failed_when`, `poll`,
+`register`, `vars`, `when`, …) is **sorted alphabetically** and grouped directly under `name:`.
+Module arguments are likewise alphabetical. The eye then finds the action in the same place in
+every task, and modifier order stops being a per-author choice:
+
+```yaml
+#region ------ [ Process: Create Secure Temp Directory ] --- #
+
+- name: 'PROCESS | Create Secure Temp Directory'
+  changed_when: false
+  delegate_to: 'localhost'
+  register: '__pdq_deploy_stage__'
+
+  ansible.builtin.tempfile:
+    prefix: 'pdq-deploy-'
+    state: 'directory'
+
+#endregion --- [ Process: Create Secure Temp Directory ] --- #
+```
+
+`always:` under END means a PROCESS failure aborts before cleanup runs. That is accepted: the
+proof bed is ephemeral and destroyed after every run, so cleanup exists to keep a converged host
+tidy, not to recover a failed one.
+
 ## 4a. Role scope — the "handed machine" contract — RATIFIED (Director, 2026-07-15)
 
 - **RATIFIED (Director, 2026-07-31) — composed-play ownership amendment.** The

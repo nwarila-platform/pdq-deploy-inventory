@@ -1,0 +1,70 @@
+{
+  //region ------ [ Microsoft Visual Studio Code: Settings ] -------------------------------- //
+
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.autoIndent": "advanced",
+  "editor.renderWhitespace": "all",
+  "editor.rulers": [
+    { "color": "#9a4dff", "column": 98 },
+    { "color": "#575757", "column": 96 }
+  ],
+
+  //endregion --- [ Microsoft Visual Studio Code: Settings ] -------------------------------- //
+
+  //region ------ [ Workspace ] ------------------------------------------------------------- //
+
+    //region ------ [ Workspace: Generated Trees ] ------------------------------------------ //
+
+    // '.compose' and '.frameworks' are checkouts of the pinned framework with this repo's roles
+    // overlaid at run time, and '.worktrees' holds build branches. All three carry duplicates of
+    // every role file, so an unfiltered search returns each result twice.
+    "search.exclude": {
+      "**/.compose/**": true,
+      "**/.frameworks/**": true,
+      "**/.worktrees/**": true
+    },
+    "files.watcherExclude": {
+      "**/.compose/**": true,
+      "**/.frameworks/**": true,
+      "**/.worktrees/**": true
+    },
+
+    //endregion --- [ Workspace: Generated Trees ] ------------------------------------------ //
+
+    //region ------ [ Workspace: Task File Layout ] ----------------------------------------- //
+
+    // Task files place modifiers alphabetically under the name, then one blank line, then the
+    // module call last. Every YAML formatter reflows or reorders some part of that, so a single
+    // save would silently undo the convention across a whole file. The linters remain the
+    // authority on correctness; nothing here reformats.
+    "yaml.format.enable": false,
+    "[yaml]": {
+      "editor.formatOnSave": false,
+      "editor.formatOnPaste": false
+    },
+
+    //endregion --- [ Workspace: Task File Layout ] ----------------------------------------- //
+
+  //endregion --- [ Workspace ] ------------------------------------------------------------- //
+
+  //region ------ [ Extensions ] ------------------------------------------------------------ //
+
+    //region ------ [ Extensions: Explicit Folding ] ---------------------------------------- //
+
+    "explicitFolding.debug": false,
+    "explicitFolding.rules": {
+      "*": {
+        "beginRegex": "^[\\s]*#region ------ \\[ .* \\] -+ #[\\s]*$",
+        "endRegex":   "^[\\s]*#endregion --- \\[ .* \\] -+ #[\\s]*$"
+      },
+      "jsonc": {
+        "beginRegex": "^[\\s]*\\/\\/region ------ \\[ .* \\] -+ \\/\\/[\\s]*$",
+        "endRegex":   "^[\\s]*\\/\\/endregion --- \\[ .* \\] -+ \\/\\/[\\s]*$"
+      }
+    },
+
+    //endregion --- [ Extensions: Explicit Folding ] ---------------------------------------- //
+
+  //endregion --- [ Extensions ] ------------------------------------------------------------ //
+}

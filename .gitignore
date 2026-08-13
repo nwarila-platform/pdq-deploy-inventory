@@ -17,6 +17,7 @@
 # allowed file is re-included by name. This publishes no files by itself: files inside these
 # directories stay ignored until named in a section below.
 !/.github/
+!/.vscode/
 !/.github/workflows/
 !/ansible/
 !/ansible/applications/
@@ -119,3 +120,11 @@
 # Composition build tree (framework checkout + overlaid roles) and build worktrees.
 /.compose/
 /.worktrees/
+
+# --- [ editor workspace settings ] ---------------------------------------------------------- #
+# Folding behaviour and formatter suppression for the task-file conventions. Shared deliberately:
+# the layout rules are repository conventions, not personal preference, so the settings that
+# protect them travel with the repository.
+!/.vscode/settings.json
+!/.vscode/extensions.json
+!/.vscode/tasks.json

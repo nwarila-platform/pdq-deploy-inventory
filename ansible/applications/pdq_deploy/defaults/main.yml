@@ -7,8 +7,13 @@
 # merged map, never these keys directly.
 #
 # WHAT BELONGS HERE: values that are universally safe — true for anyone running this role,
-# whatever their account, bucket or artifact layout. Product identity, the silent switch, the
-# Add/Remove Programs identity the product registers.
+# whatever their account, bucket or artifact layout. Product identity, and the Add/Remove
+# Programs identity the product registers.
+#
+# WHAT DOES NOT BELONG HERE EITHER: anything that becomes an argument to an executable running
+# as SYSTEM on the target. The silent switch and the accepted exit codes are facts about this
+# product, proven against it, not choices a caller makes — so they are literals at the point of
+# use rather than overridable configuration.
 #
 # WHAT DOES NOT: anything deployment-specific. The artifact bucket carries an account id, and
 # the installer and licence paths change with every version and every site. A default for those
@@ -26,16 +31,6 @@ pdq_deploy_defaults:
   install:
     # Staging directory on the guest. The installer is removed from here after execution.
     staging_dir: 'C:\Windows\Temp\pdq-deploy-install'
-
-    # PDQ publishes no switch list for its own installer; '/s' is taken from the package manifest
-    # that describes this exact binary. Vendor documentation notes switch case can matter, so it
-    # is configurable rather than inlined.
-    silent_argument: '/s'
-
-    # Deliberately narrow: the vendor documents no exit codes, so this starts at the single
-    # success code and is widened only from an observed run, never guessed.
-    success_exit_codes:
-      - 0
 
     # A wrong silent switch can leave the installer waiting on a dialog instead of returning.
     # Bounding it here fails inside Ansible, while the cleanup handler can still run.

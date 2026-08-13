@@ -81,8 +81,8 @@
 !/ansible/applications/pdq_inventory/tasks/present_windows.yml
 !/ansible/applications/pdq_inventory/tasks/validate.yml
 !/ansible/applications/pdq_inventory/vars/windows.yml
-!/ansible/playbooks/pdq.yml
 !/ansible/playbooks/pdq-aws.yml
+!/ansible/inventory/README.md
 
 # --- [ allowed: published documentation ] --------------------------------------------------- #
 # Enumerated: local working notes live alongside these on disk and are never published.

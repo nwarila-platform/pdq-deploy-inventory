@@ -13,7 +13,7 @@
 #      (its roles_path resolves roles by bare name).
 #
 # Usage: scripts/compose-and-run.sh [-e env=dev] [any extra ansible-playbook args...]
-#        COMPOSE_PLAYBOOK=<name>.yml to select a playbook under ansible/playbooks/ (default pdq.yml).
+#        COMPOSE_PLAYBOOK=<name>.yml to select a playbook under ansible/playbooks/ (default pdq-aws.yml).
 #
 # =========================================================================================== #
 set -euo pipefail
@@ -27,7 +27,7 @@ ANSIBLE_PLAYBOOK="${ANSIBLE_PLAYBOOK:-/root/.local/bin/ansible-playbook}"
 
 [ -f "${PIN_FILE}" ] || { echo "!! missing ${PIN_FILE}" >&2; exit 1; }
 PIN="$(tr -d '[:space:]' < "${PIN_FILE}")"
-COMPOSE_PLAYBOOK_VALUE="${COMPOSE_PLAYBOOK-pdq.yml}"
+COMPOSE_PLAYBOOK_VALUE="${COMPOSE_PLAYBOOK-pdq-aws.yml}"
 
 # --- 0a. Playbook selection (fail closed before any side effect) ---------------------------- #
 if [ -z "${COMPOSE_PLAYBOOK_VALUE}" ]; then

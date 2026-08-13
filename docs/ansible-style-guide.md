@@ -20,7 +20,7 @@
 ## 2. Naming — SEEDED
 
 - Repo: `pdq-deploy-inventory`. Roles: `pdq_inventory` and `pdq_deploy` (bare
-  capability names resolved via framework `roles_path`). Playbook: `pdq.yml`.
+  capability names resolved via framework `roles_path`). Playbook: `pdq-aws.yml`.
   Inventory group: `pdq_servers`.
 - Role defaults live under `<role>_defaults` in `defaults/main.yml`; the merged
   running config materializes as `<role>_running`; playbook overrides use the bare

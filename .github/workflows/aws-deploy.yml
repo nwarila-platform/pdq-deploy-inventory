@@ -130,9 +130,10 @@ jobs:
           private_key="${RUNNER_TEMP}/${CI_KEY_NAME}.pem"
           umask 077
           printf '%s\n' "${SSH_PRIVATE_KEY}" > "${private_key}"
-          ssh-keygen -y -f "${private_key}" > /dev/null \
+          staged_public="$(ssh-keygen -y -f "${private_key}")" \
             || { echo "::error::AWS_EC2_SSH_PRIVATE_KEY is not a usable private key."; exit 1; }
           echo "CI_PRIVATE_KEY=${private_key}" >> "${GITHUB_ENV}"
+          echo "CI_STAGED_PUBLIC_KEY=${staged_public}" >> "${GITHUB_ENV}"
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
@@ -145,6 +146,24 @@ jobs:
 
       # actions/checkout cannot read a file into ref:, so validated immutable SHAs pass through
       # step outputs. Reject malformed/multiline pins before any external framework checkout.
+      # A rotated secret that no longer matches the launch key pair is invisible until Ansible
+      # cannot log in — which surfaces fifteen minutes and one instance later as a readiness
+      # timeout. Compare the two public halves here instead, before anything is created.
+      - name: Assert the staged key matches the launch key pair
+        run: |
+          set -euo pipefail
+          launch_public="$(aws ec2 describe-key-pairs --key-names "${CI_KEY_NAME}" \
+            --include-public-key --query 'KeyPairs[0].PublicKey' --output text)"
+          staged_material="$(awk '{print $1" "$2}' <<< "${CI_STAGED_PUBLIC_KEY}")"
+          launch_material="$(awk '{print $1" "$2}' <<< "${launch_public}")"
+          if [ "${staged_material}" != "${launch_material}" ]; then
+            echo "::error::AWS_EC2_SSH_PRIVATE_KEY does not match EC2 key pair ${CI_KEY_NAME}." \
+                 "The guest installs the key pair's public half, so SSH would fail after launch." \
+                 "Rotate the secret to the matching private key, or repoint key_name."
+            exit 1
+          fi
+          echo "staged key matches ${CI_KEY_NAME}"
+
       - name: Read framework pins
         id: pins
         run: |
@@ -343,7 +362,8 @@ jobs:
                   }
                 }
               }
-            ' > "${RUNNER_TEMP}/aws-inventory.json"
+            ' | tee "${GITHUB_WORKSPACE}/ansible/inventory/aws-runtime.json" \
+                 > "${RUNNER_TEMP}/aws-inventory.json"
 
       # This repo's roles overlay onto the pinned framework tree. A framework-TRACKED role
       # path is refused so an overlay can never replace framework-owned code.

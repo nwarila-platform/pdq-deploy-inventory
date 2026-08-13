@@ -2,8 +2,61 @@
 # File: '{{ role_path }}/defaults/main.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# Lowest-precedence configuration for the PDQ Deploy role.
+# Lowest-precedence configuration for the PDQ Deploy role. The v3 loader merges the OS overlay
+# in vars/ over this map and publishes the result as 'pdq_deploy_running'; tasks read only the
+# merged map, never these keys directly.
+#
+# WHAT BELONGS HERE: values that are universally safe — true for anyone running this role,
+# whatever their account, bucket or artifact layout. Product identity, the silent switch, the
+# registry paths the vendor documents.
+#
+# WHAT DOES NOT: anything deployment-specific. The artifact bucket carries an account id, and
+# the installer and licence paths change with every version and every site. A default for those
+# is not universally safe — it is one site's value wearing a default's clothes, and a role that
+# ships one will silently reach for the wrong object when someone else runs it. They are supplied
+# by the PLAYBOOK, where they are visible and changeable, described in meta/main.yml, and
+# enforced by tasks/validate.yml.
 #
 # =========================================================================================== #
 ---
 pdq_deploy_defaults:
+
+  #region ------ [ Install ] ----------------------------------------------------------------- #
+
+  install:
+    # Staging directory on the guest. The installer is removed from here after execution.
+    staging_dir: 'C:\Windows\Temp\pdq-deploy-install'
+
+    # PDQ publishes no switch list for its own installer; '/s' is taken from the package manifest
+    # that describes this exact binary. Vendor documentation notes switch case can matter, so it
+    # is configurable rather than inlined.
+    silent_argument: '/s'
+
+    # Deliberately narrow: the vendor documents no exit codes, so this starts at the single
+    # success code and is widened only from an observed run, never guessed.
+    success_exit_codes:
+      - 0
+
+    # A wrong silent switch can leave the installer waiting on a dialog instead of returning.
+    # Bounding it here fails inside Ansible, while the cleanup handler can still run.
+    timeout_seconds: 900
+
+  #endregion --- [ Install ] ----------------------------------------------------------------- #
+
+  #region ------ [ Product identity ] -------------------------------------------------------- #
+
+  # Two vendor pages disagree about whether a 64-bit host uses the Wow6432Node path, and on
+  # Server 2025 those are different keys. Both are probed; the role writes to whichever the
+  # installer actually created and fails loudly if neither exists.
+  registry:
+    candidate_paths:
+      - 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy'
+      - 'HKLM:\SOFTWARE\Wow6432Node\Admin Arsenal\PDQ Deploy'
+    # Removed on uninstall, so it is a true install probe. 'License' and 'Secure Key' SURVIVE an
+    # uninstall and must never be used to decide whether the product is installed.
+    install_marker_value: 'InstallDir'
+
+  service_name: 'PDQDeploy'
+  console_executable: 'PDQDeployConsole.exe'
+
+  #endregion --- [ Product identity ] -------------------------------------------------------- #

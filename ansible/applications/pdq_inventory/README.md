@@ -8,10 +8,10 @@ Enterprise mode.
 
 ## Composition and prerequisites
 
-The role is overlaid into the pinned `nwarila-platform/ansible-framework` checkout at run time via
-`scripts/compose-and-run.sh`; it is not run directly from this repository. The shipped
-`ansible/playbooks/pdq.yml` runs `windows_disk_manager` before this role so the Inventory data disk
-is provisioned independently of the application role.
+The role is overlaid into the pinned `nwarila-platform/ansible-framework` checkout at run time; it
+is not run directly from this repository. **It is not currently wired into a play** — the shipped
+`ansible/playbooks/pdq-aws.yml` composes `windows_disk_manager` and `pdq_deploy` only. Inventory
+returns to a play when its own rebuild region runs.
 
 `windows_disk_manager` plus `pdq_inventory` is a supported independent composition: it produces
 the complete Inventory result currently implemented without relying on `pdq_deploy`. In

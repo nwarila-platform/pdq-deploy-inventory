@@ -140,6 +140,49 @@
       register: '__pdq_deploy_marker__'
       changed_when: false
 
+    # Only when the marker is missing. A postcondition that fails without saying what the machine
+    # actually looks like costs a whole deployment to learn one fact; this reports the product's
+    # real identity in the same run that rejects the expected one. Costs nothing when healthy.
+    - name: 'MAIN | Gather Product Evidence When The Marker Is Missing'
+      vars:
+        __owning__: >-
+          {{ __pdq_deploy_marker__.results | selectattr('exists', 'defined')
+             | selectattr('exists') | list }}
+      when: __owning__ | length != 1
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'SilentlyContinue'
+        'REGISTRY KEYS:'
+        foreach ($root in 'HKLM:\SOFTWARE', 'HKLM:\SOFTWARE\Wow6432Node') {
+          Get-ChildItem -LiteralPath $root |
+            Where-Object { $_.PSChildName -match 'PDQ|Admin Arsenal' } |
+            ForEach-Object {
+              '  ' + $_.Name
+              Get-ItemProperty -LiteralPath $_.PSPath |
+                Get-Member -MemberType NoteProperty |
+                Where-Object { $_.Name -notmatch '^PS' } |
+                ForEach-Object { '      value: ' + $_.Name }
+              Get-ChildItem -LiteralPath $_.PSPath | ForEach-Object { '    ' + $_.Name }
+            }
+        }
+        'SERVICES:'
+        Get-Service | Where-Object { $_.Name -match 'PDQ' } |
+          ForEach-Object { '  ' + $_.Name + ' = ' + $_.Status }
+        'INSTALLED PROGRAMS:'
+        foreach ($u in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+                       'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall') {
+          Get-ChildItem -LiteralPath $u |
+            ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
+            Where-Object { $_.DisplayName -match 'PDQ' } |
+            ForEach-Object { '  ' + $_.DisplayName + ' | ver ' + $_.DisplayVersion + ' | at ' + $_.InstallLocation }
+        }
+        'PROGRAM DIRECTORIES:'
+        foreach ($p in $env:ProgramFiles, ${env:ProgramFiles(x86)}) {
+          Get-ChildItem -LiteralPath $p | Where-Object { $_.Name -match 'PDQ|Admin Arsenal' } |
+            ForEach-Object { '  ' + $_.FullName }
+        }
+      register: '__pdq_deploy_evidence__'
+      changed_when: false
+
     - name: 'MAIN | Assert Exactly One Product Key Owns The Install'
       vars:
         __owning__: >-
@@ -151,7 +194,9 @@
         fail_msg: >-
           Expected '{{ pdq_deploy_running.registry.install_marker_value }}' under exactly one of
           {{ pdq_deploy_running.registry.candidate_paths }}; found {{ __owning__ | length }}.
-          Zero means the installer reported success without registering the product.
+          Zero means the installer reported success without registering the product where this
+          role looks for it. What the machine actually carries:
+          {{ __pdq_deploy_evidence__.stdout | default('(evidence task did not run)') }}
         quiet: true
 
     - name: 'MAIN | Assert The Installed Version Matches The Pin'

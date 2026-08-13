@@ -1,0 +1,20 @@
+{
+  // Extensions that provide substantial value when working with this repo
+  "recommendations": [
+    "HashiCorp.HCL",
+    "redhat.vscode-yaml",
+    "redhat.ansible",
+    "zokugun.explicit-folding",
+
+    // Add language support for '.gitignore' files
+    "codezombiech.gitignore",
+
+    // Applies '.editorconfig', which is where this repo's formatting rules live
+    "editorconfig.editorconfig"
+  ],
+
+  // Extensions that cause problems with this repo
+  "unwantedRecommendations": [
+    "mauve.terraform"
+  ]
+}

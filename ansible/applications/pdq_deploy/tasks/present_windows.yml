@@ -157,10 +157,14 @@
           poll: 15
 
           ansible.windows.win_package:
-            arguments: "{{ __install__.silent_argument }}"
+            # Literal, not configuration. A caller-supplied value here would become an argument to
+            # an executable running as SYSTEM, and there is no legitimate reason to vary it: '/s'
+            # is proven against this exact binary, and 0 is the only exit code it returns on
+            # success. Changing either is a change to this file, reviewed like any other.
+            arguments: '/s'
             checksum: "{{ pdq_deploy_running.installer.sha256 }}"
             checksum_algorithm: 'sha256'
-            expected_return_code: "{{ __install__.success_exit_codes }}"
+            expected_return_code: [0]
             path: "{{ __guest_installer__ }}"
             state: 'present'
 

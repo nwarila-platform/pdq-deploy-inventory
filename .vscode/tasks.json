@@ -1,0 +1,92 @@
+{
+  // ======================================================================== //
+  //  VS Code Tasks — the repository's verification gates                     //
+  //                                                                          //
+  //  Run via: Terminal > Run Task... (Ctrl+Shift+P > Tasks: Run Task)        //
+  //                                                                          //
+  //  These are the same commands CI runs before it spends an instance, so a  //
+  //  failure here is a failure there.                                        //
+  // ======================================================================== //
+  "version": "2.0.0",
+  "tasks": [
+    // ---- Ansible --------------------------------------------------------- //
+    {
+      "label": "Lint: YAML",
+      "type": "shell",
+      "command": "PATH=\"$PATH:$HOME/.local/bin\" yamllint -c .yamllint.yml ansible",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      // Roles resolve only from the composed tree, so ansible-lint is run there and never
+      // against 'ansible/applications' directly.
+      "label": "Lint: Ansible (composed tree)",
+      "type": "shell",
+      "command": "PATH=\"$PATH:$HOME/.local/bin\" ansible-lint applications/pdq_inventory applications/pdq_deploy",
+      "options": { "cwd": "${workspaceFolder}/.compose/ansible-framework" },
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      // Inline PowerShell that ansible-lint and --syntax-check both miss: free-form blocks that
+      // fail split_args, and backslash-before-quote sequences.
+      "label": "Check: Inline PowerShell",
+      "type": "shell",
+      "command": "$HOME/.local/share/pipx/venvs/ansible-core/bin/python scripts/check-winshell-splitargs.py",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    // ---- Boundary and pipeline ------------------------------------------- //
+    {
+      // Refuses a real account id or a foreign repository literal in the IAM sources.
+      "label": "Check: IAM Literals",
+      "type": "shell",
+      "command": "./scripts/check-iam-literals.sh",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Check: Workflow Trigger",
+      "type": "shell",
+      "command": "./scripts/check-workflow-trigger.sh",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    {
+      "label": "Check: Compose Script Parses",
+      "type": "shell",
+      "command": "bash -n scripts/compose-and-run.sh",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared" },
+      "problemMatcher": []
+    },
+    // ---- Everything ------------------------------------------------------ //
+    {
+      "label": "Gates: Run All",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "Lint: YAML",
+        "Lint: Ansible (composed tree)",
+        "Check: Inline PowerShell",
+        "Check: IAM Literals",
+        "Check: Workflow Trigger",
+        "Check: Compose Script Parses"
+      ],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

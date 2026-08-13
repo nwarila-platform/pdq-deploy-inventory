@@ -19,10 +19,8 @@
 
 - name: 'MAIN | Remove PDQ Deploy'
   vars:
-    __registry__: "{{ pdq_deploy_running.registry }}"
-    __arp_roots__:
-      - 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
-      - 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    __arp__: "{{ pdq_deploy_running.arp }}"
+    __arp_roots__: "{{ __arp__.uninstall_roots }}"
 
   block:
 
@@ -34,7 +32,7 @@
           if (Test-Path -LiteralPath $root) {
             Get-ChildItem -LiteralPath $root |
               ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
-              Where-Object { $_.DisplayName -eq 'PDQ Deploy' }
+              Where-Object { $_.DisplayName -eq {{ __arp__.display_name | quote }} }
           }
         }
         if (-not $found) { '' ; exit 0 }
@@ -58,31 +56,32 @@
         state: 'absent'
 
     # Postcondition, outside the conditional removal above so it also runs on a host that was
-    # already clean: the documented install marker must be gone.
-    - name: 'CLEAN | Re-Probe The Install Marker'
-      ansible.windows.win_reg_stat:
-        path: "{{ __probe_path__ }}"
-        name: "{{ __registry__.install_marker_value }}"
-      loop: "{{ __registry__.candidate_paths }}"
-      loop_control:
-        loop_var: '__probe_path__'
-        label: "{{ __probe_path__ }}"
-      register: '__pdq_deploy_clean_marker__'
+    # already clean: the Add/Remove Programs entry must be gone. Same source of truth the present
+    # path uses to decide the product is installed, so the two directions cannot disagree.
+    - name: 'CLEAN | Re-Read Add/Remove Programs'
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'Stop'
+        $roots = @({{ __arp_roots__ | map('regex_replace', '^(.*)$', "'\1'") | join(', ') }})
+        $found = foreach ($root in $roots) {
+          if (Test-Path -LiteralPath $root) {
+            Get-ChildItem -LiteralPath $root |
+              ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
+              Where-Object { $_.DisplayName -eq {{ __arp__.display_name | quote }} }
+          }
+        }
+        ConvertTo-Json -InputObject @(@($found) | ForEach-Object { [string]$_.DisplayVersion }) -Compress
+      register: '__pdq_deploy_clean_arp__'
       changed_when: false
 
     - name: 'CLEAN | Assert The Product Is Absent'
       vars:
-        __still_present__: >-
-          {{ __pdq_deploy_clean_marker__.results
-             | selectattr('exists', 'defined') | selectattr('exists') | list }}
+        __still_present__: "{{ __pdq_deploy_clean_arp__.stdout | trim | from_json }}"
       ansible.builtin.assert:
         that:
           - __still_present__ | length == 0
         fail_msg: >-
-          PDQ Deploy is still registered after the clean path ran: the install marker
-          '{{ __registry__.install_marker_value }}' remains on
-          {{ __still_present__ | map(attribute='item') | list }}. The uninstall command either did
-          not run or did not complete.
+          '{{ __arp__.display_name }}' is still registered after the clean path ran
+          ({{ __still_present__ }}). The uninstall command either did not run or did not complete.
         quiet: true
 
 #endregion --- [ Main ] ---------------------------------------------------------------------- #

@@ -27,7 +27,7 @@
     - name: 'CLEAN | Find The Product Uninstall Command'
       ansible.windows.win_shell: |
         $ErrorActionPreference = 'Stop'
-        $roots = @({{ __arp_roots__ | map('regex_replace', '^(.*)$', "'\\1'") | join(', ') }})
+        $roots = @({{ __arp_roots__ | map('regex_replace', '^(.*)$', "'\1'") | join(', ') }})
         $found = foreach ($root in $roots) {
           if (Test-Path -LiteralPath $root) {
             Get-ChildItem -LiteralPath $root |

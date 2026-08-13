@@ -21,42 +21,45 @@
 ---
 #region ------ [ Begin ] --------------------------------------------------------------------- #
 
-# Two vendor pages disagree on whether a 64-bit host uses the Wow6432Node path, so both are read.
-- name: 'BEGIN | Read Each Candidate Product Key'
-  ansible.windows.win_reg_stat:
-    path: "{{ __probe_path__ }}"
-    name: "{{ pdq_deploy_running.registry.install_marker_value }}"
-  loop: "{{ pdq_deploy_running.registry.candidate_paths }}"
-  loop_control:
-    loop_var: '__probe_path__'
-    label: "{{ __probe_path__ }}"
-  register: '__pdq_deploy_probe__'
+# Add/Remove Programs is the source of truth for install state: it carries the version and the
+# install location together, and Windows removes the entry on uninstall. The vendor's own product
+# key survives with no install-path value, so it cannot answer "is this installed, and at what
+# version".
+- name: 'BEGIN | Read The Installed Product From Add/Remove Programs'
+  vars:
+    __arp__: "{{ pdq_deploy_running.arp }}"
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = 'Stop'
+    $roots = @({{ __arp__.uninstall_roots | map('regex_replace', '^(.*)$', "'\1'") | join(', ') }})
+    $found = foreach ($root in $roots) {
+      if (Test-Path -LiteralPath $root) {
+        Get-ChildItem -LiteralPath $root |
+          ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
+          Where-Object { $_.DisplayName -eq {{ __arp__.display_name | quote }} }
+      }
+    }
+    $entries = @($found | ForEach-Object {
+      [pscustomobject]@{
+        version  = [string]$_.DisplayVersion
+        location = [string]$_.InstallLocation
+      }
+    })
+    ConvertTo-Json -InputObject @($entries) -Depth 3 -Compress
+  register: '__pdq_deploy_arp__'
   changed_when: false
 
 - name: 'BEGIN | Refuse An Ambiguous Product State'
   vars:
-    __owning__: >-
-      {{ __pdq_deploy_probe__.results | selectattr('exists', 'defined')
-         | selectattr('exists') | list }}
+    __entries__: "{{ __pdq_deploy_arp__.stdout | trim | from_json }}"
   ansible.builtin.assert:
     that:
-      - __owning__ | length <= 1
+      - __entries__ | length <= 1
     fail_msg: >-
-      This machine carries '{{ pdq_deploy_running.registry.install_marker_value }}' under both
-      {{ __owning__ | map(attribute='item') | list }}. A native and a redirected product key
+      This machine carries {{ __entries__ | length }} entries named
+      '{{ pdq_deploy_running.arp.display_name }}' in Add/Remove Programs
+      ({{ __entries__ | map(attribute='version') | list }}). Two registrations of one product
       cannot both own the install, and choosing one would be a guess.
     quiet: true
-
-- name: 'BEGIN | Read The Installed Console Version'
-  vars:
-    __install_dir__: >-
-      {{ __pdq_deploy_probe__.results | selectattr('exists', 'defined') | selectattr('exists')
-         | map(attribute='value') | list | first | default('') }}
-  ansible.windows.win_stat:
-    path: "{{ __install_dir__ }}\\{{ pdq_deploy_running.console_executable }}"
-  when: __install_dir__ | length > 0
-  register: '__pdq_deploy_console__'
-  changed_when: false
 
 #endregion --- [ Begin ] --------------------------------------------------------------------- #
 
@@ -67,10 +70,11 @@
     __install__: "{{ pdq_deploy_running.install }}"
     __installer_name__: "{{ pdq_deploy_running.installer.path | basename }}"
     __guest_installer__: "{{ __install__.staging_dir }}\\{{ __installer_name__ }}"
-    # One decision, made in BEGIN, gating everything below.
+    __installed__: "{{ __pdq_deploy_arp__.stdout | trim | from_json }}"
+    # One decision, made in BEGIN, gating everything below: absent, or older than the pin.
     __action_required__: >-
-      {{ not (__pdq_deploy_console__.stat.exists | default(false))
-         or (__pdq_deploy_console__.stat.version | default('0.0.0.0'))
+      {{ __installed__ | length == 0
+         or (__installed__ | first).version | default('0.0.0.0')
             is version(pdq_deploy_running.installer.version, '<') }}
 
   block:
@@ -129,39 +133,51 @@
     #region ------ [ Main: Postconditions ] ------------------------------------------------ #
 
     # Outside the action gate, so a converged host proves the same state as a freshly built one.
-    - name: 'MAIN | Re-Read Each Candidate Product Key'
-      ansible.windows.win_reg_stat:
-        path: "{{ __probe_path__ }}"
-        name: "{{ pdq_deploy_running.registry.install_marker_value }}"
-      loop: "{{ pdq_deploy_running.registry.candidate_paths }}"
-      loop_control:
-        loop_var: '__probe_path__'
-        label: "{{ __probe_path__ }}"
-      register: '__pdq_deploy_marker__'
+    - name: 'MAIN | Re-Read The Installed Product From Add/Remove Programs'
+      vars:
+        __arp__: "{{ pdq_deploy_running.arp }}"
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'Stop'
+        $roots = @({{ __arp__.uninstall_roots | map('regex_replace', '^(.*)$', "'\1'") | join(', ') }})
+        $found = foreach ($root in $roots) {
+          if (Test-Path -LiteralPath $root) {
+            Get-ChildItem -LiteralPath $root |
+              ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
+              Where-Object { $_.DisplayName -eq {{ __arp__.display_name | quote }} }
+          }
+        }
+        $entries = @($found | ForEach-Object {
+          [pscustomobject]@{
+            version  = [string]$_.DisplayVersion
+            location = [string]$_.InstallLocation
+          }
+        })
+        ConvertTo-Json -InputObject @($entries) -Depth 3 -Compress
+      register: '__pdq_deploy_final_arp__'
       changed_when: false
 
-    # Only when the marker is missing. A postcondition that fails without saying what the machine
-    # actually looks like costs a whole deployment to learn one fact; this reports the product's
-    # real identity in the same run that rejects the expected one. Costs nothing when healthy.
-    - name: 'MAIN | Gather Product Evidence When The Marker Is Missing'
+    # Only when the product is not registered as expected. A postcondition that fails without
+    # saying what the machine actually looks like costs a whole deployment to learn one fact.
+    # Costs nothing on a healthy converge.
+    - name: 'MAIN | Gather Product Evidence When The Product Is Not Registered'
       vars:
-        __owning__: >-
-          {{ __pdq_deploy_marker__.results | selectattr('exists', 'defined')
-             | selectattr('exists') | list }}
-      when: __owning__ | length != 1
+        __final__: "{{ __pdq_deploy_final_arp__.stdout | trim | from_json }}"
+      when: __final__ | length != 1
       ansible.windows.win_shell: |
         $ErrorActionPreference = 'SilentlyContinue'
-        'REGISTRY KEYS:'
+        'REGISTRY KEYS AND THEIR VALUES:'
         foreach ($root in 'HKLM:\SOFTWARE', 'HKLM:\SOFTWARE\Wow6432Node') {
           Get-ChildItem -LiteralPath $root |
             Where-Object { $_.PSChildName -match 'PDQ|Admin Arsenal' } |
             ForEach-Object {
-              '  ' + $_.Name
-              Get-ItemProperty -LiteralPath $_.PSPath |
-                Get-Member -MemberType NoteProperty |
-                Where-Object { $_.Name -notmatch '^PS' } |
-                ForEach-Object { '      value: ' + $_.Name }
-              Get-ChildItem -LiteralPath $_.PSPath | ForEach-Object { '    ' + $_.Name }
+              $_.Name
+              Get-ChildItem -LiteralPath $_.PSPath -Recurse -Depth 1 | ForEach-Object {
+                '  ' + $_.Name
+                $props = Get-ItemProperty -LiteralPath $_.PSPath
+                $props.PSObject.Properties |
+                  Where-Object { $_.Name -notmatch '^PS' } |
+                  ForEach-Object { '      ' + $_.Name + ' = ' + $_.Value }
+              }
             }
         }
         'SERVICES:'
@@ -175,43 +191,24 @@
             Where-Object { $_.DisplayName -match 'PDQ' } |
             ForEach-Object { '  ' + $_.DisplayName + ' | ver ' + $_.DisplayVersion + ' | at ' + $_.InstallLocation }
         }
-        'PROGRAM DIRECTORIES:'
-        foreach ($p in $env:ProgramFiles, ${env:ProgramFiles(x86)}) {
-          Get-ChildItem -LiteralPath $p | Where-Object { $_.Name -match 'PDQ|Admin Arsenal' } |
-            ForEach-Object { '  ' + $_.FullName }
-        }
       register: '__pdq_deploy_evidence__'
       changed_when: false
 
-    - name: 'MAIN | Assert Exactly One Product Key Owns The Install'
+    - name: 'MAIN | Assert The Product Is Registered Exactly Once At Or Above The Pin'
       vars:
-        __owning__: >-
-          {{ __pdq_deploy_marker__.results | selectattr('exists', 'defined')
-             | selectattr('exists') | list }}
+        __final__: "{{ __pdq_deploy_final_arp__.stdout | trim | from_json }}"
       ansible.builtin.assert:
         that:
-          - __owning__ | length == 1
+          - __final__ | length == 1
+          - not ((__final__ | first).version | default('0.0.0.0')
+                 is version(pdq_deploy_running.installer.version, '<'))
         fail_msg: >-
-          Expected '{{ pdq_deploy_running.registry.install_marker_value }}' under exactly one of
-          {{ pdq_deploy_running.registry.candidate_paths }}; found {{ __owning__ | length }}.
-          Zero means the installer reported success without registering the product where this
-          role looks for it. What the machine actually carries:
-          {{ __pdq_deploy_evidence__.stdout | default('(evidence task did not run)') }}
+          Expected exactly one '{{ pdq_deploy_running.arp.display_name }}' registered at
+          {{ pdq_deploy_running.installer.version }} or above; found {{ __final__ | length }}
+          entries {{ __final__ | map(attribute='version') | list }}. Zero means the installer
+          reported success without registering the product.
+          {{ __pdq_deploy_evidence__.stdout | default('') }}
         quiet: true
-
-    - name: 'MAIN | Assert The Installed Version Matches The Pin'
-      vars:
-        __install_dir__: >-
-          {{ __pdq_deploy_marker__.results | selectattr('exists', 'defined')
-             | selectattr('exists') | map(attribute='value') | list | first }}
-      ansible.windows.win_stat:
-        path: "{{ __install_dir__ }}\\{{ pdq_deploy_running.console_executable }}"
-      register: '__pdq_deploy_final_console__'
-      changed_when: false
-      failed_when: >-
-        not (__pdq_deploy_final_console__.stat.exists | default(false))
-        or (__pdq_deploy_final_console__.stat.version | default(''))
-           is version(pdq_deploy_running.installer.version, '<')
 
     - name: 'MAIN | Assert The Background Service Exists'
       ansible.windows.win_service_info:

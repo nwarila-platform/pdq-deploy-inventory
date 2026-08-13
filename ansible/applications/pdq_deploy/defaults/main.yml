@@ -8,7 +8,7 @@
 #
 # WHAT BELONGS HERE: values that are universally safe — true for anyone running this role,
 # whatever their account, bucket or artifact layout. Product identity, the silent switch, the
-# registry paths the vendor documents.
+# Add/Remove Programs identity the product registers.
 #
 # WHAT DOES NOT: anything deployment-specific. The artifact bucket carries an account id, and
 # the installer and licence paths change with every version and every site. A default for those
@@ -45,18 +45,19 @@ pdq_deploy_defaults:
 
   #region ------ [ Product identity ] -------------------------------------------------------- #
 
-  # Two vendor pages disagree about whether a 64-bit host uses the Wow6432Node path, and on
-  # Server 2025 those are different keys. Both are probed; the role writes to whichever the
-  # installer actually created and fails loudly if neither exists.
-  registry:
-    candidate_paths:
-      - 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy'
-      - 'HKLM:\SOFTWARE\Wow6432Node\Admin Arsenal\PDQ Deploy'
-    # Removed on uninstall, so it is a true install probe. 'License' and 'Secure Key' SURVIVE an
-    # uninstall and must never be used to decide whether the product is installed.
-    install_marker_value: 'InstallDir'
+  # Install state is read from Add/Remove Programs, not from the vendor's own key. Observed on a
+  # converged host 2026-08-13: the product key exists but carries no install-path value, while the
+  # ARP entry carries the version AND the install location, is a documented Windows contract rather
+  # than a vendor implementation detail, and is removed on uninstall by definition. The clean path
+  # already reads ARP for its uninstall command, so both directions now agree on one source.
+  arp:
+    display_name: 'PDQ Deploy'
+    # A 32-bit product on a 64-bit host registers under the redirected root; both are read so the
+    # role never depends on which one the installer chose.
+    uninstall_roots:
+      - 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
+      - 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
 
   service_name: 'PDQDeploy'
-  console_executable: 'PDQDeployConsole.exe'
 
   #endregion --- [ Product identity ] -------------------------------------------------------- #

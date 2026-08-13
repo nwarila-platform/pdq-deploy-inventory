@@ -42,14 +42,14 @@
 
 - name: 'VALIDATE | Require The Product Identity Probes'
   vars:
-    __registry__: "{{ pdq_deploy_running.registry }}"
+    __arp__: "{{ pdq_deploy_running.arp }}"
   ansible.builtin.assert:
     that:
-      - __registry__.candidate_paths | length >= 1
-      - __registry__.install_marker_value | length > 0
-      - pdq_deploy_running.service_name | length > 0
+      - __arp__.display_name | default('') | length > 0
+      - __arp__.uninstall_roots | default([]) | length >= 1
+      - pdq_deploy_running.service_name | default('') | length > 0
     fail_msg: >-
-      Refusing to deploy: the product identity probes are incomplete. At least one HKLM registry
-      path is required for the install marker, and the service name is required
-      as a postcondition.
+      Refusing to deploy: the product identity probes are incomplete. Install state is read from
+      Add/Remove Programs, so a display name and at least one uninstall root are required, and the
+      service name is required as a postcondition.
     quiet: true

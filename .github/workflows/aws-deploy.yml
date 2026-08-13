@@ -1,27 +1,27 @@
 # =========================================================================================== #
 # AWS Deploy — pdq-deploy-inventory
 # ------------------------------------------------------------------------------------------- #
-# Ephemeral lifecycle: terraform init/apply -> ansible -> terraform destroy (always).
+# Ephemeral lifecycle: terraform init/apply -> ansible -> terraform destroy on the normal path.
 # Terraform is DATA-ONLY here (a plain tfvars, no .tf files); resources live in the pinned
 # aws-terraform-framework, configuration in the pinned ansible-framework + this repo's role.
 #
 #   * AWS credentials are issued only to this workflow at refs/heads/main. Pull requests use
 #     the credential-free quality workflow; feature-branch workflow code never reaches AWS.
 #   * Reachability: ZERO INBOUND — SSH over SSM. The SG allows no ingress; the runner's SSH
-#     tunnels through an SSM session (AWS-StartSSHSession) riding the agent's own outbound
-#     443, and the EIP exists purely so that outbound path works (pre-created ENIs never get
-#     auto public IPs; the account has no NAT). readiness_gate=false because the framework's
-#     gate dials the instance directly; the playbook's first play waits over SSM-SSH instead.
+#     tunnels through an SSM session (AWS-StartSSHSession) riding the agent's own outbound 443
+#     through a subnet-assigned public IPv4; this configuration creates no EIP and has no NAT.
+#     readiness_gate=false because the framework's gate dials the instance directly; the
+#     playbook's first play waits over SSM-SSH instead.
 #   * ONE credential exchange, sized to the whole job. Re-exchanging per stage bought nothing:
 #     an STS session stays valid for its full duration regardless of when its stage ends, so
 #     staged refreshes left several credentials simultaneously valid rather than fewer. The job
-#     is bounded well inside the session so a destroy can never run with dead credentials and
-#     strand paid resources. The stage bounds sum to less than the job bound deliberately:
-#     the job timeout kills every remaining step, teardown included, so a job that dies on
-#     time is a job that strands what it built.
+#     The 120-minute job and 130-minute (7,800-second) credential window are configured as
+#     margin around normal execution, including the hold. This is not a teardown guarantee:
+#     abnormal delay can exhaust the job budget before destroy and strand paid resources. That
+#     risk is accepted for this temporary proof bed.
 #   * One fixed state key; this workflow's concurrency group prevents overlapping applies and
-#     never cancels a live lifecycle. The separately serialized reaper is only a conservative,
-#     age-gated fallback for a run killed before destroy.
+#     never cancels a live lifecycle. A later lifecycle can clean predecessor state before apply;
+#     no age-gated reaper exists for a run killed before destroy.
 #   * Protected-main pushes prove immediately; an off-minute weekly schedule proves recurrence.
 #     One durable incident is updated on failure and closed after the next successful lifecycle.
 # =========================================================================================== #
@@ -29,6 +29,14 @@ name: AWS Deploy
 
 'on':
   workflow_dispatch:
+    inputs:
+      hold_minutes:
+        description: Hold the converged guest before teardown
+        type: choice
+        options:
+          - '0'
+          - '15'
+        default: '0'
   push:
     branches: [main]
   schedule:
@@ -63,7 +71,8 @@ jobs:
     needs: main-ref
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    # Reserve room for both independently bounded 100-minute converges and the always-destroy path.
+    # The 120-minute budget leaves margin around two 30-minute converges and normal teardown;
+    # a timeout can still strand resources before teardown begins.
     timeout-minutes: 120
     permissions:
       id-token: write
@@ -80,6 +89,20 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
           persist-credentials: false
+
+      - name: Validate hold duration
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          HOLD_MINUTES: ${{ inputs.hold_minutes }}
+        run: |
+          set -euo pipefail
+          case "${HOLD_MINUTES}" in
+            0|15) ;;
+            *)
+              echo "::error::hold_minutes must be either 0 or 15; re-dispatch with a listed choice."
+              exit 1
+              ;;
+          esac
 
       - name: Set up pinned Python
         uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6.0.0
@@ -252,6 +275,7 @@ jobs:
       # The environment and deployment identity are individual -var flags — the highest-
       # precedence source, so the tfvars cannot override who this fresh deployment says it is.
       - name: Terraform apply
+        id: tf-apply
         timeout-minutes: 15
         working-directory: .frameworks/aws-terraform-framework/terraform
         run: |
@@ -264,11 +288,11 @@ jobs:
             -var "commit_sha=$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)" \
             -var "run_id=${GITHUB_RUN_ID}"
 
-      # Fresh two-hour session for the longest stage: the play's disk resolver and artifact
-      # delivery use AWS late in a converge whose hard timeout is 100 minutes.
+      # This stage reuses the single 7,800-second credential exchange; the play's disk resolver
+      # and artifact delivery use AWS late in a converge whose hard timeout is 30 minutes.
 
-      # Guest disk discovery is destructive by design. Prove that every live attachment and EIP
-      # association belongs to this exact run, and that each expected PDQ data disk is singular,
+      # Guest disk discovery is destructive by design. Prove that every live attachment and any EIP
+      # association belong to this exact run, and that each expected PDQ data disk is singular,
       # before the Windows role can format, move, or attach anything.
       - name: Prove fresh AWS dependency graph before Ansible
         working-directory: .frameworks/aws-terraform-framework/terraform
@@ -434,7 +458,35 @@ jobs:
           [ "${target_seen}" -eq 1 ] \
             || { echo "::error::Second converge recap did not contain the EC2 target."; exit 1; }
 
-      # The originals are dead by now; a destroy with dead credentials strands paid resources.
+      - name: Hold the converged guest for interactive work
+        if: >-
+          !cancelled() &&
+          github.event_name == 'workflow_dispatch' &&
+          inputs.hold_minutes != '0' &&
+          steps.tf-apply.outcome == 'success'
+        timeout-minutes: 17
+        run: |
+          instance_id="$(
+            jq -er '
+              .all.children.pdq_servers.hosts
+              | keys
+              | select(length == 1)
+              | .[0]
+              | select(type == "string")
+            ' "${RUNNER_TEMP}/aws-inventory.json" 2>/dev/null || true
+          )"
+          if [[ ! "${instance_id}" =~ ^i-[0-9a-f]+$ ]]; then
+            instance_id='unavailable'
+          fi
+
+          echo "Holding EC2 instance ${instance_id} for 15 minutes."
+          for remaining_minutes in 10 5 0; do
+            sleep 300
+            echo "Hold heartbeat for EC2 instance ${instance_id}: ${remaining_minutes} minutes remaining."
+          done
+          exit 0
+
+      # Teardown reuses the one 7,800-second credential session; it is not refreshed here.
 
       # An administrator can alter attachments outside Terraform. Re-read the dependency graph
       # immediately before destroy and leave an incident, rather than mutate a cross-owned edge.

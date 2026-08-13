@@ -14,6 +14,7 @@
 #
 # Usage: scripts/compose-and-run.sh [-e env=dev] [any extra ansible-playbook args...]
 #        COMPOSE_PLAYBOOK=<name>.yml to select a playbook under ansible/playbooks/ (default pdq-aws.yml).
+#        COMPOSE_INVENTORY=<path> to select a repository-relative inventory file.
 #
 # =========================================================================================== #
 set -euo pipefail
@@ -61,7 +62,43 @@ case "${target}" in
 esac
 COMPOSE_PLAYBOOK_PATH="${target}"
 
-# --- 0b. SSH mux isolation (stale ControlMaster sockets hang runs indefinitely) ------------ #
+# --- 0b. Inventory selection (optional override, fail closed before any side effect) --------- #
+COMPOSE_INVENTORY_PATH="${REPO_ROOT}/ansible/inventory/vmware.yml"
+if [[ -v COMPOSE_INVENTORY ]]; then
+    if [ -z "${COMPOSE_INVENTORY}" ]; then
+        printf '!! COMPOSE_INVENTORY resolved path is empty: %q\n' "${COMPOSE_INVENTORY}" >&2
+        exit 1
+    fi
+
+    if [[ "${COMPOSE_INVENTORY}" = /* ]]; then
+        printf '!! COMPOSE_INVENTORY resolved path is absolute: %q\n' "${COMPOSE_INVENTORY}" >&2
+        exit 1
+    fi
+
+    inventory_root_real="$(realpath -e "${REPO_ROOT}")"
+    inventory_candidate="${inventory_root_real}/${COMPOSE_INVENTORY}"
+    if ! inventory_target="$(realpath -e "${inventory_candidate}" 2>/dev/null)"; then
+        printf '!! COMPOSE_INVENTORY resolved path does not exist: %q\n' "${COMPOSE_INVENTORY}" >&2
+        exit 1
+    fi
+
+    if [ ! -f "${inventory_target}" ]; then
+        printf '!! COMPOSE_INVENTORY resolved path is not a file: %q\n' "${COMPOSE_INVENTORY}" >&2
+        exit 1
+    fi
+
+    case "${inventory_target}" in
+        "${inventory_root_real}"/*) ;;
+        *)
+            printf '!! COMPOSE_INVENTORY resolved path escapes repository root: %q\n' \
+                "${COMPOSE_INVENTORY}" >&2
+            exit 1
+            ;;
+    esac
+    COMPOSE_INVENTORY_PATH="${inventory_target}"
+fi
+
+# --- 0c. SSH mux isolation (stale ControlMaster sockets hang runs indefinitely) ------------ #
 # An interrupted or killed run can leave a stale SSH multiplex socket to the target, which
 # stalls the next play at its first task. Keep Ansible's control sockets repo-local and start
 # every run with a clean dir. (Observed 2026-07-15: a stale ~/.ansible/cp socket stalled a run,
@@ -154,6 +191,6 @@ fi
 cd "${FRAMEWORK_DIR}"
 export ANSIBLE_CONFIG="${FRAMEWORK_DIR}/ansible.cfg"
 exec "${ANSIBLE_PLAYBOOK}" \
-    -i "${REPO_ROOT}/ansible/inventory/vmware.yml" \
+    -i "${COMPOSE_INVENTORY_PATH}" \
     "${COMPOSE_PLAYBOOK_PATH}" \
     "$@"

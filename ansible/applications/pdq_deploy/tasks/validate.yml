@@ -2,7 +2,54 @@
 # File: '{{ role_path }}/tasks/validate.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# Validates load-bearing PDQ Deploy configuration after the v3 loader merge.
+# Validates load-bearing PDQ Deploy configuration after the v3 loader merge, on the CONTROLLER,
+# before anything touches the guest. The artifact inputs are supplied by the playbook rather than
+# defaulted, so this is where a missing or malformed one is caught — in a second, rather than
+# mid-converge at the cost of an instance.
+#
+# meta/main.yml describes these inputs; this file is what enforces them.
 #
 # =========================================================================================== #
 ---
+- name: 'VALIDATE | Require The Artifact Source And Its Pinned Digests'
+  ansible.builtin.assert:
+    that:
+      - pdq_deploy_running.artifact_bucket | default('') | length > 0
+      - pdq_deploy_running.installer.path | default('') | length > 0
+      - pdq_deploy_running.installer.version | default('') is match('^[0-9]+(\\.[0-9]+){3}$')
+      - pdq_deploy_running.installer.sha256 | default('') is match('^[0-9a-f]{64}$')
+    fail_msg: >-
+      Refusing to deploy: the artifact source is incomplete. The playbook must supply
+      pdq_deploy.artifact_bucket and an installer declaring a path, a four-part version, and a
+      lowercase 64-character sha256, because the object is verified against its digest before it
+      executes.
+      See meta/main.yml for the full input contract.
+    quiet: true
+
+- name: 'VALIDATE | Require A Usable Install Contract'
+  vars:
+    __install__: "{{ pdq_deploy_running.install }}"
+  ansible.builtin.assert:
+    that:
+      - __install__.staging_dir is match('^[A-Za-z]:\\\\')
+      - __install__.silent_argument | length > 0
+      - __install__.success_exit_codes | length > 0
+    fail_msg: >-
+      Refusing to deploy: the install contract is incomplete. staging_dir must be an absolute
+      Windows path, a silent argument is required because the installer is never run
+      interactively, and at least one success exit code must be declared.
+    quiet: true
+
+- name: 'VALIDATE | Require The Product Identity Probes'
+  vars:
+    __registry__: "{{ pdq_deploy_running.registry }}"
+  ansible.builtin.assert:
+    that:
+      - __registry__.candidate_paths | length >= 1
+      - __registry__.install_marker_value | length > 0
+      - pdq_deploy_running.service_name | length > 0
+    fail_msg: >-
+      Refusing to deploy: the product identity probes are incomplete. At least one HKLM registry
+      path is required for the install marker, and the service name is required
+      as a postcondition.
+    quiet: true

@@ -1,12 +1,35 @@
 # =========================================================================================== #
 # File: '{{ role_path }}/meta/main.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+# Role metadata for pdq_deploy. Description-only (style guide 8): NOT an enforcing argument
+# spec. The role's tasks/validate.yml enforces its merged-config guards.
+#
+# REQUIRED INPUTS — supplied by the playbook, not defaulted here.
+#
+# These are deployment-specific: the bucket carries an account id, and the object paths change
+# with every product version and every site. Defaulting them would ship one site's values as if
+# they were universally safe, so the playbook states them where a reader can see what is actually
+# being installed and from where.
+#
+#   pdq_deploy.artifact_bucket   S3 bucket holding the deployment material.
+#   pdq_deploy.installer.path    Object key of the PDQ Deploy installer.
+#   pdq_deploy.installer.version Four-part product version the installer delivers; the role
+#                                compares it against the installed console to stay idempotent.
+#   pdq_deploy.installer.sha256  Lowercase 64-character digest of that object. Verified on the
+#                                GUEST immediately before execution — the copy that actually runs.
+# The role fetches every object through the CONTROLLER. The guest is never given cloud
+# credentials.
 # =========================================================================================== #
 ---
 galaxy_info:
   role_name: 'pdq_deploy'
   namespace: 'nwarila_platform'
   author: 'nwarila-platform'
-  description: 'PDQ Deploy application installation for Windows Server'
+  description: >-
+    PDQ Deploy installation for Windows Server. Fetches the pinned installer from S3 through the
+    controller, verifies its digest on the guest before executing it, and installs silently.
+    Idempotent on the install marker the vendor removes at uninstall, paired with the installed
+    console version. Licensing is a separate capability.
   license: 'MIT'
   min_ansible_version: '2.17'
   platforms:

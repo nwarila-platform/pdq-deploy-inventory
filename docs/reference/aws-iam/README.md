@@ -57,24 +57,18 @@ out of git.
 
 | Role | Trust source | Policies | Purpose |
 |---|---|---|---|
-| `github_nwarila-platform_pdq-deploy-inventory` | `roles/github_nwarila-platform_pdq-deploy-inventory.trust.json` | `github_nwarila-platform_pdq-deploy-inventory` · `pdq-deploy-inventory_deploy-ec2-launch` · `pdq-deploy-inventory_deploy-ec2-lifecycle` · `pdq-deploy-inventory_deploy-sg-ssm-kms` · `pdq-deploy-inventory_deploy-discovery-iam` · `pdq-deploy-inventory_artifact-read` | CI state, deploy, prove, destroy |
-| `github_nwarila-platform_pdq-deploy-inventory-admin` | `roles/github_nwarila-platform_pdq-deploy-inventory-admin.trust.json` | `github_nwarila-platform_pdq-deploy-inventory` · the same five deploy policies | Operator break-glass and local deploy |
+| `github_nwarila-platform_pdq-deploy-inventory` | `roles/github_nwarila-platform_pdq-deploy-inventory.trust.json` | `github_nwarila-platform_pdq-deploy-inventory` · `pdq-deploy-inventory_deploy-ec2-launch` · `pdq-deploy-inventory_deploy-ec2-lifecycle` · `pdq-deploy-inventory_deploy-sg-ssm-kms` · `pdq-deploy-inventory_deploy-discovery-iam` | CI state, deploy, prove, destroy |
+| `github_nwarila-platform_pdq-deploy-inventory-admin` | `roles/github_nwarila-platform_pdq-deploy-inventory-admin.trust.json` | `github_nwarila-platform_pdq-deploy-inventory` · the same four deploy policies · `pdq-deploy-inventory_artifact-read` | Operator break-glass and local deploy |
 | `nwarila-ec2-role` | `roles/nwarila-ec2-role.trust.json` | `AmazonSSMManagedInstanceCore` (AWS-managed) **only** | EC2 instance profile `nwarila-ec2-profile` |
 
-Both GitHub roles carry the state policy as well as the five deploy policies: a local
+The `-admin` role carries the state policy as well as the four deploy policies: a local
 `deploy -> test -> destroy` cannot read or write Terraform state without it, and the row above
-claims that capability. Detach the deploy policies from `-admin` when the local path is retired.
-
-`pdq-deploy-inventory_artifact-read` reads the pinned `applications/pdq/*` prefix and is held by
-both, because the CONTROLLER performs every artifact fetch. It was previously withheld from CI as
-a least-privilege measure while nothing in CI read an artifact; installing a product from the
-artifact store is exactly the read it was reserved for, so withholding it now would only move the
-fetch somewhere worse. The boundary that matters is the one below.
-
-`scripts/bootstrap-iam.sh` attaches every repository-owned policy to both GitHub roles and
-**detaches all of them from the instance role** on every reconcile. That direction is the real
-invariant: the guest is a deployment target, not a principal. It never receives credentials,
-never reaches the artifact store, and an out-of-band attach is reverted rather than tolerated.
+claims that capability. It alone also carries `pdq-deploy-inventory_artifact-read`, which reads the
+pinned `applications/pdq/*` artifact prefix from the controller. CI is excluded to keep it
+least-privilege until Phase 2 genuinely needs that read. `scripts/bootstrap-iam.sh` attaches the
+four deploy policies to both roles, while its admin-only class removes the artifact-read policy
+from the CI and instance roles before attaching it to `-admin`. Detach the deploy policies when the
+local path is retired.
 `MaxSessionDuration` is 3600 seconds on all three roles — the AWS default, materialized as a
 role property rather than inside any document here.
 
@@ -181,16 +175,16 @@ polish; each one is a finding both auditors raised.
   rule of *split at 85%, never trim a control*. The source repo carries it combined at ~92% and has
   already had to defer fixes for want of room. Split now, before either clone extends it: the halves
   measure ~2.6 KB and ~3.3 KB. Each role has ten managed-policy slots; these deploy-facing policies
-  use five slots on each GitHub role. Attach both
+  use five on the admin role, including the admin-only artifact read, and four on CI. Attach both
   EC2 halves; they are one boundary in two documents. Do not recombine them.
 
 ## What this clone deliberately drops
 
 Both auditors, independently, recommended that the Windows consumers drop the presigned,
 target-side artifact-delivery path. This clone still has **no artifact-reader role or trust,
-presigned-URL signer, or target-side fetch tasks**. It has one narrower replacement: the deploy
-roles can read only the pinned `applications/pdq/*` prefix, and only from the controller, which
-copies the file to the guest over the existing connection.
+presigned-URL signer, or target-side fetch tasks**. It now has one narrower replacement: the
+operator role can read only the pinned `applications/pdq/*` prefix from the controller. A later
+install piece is intended to push the file to the guest.
 
 The read policy applies the relevant R4-4 correction directly: `s3:GetObject` is limited to that
 single prefix, with no `s3:GetObjectVersion`, and the bucket listing is prefix-bounded. R4-3 and

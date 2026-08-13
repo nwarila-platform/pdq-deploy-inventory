@@ -13,191 +13,22 @@
 #     (one controller-side describe per host, Nitro serial == volume-id match). The Function
 #     value here must match the ebs_block_devices tags in terraform/aws.tfvars.
 #
-#   * The `pdq_deploy` role is currently a scaffold: it applies cleanly and changes nothing.
-#     The load-bearing guest proof in this pipeline is therefore the disk provisioning and the
-#     idempotence of a second converge. Capability proof arrives as the role is rebuilt.
+#   * `pdq_deploy` installs and licences the product. It fetches its artifacts from the
+#     repository-scoped S3 prefix through the CONTROLLER — the guest is never given cloud
+#     credentials — and verifies each object against a pinned SHA256 at the point it is used.
 #
 # =========================================================================================== #
 ---
-# An inventory can contain zero hosts, which Ansible normally treats as a successful no-op. Make
-# cardinality and immutable deployment identity an explicit controller-side contract before any
-# SSH/SSM connection is attempted.
-- name: 'PLAY | Validate The Ephemeral AWS Inventory Contract'
-  hosts: 'localhost'
-  gather_facts: false
-  become: false
 
-  vars:
-    __pdq_inventory_hosts__: "{{ groups['pdq_servers'] | default([]) }}"
-    __expected_repository_id__: "{{ lookup('ansible.builtin.env', 'GITHUB_REPOSITORY_ID') | trim }}"
-    __expected_run_id__: "{{ lookup('ansible.builtin.env', 'GITHUB_RUN_ID') | trim }}"
-    __expected_region__: "{{ aws_region | default('') | trim }}"
-
-  tasks:
-    - name: 'INVENTORY | Require One Host And An Immutable Repository Identity'
-      ansible.builtin.assert:
-        that:
-          - __pdq_inventory_hosts__ | length == 1
-          - __expected_repository_id__ is match('^[0-9]+$')
-          - __expected_run_id__ is match('^[0-9]+$')
-          - __expected_region__ is match('^[a-z]{2}(-[a-z]+)+-[0-9]$')
-        fail_msg: >-
-          Refusing to configure: expected exactly one running Function=pdq instance and a
-          numeric GITHUB_REPOSITORY_ID and GITHUB_RUN_ID, but inventory
-          hosts={{ __pdq_inventory_hosts__ }}, repository_id='{{ __expected_repository_id__ }}',
-          run_id='{{ __expected_run_id__ }}', region='{{ __expected_region__ }}'. A zero-host
-          inventory is not a successful deployment proof.
-        quiet: true
-
-    - name: 'INVENTORY | Select The Sole Terraform Instance'
-      ansible.builtin.set_fact:
-        __pdq_inventory_host__: "{{ __pdq_inventory_hosts__ | first }}"
-
-    - name: 'INVENTORY | Assert Instance, Platform, Region, And Ownership Tags'
-      vars:
-        __selected__: "{{ hostvars[__pdq_inventory_host__] }}"
-        __selected_tags__: "{{ __selected__.ec2_tags | default({}) }}"
-      ansible.builtin.assert:
-        that:
-          - __selected__.ec2_instance_id is match('^i-[0-9a-f]+$')
-          - __pdq_inventory_host__ == __selected__.ec2_instance_id
-          - (__selected__.ec2_platform | default('') | lower) == 'windows'
-          - (__selected__.ec2_state.name | default('')) == 'running'
-          - (__selected_tags__.Function | default('')) == 'pdq'
-          - (__selected_tags__['RepositoryId'] | default('') | string) == __expected_repository_id__
-          - (__selected__.ec2_placement.availability_zone | default('')).startswith(__expected_region__)
-          - (__selected_tags__['RunId'] | default('') | string) == __expected_run_id__
-        fail_msg: >-
-          Refusing to configure {{ __pdq_inventory_host__ }}: it is not the one running Windows
-          instance owned by repository id {{ __expected_repository_id__ }} in
-          {{ __expected_region__ }}, or its tags do not contain current run id
-          '{{ __expected_run_id__ }}'. tags={{ __selected_tags__ }}.
-        quiet: true
-
-#region ------ [ Play: Windows Readiness ] ---------------------------------------------------- #
-# Runs BEFORE any Windows module can work: wait for sshd (EC2Launch installs the launch key
-# minutes after boot) and for EC2Launch itself to finish provisioning. The OpenSSH DefaultShell
-# stays cmd — the boot default, which passes ansible's module bootstrap argv through verbatim (a
-# PowerShell login shell re-parses it and breaks -EncodedCommand). Nothing in the roles needs a
-# PowerShell login shell: win_* modules execute inside their own PowerShell wrapper regardless.
-#
-# READINESS IS TWO PHASES, AND THE ORDER IS THE POINT.
-#
-# Phase one waits on the SSM agent through the control-plane API, which opens no tunnel and
-# leaves nothing behind. Phase two only then probes SSH. Probing SSH from the start instead
-# defeats itself: a hardened image spends minutes in sysprep, every attempt during that window
-# is doomed, and each one leaves an `aws ssm start-session` child holding a session open. By the
-# time sshd finally listens it is already past its MaxStartups ceiling (ten concurrent
-# unauthenticated connections by default) and drops precisely the connections being retried.
-# Measured on this account: twenty-nine sessions survived one run whose instance was already
-# terminated, and sshd logged `drop connection ... past MaxStartups` while the probe retried
-# against it.
-#
-# The probe therefore opens NO tunnel until the guest can actually answer one. Terminating the
-# local session-manager process does not help: an SSM session is a server-side object, so the
-# agent ON THE GUEST holds its [::1]->:22 connection open until the session is terminated through
-# the API or times out. Reaping on the runner cannot close it, which is why an earlier attempt to
-# do exactly that still accumulated fourteen sessions and twelve established connections.
-- name: 'PLAY | Wait for Windows readiness (SSM agent, sshd, EC2Launch)'
-  hosts: 'pdq_servers'
-  gather_facts: false
-  become: false
-  any_errors_fatal: true
-
-  vars:
-    __aws_region__: "{{ aws_region | default('us-east-1') }}"
-
-  tasks:
-    # Costs one API call and opens no session, so it can be polled freely while the guest boots.
-    - name: 'READY | Wait for the SSM agent to register'
-      delegate_to: 'localhost'
-      ansible.builtin.command:
-        argv:
-          - 'aws'
-          - 'ssm'
-          - 'describe-instance-information'
-          - '--region'
-          - "{{ __aws_region__ }}"
-          - '--filters'
-          - "Key=InstanceIds,Values={{ ansible_host }}"
-          - '--query'
-          - "length(InstanceInformationList[?PingStatus=='Online'])"
-          - '--output'
-          - 'text'
-      register: '__ssm_online__'
-      retries: 40
-      delay: 15
-      until: __ssm_online__.stdout | trim == '1'
-      changed_when: false
-
-    # Ask the agent whether sshd is listening. Run Command carries the question over the agent's
-    # existing channel and creates no session, so this can also be polled freely — unlike an SSH
-    # attempt, which leaves a connection the runner cannot close.
-    - name: 'READY | Wait for sshd to listen (asked over the agent, no tunnel)'
-      delegate_to: 'localhost'
-      ansible.builtin.shell:
-        cmd: |
-          set -uo pipefail
-          command_id="$(aws ssm send-command --region '{{ __aws_region__ }}' \
-            --instance-ids '{{ ansible_host }}' \
-            --document-name AWS-RunPowerShellScript \
-            --parameters 'commands=["(Get-NetTCPConnection -LocalPort 22 -State Listen -ErrorAction SilentlyContinue | Measure-Object).Count"]' \
-            --query Command.CommandId --output text)" || exit 1
-          for _ in $(seq 1 20); do
-            status="$(aws ssm get-command-invocation --region '{{ __aws_region__ }}' \
-              --command-id "${command_id}" --instance-id '{{ ansible_host }}' \
-              --query Status --output text 2>/dev/null || echo Pending)"
-            case "${status}" in Success|Failed|Cancelled|TimedOut) break ;; esac
-            sleep 3
-          done
-          aws ssm get-command-invocation --region '{{ __aws_region__ }}' \
-            --command-id "${command_id}" --instance-id '{{ ansible_host }}' \
-            --query StandardOutputContent --output text 2>/dev/null | tr -d '[:space:]'
-        executable: '/bin/bash'
-      register: '__sshd_listening__'
-      retries: 40
-      delay: 15
-      until: __sshd_listening__.stdout | default('') | trim is match('^[1-9]')
-      changed_when: false
-
-    # sshd is listening and the launch key is installed, so this succeeds almost immediately.
-    # The retry budget is deliberately small: every attempt costs a session that only the API can
-    # close, and sshd drops connections past MaxStartups once ten are pending unauthenticated.
-    - name: 'READY | Confirm the SSM-SSH path end to end'
-      delegate_to: 'localhost'
-      ansible.builtin.command:
-        cmd: >-
-          ssh {{ ansible_ssh_common_args }} -i {{ ansible_ssh_private_key_file }}
-          -o BatchMode=yes -o ConnectTimeout=15
-          {{ ansible_user }}@{{ ansible_host }} exit
-      register: '__ssh_ready__'
-      retries: 5
-      delay: 15
-      until: __ssh_ready__.rc == 0
-      failed_when: __ssh_ready__.rc != 0
-      changed_when: false
-
-    - name: 'READY | Wait for EC2Launch provisioning to complete'
-      ansible.builtin.raw: '"C:\Program Files\Amazon\EC2Launch\EC2Launch.exe" status -b'
-      changed_when: false
 #endregion --- [ Play: Windows Readiness ] ---------------------------------------------------- #
 
 - name: 'PLAY | PDQ Deploy (all-in-one Central Server, ephemeral AWS)'
   hosts: 'pdq_servers'
-  # Roles gather the facts they need themselves at present-time; the play gathers nothing.
   gather_facts: false
-  # The framework chassis ansible.cfg sets become=sudo (POSIX-only). The admin account over SSH
-  # already holds an elevated token on Windows, so this transport setting remains explicit.
   become: false
   any_errors_fatal: true
-
   vars:
-    # Platform convention: 'env' is the operator-facing extra-var; 'ENV' is the play-var the
-    # loader validates.
     ENV: "{{ env }}"
-    # One literal layout feeds the disk role and, as the application role is rebuilt, its path
-    # consumers — so identity, format and application paths cannot drift apart because a drive
-    # letter was edited in only one declaration.
     pdq_disk_layout:
       data:
         function: 'PDQDATA'
@@ -247,9 +78,22 @@
     #endregion --- [ Roles: Windows Disk Manager ] -------------------------------------------- #
 
     #region ------ [ Roles: PDQ Deploy ] ------------------------------------------------------ #
-    # Currently a scaffold: it applies cleanly and changes nothing. It is invoked here so the
-    # composition path, the loader merge and its idempotence are proven continuously as the
-    # role's capabilities are rebuilt one region at a time.
+    # The artifact bucket is passed in rather than hardcoded, so the role carries no account
+    # identifier and the same role works in any account that follows the platform's bucket
+    # convention. Everything else the role needs is pinned in its own defaults, including the
+    # SHA256 of every object it fetches.
     - role: 'pdq_deploy'
-    #endregion --- [ Roles: PDQ Deploy ] ------------------------------------------------------ #
-  #endregion --- [ Roles ] -------------------------------------------------------------------- #
+      vars:
+        pdq_deploy:
+          # The bucket carries the account id, so it is composed here rather than defaulted in
+          # the role — a role default holding one account's bucket is not a default.
+          artifact_bucket: "{{ aws_account_id }}-ansible"
+
+          # What is actually being installed, stated where a reader can see it. Each digest is
+          # verified at the point the object is used: the installer on the guest immediately
+          # before it executes, the licence on the controller immediately before the registry
+          # write. A changed object with an unchanged pin stops the deployment.
+          installer:
+            path: 'applications/pdq/Deploy_20.1.8.0.exe'
+            version: '20.1.8.0'
+            sha256: '856dbe3dd4544d4b9ae1f382ee51f2a5f25f41714c462fa4afcff9743cc85eb9'

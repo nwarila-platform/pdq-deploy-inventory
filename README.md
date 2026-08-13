@@ -26,7 +26,7 @@ can read the framework repository; and the inventory target is reachable with au
 SSH access.
 
 ```bash
-# Composes the pinned framework and runs pdq.yml
+# Composes the pinned framework and runs pdq-aws.yml
 scripts/compose-and-run.sh -e env=dev -e @<absolute-operator-vars-file>
 ```
 
@@ -45,7 +45,7 @@ before the run.
 |---|---|
 | `ansible/applications/pdq_inventory/` | PDQ Inventory application role |
 | `ansible/applications/pdq_deploy/` | PDQ Deploy application role and application share owner |
-| `ansible/playbooks/pdq.yml` | Composed play: framework disk manager, Inventory, then Deploy |
+| `ansible/playbooks/pdq-aws.yml` | Composed play: inventory contract, host readiness, framework disk manager, then Deploy |
 | `ansible/inventory/vmware.yml` | `pdq-dev` inventory over SSH and PowerShell |
 | `scripts/` | Composition, validation, and IAM helpers |
 | `terraform/` | Inactive deploy-layer skeleton; see its README |

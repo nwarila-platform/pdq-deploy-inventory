@@ -1,5 +1,5 @@
 # =========================================================================================== #
-# File: '{{ role_path }}/tasks/main.yml'                                      | Version 3.1.0 #
+# File: '{{ role_path }}/tasks/main.yml'                                      | Version 3.3.0 #
 # --- [ Description ] ----------------------------------------------------------------------- #
 #                                                                                             #
 #                        NO ROLE CUSTOMIZATIONS SHOULD HAPPEN IN THIS FILE                    #
@@ -10,10 +10,10 @@
 #   3. Builds the role's running configuration by merging layers in precedence order:         #
 #      defaults -> OS overlays (interleaved with env at each level) -> user overrides        #
 #   4. Validates the merged running config via the role's optional tasks/validate.yml         #
-#   5. Creates a secure temp directory for the role to use during execution                   #
+#   5. Creates a secure POSIX temp directory for the role to use during execution             #
 #   6. Resolves the most-specific OS task file via first_found cascade:                      #
 #      e.g., present_redhat_rocky_10.yml -> present_redhat_rocky.yml -> present_redhat.yml   #
-#   7. Cleans up the temp directory regardless of success or failure                          #
+#   7. Cleans up the POSIX temp directory regardless of success or failure                    #
 #                                                                                             #
 #                        NO ROLE CUSTOMIZATIONS SHOULD HAPPEN IN THIS FILE                    #
 #                                                                                             #
@@ -76,6 +76,7 @@
         # Gather only the 'distribution' fact subset to populate os_family, distribution,
         # and distribution_major_version. Skipped if these facts already exist (e.g.,
         # from gather_facts: true in the playbook or a prior role).
+        # The unconditional postcondition below verifies all three facts are defined.
         # Uses ansible_facts.* namespace consistently — immune to inject_facts_as_vars.
         - name: "INIT | Loading Required Operating System (OS) Facts"
           when: >-
@@ -89,18 +90,38 @@
               - '!min'
               - 'distribution'
 
+        # Fail before any OS-specific work if fact gathering did not satisfy its contract.
+        - name: 'INIT | Verifying Required Operating System (OS) Facts'
+          ansible.builtin.assert:
+            that:
+              - ansible_facts.os_family is defined
+              - ansible_facts.distribution is defined
+              - ansible_facts.distribution_major_version is defined
+            fail_msg: >-
+              Required Operating System (OS) facts remain undefined after fact gathering.
+              Missing facts:
+              {% if ansible_facts.os_family is not defined %}ansible_facts.os_family;{% endif %}
+              {% if ansible_facts.distribution is not defined %}ansible_facts.distribution;{% endif %}
+              {% if ansible_facts.distribution_major_version is not defined %}
+              ansible_facts.distribution_major_version;
+              {% endif %}
+            quiet: true
+
         #endregion --- [ Initialization: Loading Required Operating System (OS) Facts ] ------------ #
 
         #region ------ [ Initialization: Loading Installed Package Facts ] -------------------------- #
 
-        # Populate ansible_facts.packages with the host's installed package list.
+        # Populate ansible_facts.packages with the known non-Windows host's installed package list.
         # Skipped if already populated (e.g., from gather_facts: true in the playbook or a
-        # prior role). Uses manager: auto so this task is OS-family agnostic — the correct
-        # backend (rpm, apt, etc.) is selected based on what is available on the target.
+        # prior role), or on Windows. The postcondition above guarantees os_family is defined
+        # before this guard. Uses manager: auto so the correct backend (rpm, apt, etc.) is
+        # selected based on what is available on the target.
         # OS-specific task files can assert against ansible_facts.packages without needing
         # their own gather task.
         - name: 'INIT | Loading Installed Package Facts'
-          when: ansible_facts.packages is not defined
+          when:
+            - ansible_facts.packages is not defined
+            - (ansible_facts.os_family | lower) != 'windows'
 
           ansible.builtin.package_facts:
             manager: auto
@@ -141,10 +162,12 @@
 
         #region ------ [ Initialization: Loading Overlay(s): Defaults ] ---------------------------- #
 
-        # Seed '<role_name>_running' with the role's default values from defaults/main.yml.
-        # These are the lowest-precedence settings; overlays and overrides merge on top.
-        # Falls back to an empty dict if no defaults are defined for this role.
+        # Seed '<role_name>_running' from the variable '<role_name>_defaults' when it is
+        # defined, and fall back to an empty dictionary when it is undefined.
+        # The seed has the lowest precedence; overlays and overrides merge on top.
+        # The defaults dictionary may contain secrets; set_fact prints the entire value at -v.
         - name: 'INIT | Initialize running configuration'
+          no_log: true
           ansible.builtin.set_fact:
             "{{ role_name }}_running": "{{ lookup('vars', role_name ~ '_defaults', default={}) }}"
 
@@ -166,7 +189,9 @@
         # Note: <env>.yml alone is NOT loaded here — that is a playbook-level concern.
         # Later files override earlier ones via recursive dict merge (list_merge='replace',
         # meaning overlay lists fully replace defaults — they do not append).
+        # The cumulative config may contain secrets; set_fact prints it after each overlay at -v.
         - name: 'INIT | Loading Default Overlay(s)'
+          no_log: true
           loop: "{{ __var_candidates__ }}"
           loop_control: { loop_var: '__overlay__' }
           vars:
@@ -189,7 +214,9 @@
         # nested keys can be overridden without replacing the entire dict.
         # Skipped if no overrides exist or if the override is not a dict (prevents
         # a cryptic combine() error when someone sets e.g., `python3_pip: "string"`).
+        # The merged config can contain caller-supplied secrets; set_fact prints results at -v.
         - name: 'INIT | Loading Overrides'
+          no_log: true
           vars:
             __base__: "{{ lookup('vars', role_name ~ '_running', default={}) }}"
             __overrides__: "{{ lookup('vars', role_name, default={}) }}"
@@ -229,26 +256,112 @@
 
         #region ------ [ Initialization: Creating Temp Directory ] --------------------------------- #
 
-        # Create a temporary directory on the remote host for staging files during role
-        # execution (e.g., downloaded packages, generated configs). Automatically cleaned
-        # up in the 'always' block. Disable by setting '<role_name>.temp_dir: false'.
+        # '<role_name>.temp_dir_path' (str, optional) selects the PARENT directory the temp
+        # directory is created under. Unset or null, the system default (usually /tmp) is
+        # used. Set it on hosts whose default temp location is mounted 'noexec' (STIG
+        # hardening) and the role must execute staged content. Fail-closed contract: the
+        # value must be a dedicated absolute path with no dot components; empty and
+        # relative values and shared system temp locations are refused; an existing parent
+        # must be a root-owned directory without group- or world-write (root group-write
+        # tolerated) and is validated but never modified; only a missing parent is created
+        # 0700 root:root. One normalized value (trailing slashes stripped) feeds every
+        # task below so the validated path and the used path cannot diverge. The
+        # inspection re-registers on every role so state from an earlier role in the same
+        # play cannot leak into this role's guards. Deliberate boundary: values injected
+        # at extra-vars precedence outrank registered results by Ansible's own precedence
+        # rules and are not defended against.
+        - name: 'INIT | Inspecting Temp-Dir Parent Override'
+          become: true
+          register: '__temp_parent__'
+          vars:
+            __temp_dir_path__: "{{ lookup('vars', role_name, default={})['temp_dir_path'] | default('', true) | regex_replace('/+$', '') }}"
+          when:
+            - (lookup('vars', role_name, default={})['temp_dir'] | default(true)) | bool
+            - __temp_dir_path__ | length > 0
+            - (ansible_facts.os_family | lower) != 'windows'
+
+          ansible.builtin.stat:
+            path: "{{ __temp_dir_path__ }}"
+
+        # Fail closed before any privileged filesystem action. Runs whenever the knob is
+        # present and non-null (explicit null equals unset), so an empty value fails here
+        # instead of silently reverting to the system default location.
+        - name: 'INIT | Validating Temp-Dir Parent Override'
+          vars:
+            __temp_dir_path__: "{{ lookup('vars', role_name, default={})['temp_dir_path'] | default('', true) | regex_replace('/+$', '') }}"
+          when:
+            - (lookup('vars', role_name, default={})['temp_dir'] | default(true)) | bool
+            - lookup('vars', role_name, default={})['temp_dir_path'] is defined
+            - lookup('vars', role_name, default={})['temp_dir_path'] is not none
+            - (ansible_facts.os_family | lower) != 'windows'
+
+          ansible.builtin.assert:
+            that:
+              - __temp_dir_path__ is match('^/')
+              - __temp_dir_path__ is not search('(^|/)\.\.?(/|$)')
+              - __temp_dir_path__ not in ['/tmp', '/var/tmp', '/dev/shm']
+              - (not __temp_parent__.stat.exists) or __temp_parent__.stat.isdir
+              - (not __temp_parent__.stat.exists) or (__temp_parent__.stat.uid == 0)
+              - (not __temp_parent__.stat.exists) or (not __temp_parent__.stat.woth)
+              - (not __temp_parent__.stat.exists) or (not __temp_parent__.stat.wgrp) or (__temp_parent__.stat.gid == 0)
+            fail_msg: >-
+              '{{ role_name }}.temp_dir_path' ('{{ lookup('vars', role_name, default={})['temp_dir_path'] }}')
+              must be a dedicated absolute directory: no dot components, no empty or
+              relative values, not a shared system temp location, and an existing target
+              must be a root-owned directory without group- or world-write (symlinks are
+              refused). Refusing to stage files there.
+            quiet: true
+
+        # An existing parent is used as-is so the loader never rewrites the ownership or
+        # mode of a directory it did not create. Guards re-derive from the role's own
+        # inputs rather than trusting registered state alone. Creation reports 'changed'
+        # honestly — the parent is a durable filesystem mutation, unlike the ephemeral
+        # temp directory below.
+        - name: 'INIT | Ensuring Temp-Dir Parent Exists'
+          become: true
+          vars:
+            __temp_dir_path__: "{{ lookup('vars', role_name, default={})['temp_dir_path'] | default('', true) | regex_replace('/+$', '') }}"
+          when:
+            - (lookup('vars', role_name, default={})['temp_dir'] | default(true)) | bool
+            - __temp_dir_path__ | length > 0
+            - (ansible_facts.os_family | lower) != 'windows'
+            - __temp_parent__.stat is defined
+            - not __temp_parent__.stat.exists
+
+          ansible.builtin.file:
+            path: "{{ __temp_dir_path__ }}"
+            state: 'directory'
+            owner: 'root'
+            group: 'root'
+            mode: '0700'
+
+        # Create a temporary directory on a known non-Windows remote host for staging files
+        # during role execution (e.g., downloaded packages, generated configs). The OS-fact
+        # postcondition guarantees os_family is defined before this guard. Automatically
+        # cleaned up in the 'always' block. Disable by setting '<role_name>.temp_dir: false'.
         # The path is stored in '__temp_dir__.path' for use in OS-specific task files.
         - name: 'INIT | Creating Temporary Directory'
           become: true
           changed_when: false
           register: '__temp_dir__'
-          when: (lookup('vars', role_name, default={})['temp_dir'] | default(true)) | bool
+          when:
+            - (lookup('vars', role_name, default={})['temp_dir'] | default(true)) | bool
+            - (ansible_facts.os_family | lower) != 'windows'
 
           ansible.builtin.tempfile:
             state: directory
+            path: "{{ lookup('vars', role_name, default={})['temp_dir_path'] | default('', true) | regex_replace('/+$', '') | default(omit, true) }}"
             prefix: "ansible_{{ role_name }}_"
 
         # Lock down the temp directory. ansible.builtin.tempfile does not support
-        # owner/group/mode/SELinux params, so a separate file task is required.
+        # owner/group/mode/SELinux params, so a separate file task is required. The
+        # OS-fact postcondition guarantees os_family is defined before this guard.
         - name: 'INIT | Securing Temporary Directory'
           become: true
           changed_when: false
-          when: __temp_dir__.path is defined
+          when:
+            - __temp_dir__.path is defined
+            - (ansible_facts.os_family | lower) != 'windows'
 
           ansible.builtin.file:
             path: "{{ __temp_dir__.path }}"
@@ -322,16 +435,21 @@
 
   #region ------ [ Cleaning Up ] ------------------------------------------------------------- #
 
-  # Runs regardless of success or failure. Ensures the temp directory is removed even
+  # Runs regardless of success or failure. Ensures the POSIX temp directory is removed even
   # if the role errors out, preventing orphaned files from accumulating on the target.
   always:
 
-    # Remove the temp directory created during initialization. Skipped if temp_dir
-    # was disabled or if creation failed (i.e., __temp_dir__.path is not set).
+    # Remove the POSIX temp directory created during initialization. The os_family
+    # definedness check is deliberately first so a failed fact postcondition cannot
+    # dereference a missing family through stale registered __temp_dir__ state. Skipped
+    # if temp_dir was disabled or if creation failed (i.e., __temp_dir__.path is not set).
     - name: 'Cleanup | Removing Temp File(s)'
       become: true
       changed_when: false
-      when: (( __temp_dir__ is defined ) and ( __temp_dir__.path is defined ))
+      when:
+        - ansible_facts.os_family is defined
+        - (( __temp_dir__ is defined ) and ( __temp_dir__.path is defined ))
+        - (ansible_facts.os_family | lower) != 'windows'
 
       ansible.builtin.file:
         path: "{{ __temp_dir__.path }}"

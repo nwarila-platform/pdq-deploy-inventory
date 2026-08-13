@@ -87,6 +87,11 @@
           register: '__pdq_deploy_stage__'
           changed_when: false
 
+        # The module probes the BUCKET before the object, and that probe is authorized by a
+        # bucket-level grant this deployment deliberately does not hold: reading one pinned
+        # prefix must not imply the right to see the bucket. Skipping the probe is the module's
+        # documented answer for exactly that policy shape. A missing object still fails loudly —
+        # the key check uses head_object, which the object-level grant does authorize.
         - name: 'MAIN | Fetch The Installer To The Controller'
           delegate_to: 'localhost'
           amazon.aws.s3_object:
@@ -95,6 +100,7 @@
             dest: "{{ __pdq_deploy_stage__.path }}/{{ __installer_name__ }}"
             mode: 'get'
             overwrite: 'different'
+            ignore_nonexistent_bucket: true
 
         - name: 'MAIN | Ensure The Guest Staging Directory Exists'
           ansible.windows.win_file:

@@ -162,13 +162,16 @@
     # Only when the product is not registered as expected. A postcondition that fails without
     # saying what the machine actually looks like costs a whole deployment to learn one fact.
     # Costs nothing on a healthy converge.
+    # Registry values are deliberately withheld because this tree carries PDQ secret material:
+    # 'License' and 'Secure Key', which is generated at install time. A failed assertion in this
+    # public repository reaches a world-readable log.
     - name: 'MAIN | Gather Product Evidence When The Product Is Not Registered'
       vars:
         __final__: "{{ __pdq_deploy_final_arp__.stdout | trim | from_json }}"
       when: __final__ | length != 1
       ansible.windows.win_shell: |
         $ErrorActionPreference = 'SilentlyContinue'
-        'REGISTRY KEYS AND THEIR VALUES:'
+        'REGISTRY KEYS AND PROPERTY NAMES:'
         foreach ($root in 'HKLM:\SOFTWARE', 'HKLM:\SOFTWARE\Wow6432Node') {
           Get-ChildItem -LiteralPath $root |
             Where-Object { $_.PSChildName -match 'PDQ|Admin Arsenal' } |
@@ -179,7 +182,7 @@
                 $props = Get-ItemProperty -LiteralPath $_.PSPath
                 $props.PSObject.Properties |
                   Where-Object { $_.Name -notmatch '^PS' } |
-                  ForEach-Object { '      ' + $_.Name + ' = ' + $_.Value }
+                  ForEach-Object { '      ' + $_.Name }
               }
             }
         }

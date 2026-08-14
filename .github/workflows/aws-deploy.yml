@@ -335,11 +335,13 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
+          # Dynamic inventory publishes an instance attribute named state; extra-vars take precedence.
           ansible-playbook -i "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml" \
             "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
             -e env=test \
             -e aws_account_id="${AWS_ACCOUNT_ID}" \
-            -e aws_region="${AWS_REGION}"
+            -e aws_region="${AWS_REGION}" \
+            -e state=present
 
       - name: Hold the converged guest for interactive work
         if: >-

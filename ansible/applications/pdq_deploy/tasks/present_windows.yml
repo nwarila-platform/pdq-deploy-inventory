@@ -117,15 +117,18 @@
             dest: "{{ __guest_installer__ }}"
           register: '__pdq_deploy_copied__'
 
-        # A wrong silent switch can leave the installer waiting on a dialog rather than
-        # returning, so the run is bounded and fails inside Ansible while cleanup can still run.
+        # The vendor's silent switch and success code are properties of this binary, not operator
+        # choices, so they live beside the package invocation. A wrong silent switch can leave the
+        # installer waiting on a dialog rather than returning, so the run is bounded and fails
+        # inside Ansible while cleanup can still run.
         - name: 'MAIN | Install Silently From The Verified Copy'
           ansible.windows.win_package:
             path: "{{ __guest_installer__ }}"
-            arguments: "{{ __install__.silent_argument }}"
+            arguments: '/s'
             checksum: "{{ pdq_deploy_running.installer.sha256 }}"
             checksum_algorithm: 'sha256'
-            expected_return_code: "{{ __install__.success_exit_codes }}"
+            expected_return_code:
+              - 0
             state: 'present'
           async: "{{ __install__.timeout_seconds }}"
           poll: 15

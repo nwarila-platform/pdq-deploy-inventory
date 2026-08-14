@@ -5,8 +5,8 @@
 # Provisions the declared Windows data disk on the EPHEMERAL EC2 instance, then applies the PDQ
 # Deploy role. Runs from the COMPOSED tree only — in CI, .github/workflows/aws-deploy.yml
 # overlays this repository's roles into the pinned ansible-framework checkout and executes this
-# playbook against an exact JSON inventory built from Terraform output and verified against live
-# EC2 tags, reached by instance id over SSH-in-SSM — zero inbound.
+# playbook against a dynamic EC2 inventory filtered to this run and verified against live EC2
+# tags, reached by direct SSH to the instance's public IPv4.
 #
 # Three plays, in a required order: prove the inventory is the instance this run created, wait
 # for that instance to become reachable, then configure it.
@@ -76,75 +76,26 @@
 # The instance answers the EC2 API seconds after creation and accepts SSH minutes later: it must
 # finish sysprep and EC2Launch before sshd starts and the launch key is installed.
 #
-# THE PHASE ORDER IS THE POINT. Phase one polls the SSM agent through the control-plane API,
-# which opens no tunnel. Only then does phase two probe SSH. Probing SSH from the start defeats
-# itself — every attempt during sysprep is doomed and each leaves a server-side session the
-# runner cannot close, so by the time sshd listens it is already past MaxStartups (ten pending
-# unauthenticated connections) and drops exactly the connections being retried. Measured here:
-# twenty-nine sessions survived a run whose instance was already terminated.
+# Poll the TCP port without opening SSH sessions while sysprep and EC2Launch start sshd, then use
+# a bounded authenticated probe before running anything on the guest.
 
-- name: 'PLAY | Wait For Windows Readiness (SSM agent, sshd, EC2Launch)'
+- name: 'PLAY | Wait For Windows Readiness (direct SSH, EC2Launch)'
   hosts: 'pdq_servers'
   gather_facts: false
   become: false
   any_errors_fatal: true
 
-  vars:
-    __aws_region__: "{{ aws_region | default('us-east-1') }}"
-
   tasks:
-    # One API call, no session: safe to poll freely while the guest boots.
-    - name: 'READY | Wait For The SSM Agent To Register'
+    - name: 'READY | Wait For The Direct SSH Port'
       delegate_to: 'localhost'
-      ansible.builtin.command:
-        argv:
-          - 'aws'
-          - 'ssm'
-          - 'describe-instance-information'
-          - '--region'
-          - "{{ __aws_region__ }}"
-          - '--filters'
-          - "Key=InstanceIds,Values={{ ansible_host }}"
-          - '--query'
-          - "length(InstanceInformationList[?PingStatus=='Online'])"
-          - '--output'
-          - 'text'
-      register: '__ssm_online__'
-      retries: 40
-      delay: 15
-      until: __ssm_online__.stdout | trim == '1'
-      changed_when: false
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 22
+        connect_timeout: 5
+        sleep: 15
+        timeout: 900
 
-    # Asked over the agent's existing channel, so this opens no session either.
-    - name: 'READY | Wait For sshd To Listen (asked over the agent, no tunnel)'
-      delegate_to: 'localhost'
-      ansible.builtin.shell:
-        cmd: |
-          set -uo pipefail
-          command_id="$(aws ssm send-command --region '{{ __aws_region__ }}' \
-            --instance-ids '{{ ansible_host }}' \
-            --document-name AWS-RunPowerShellScript \
-            --parameters 'commands=["(Get-NetTCPConnection -LocalPort 22 -State Listen -ErrorAction SilentlyContinue | Measure-Object).Count"]' \
-            --query Command.CommandId --output text)" || exit 1
-          for _ in $(seq 1 20); do
-            status="$(aws ssm get-command-invocation --region '{{ __aws_region__ }}' \
-              --command-id "${command_id}" --instance-id '{{ ansible_host }}' \
-              --query Status --output text 2>/dev/null || echo Pending)"
-            case "${status}" in Success|Failed|Cancelled|TimedOut) break ;; esac
-            sleep 3
-          done
-          aws ssm get-command-invocation --region '{{ __aws_region__ }}' \
-            --command-id "${command_id}" --instance-id '{{ ansible_host }}' \
-            --query StandardOutputContent --output text 2>/dev/null | tr -d '[:space:]'
-        executable: '/bin/bash'
-      register: '__sshd_listening__'
-      retries: 40
-      delay: 15
-      until: __sshd_listening__.stdout | default('') | trim is match('^[1-9]')
-      changed_when: false
-
-    # Small retry budget on purpose: each attempt costs a session only the API can close.
-    - name: 'READY | Confirm The SSM-SSH Path End To End'
+    - name: 'READY | Confirm The Direct SSH Path End To End'
       delegate_to: 'localhost'
       ansible.builtin.command:
         cmd: >-
@@ -152,7 +103,7 @@
           -o BatchMode=yes -o ConnectTimeout=15
           {{ ansible_user }}@{{ ansible_host }} exit
       register: '__ssh_ready__'
-      retries: 5
+      retries: 20
       delay: 15
       until: __ssh_ready__.rc == 0
       failed_when: __ssh_ready__.rc != 0

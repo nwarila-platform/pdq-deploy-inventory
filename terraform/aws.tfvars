@@ -139,8 +139,8 @@ all_systems = [
       }
     ]
 
-    # No Elastic IP: request the launch-time public IPv4 used by the direct-SSH inventory path.
-    associate_public_ip = true
+    # No Elastic IP: the subnet auto-assigns the launch-time public IPv4 used for direct SSH.
+    associate_public_ip = false
   }
 ]
 

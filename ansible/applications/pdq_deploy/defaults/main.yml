@@ -27,16 +27,6 @@ pdq_deploy_defaults:
     # Staging directory on the guest. The installer is removed from here after execution.
     staging_dir: 'C:\Windows\Temp\pdq-deploy-install'
 
-    # PDQ publishes no switch list for its own installer; '/s' is taken from the package manifest
-    # that describes this exact binary. Vendor documentation notes switch case can matter, so it
-    # is configurable rather than inlined.
-    silent_argument: '/s'
-
-    # Deliberately narrow: the vendor documents no exit codes, so this starts at the single
-    # success code and is widened only from an observed run, never guessed.
-    success_exit_codes:
-      - 0
-
     # A wrong silent switch can leave the installer waiting on a dialog instead of returning.
     # Bounding it here fails inside Ansible, while the cleanup handler can still run.
     timeout_seconds: 900

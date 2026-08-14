@@ -32,12 +32,8 @@
   ansible.builtin.assert:
     that:
       - __install__.staging_dir is match('^[A-Za-z]:\\\\')
-      - __install__.silent_argument | length > 0
-      - __install__.success_exit_codes | length > 0
     fail_msg: >-
-      Refusing to deploy: the install contract is incomplete. staging_dir must be an absolute
-      Windows path, a silent argument is required because the installer is never run
-      interactively, and at least one success exit code must be declared.
+      Refusing to deploy: install.staging_dir must be an absolute Windows path.
     quiet: true
 
 - name: 'VALIDATE | Require The Product Identity Probes'

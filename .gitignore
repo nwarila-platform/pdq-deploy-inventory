@@ -83,6 +83,7 @@
 !/ansible/applications/pdq_inventory/vars/windows.yml
 !/ansible/playbooks/pdq-aws.yml
 !/ansible/inventory/README.md
+!/ansible/inventory/aws_ec2.yml
 
 # --- [ allowed: published documentation ] --------------------------------------------------- #
 # Enumerated: local working notes live alongside these on disk and are never published.

@@ -12,13 +12,13 @@
 #     through a subnet-assigned public IPv4; this configuration creates no EIP and has no NAT.
 #     readiness_gate=false because the framework's gate dials the instance directly; the
 #     playbook's first play waits over SSM-SSH instead.
-#   * ONE credential exchange, sized to the whole job. Re-exchanging per stage bought nothing:
-#     an STS session stays valid for its full duration regardless of when its stage ends, so
-#     staged refreshes left several credentials simultaneously valid rather than fewer. The job
-#     The 120-minute job and 130-minute (7,800-second) credential window are configured as
-#     margin around normal execution, including the hold. This is not a teardown guarantee:
-#     abnormal delay can exhaust the job budget before destroy and strand paid resources. That
-#     risk is accepted for this temporary proof bed.
+#   * AWS credentials are exchanged before provisioning and refreshed before eligible teardown.
+#     The initial 7,800-second session covers normal deployment work; the teardown refresh uses a
+#     modest 3,600-second session so long holds do not reach destroy with expired credentials.
+#     The 330-minute job budget includes a four-hour hold plus measured-path margin and stays below
+#     the runner's 360-minute execution limit. It is not a teardown guarantee: abnormal delay can
+#     exhaust the job budget before destroy and strand paid resources. That risk is accepted for
+#     this temporary proof bed.
 #   * One fixed state key; this workflow's concurrency group prevents overlapping applies and
 #     never cancels a live lifecycle. A later lifecycle can clean predecessor state before apply;
 #     no age-gated reaper exists for a run killed before destroy.
@@ -36,6 +36,9 @@ name: AWS Deploy
         options:
           - '0'
           - '15'
+          - '60'
+          - '120'
+          - '240'
         default: '0'
   push:
     branches: [main]
@@ -71,9 +74,9 @@ jobs:
     needs: main-ref
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    # The 120-minute budget leaves margin around two 30-minute converges and normal teardown;
-    # a timeout can still strand resources before teardown begins.
-    timeout-minutes: 120
+    # The 330-minute budget leaves measured-path margin around a 240-minute hold and remains below
+    # the runner's 360-minute execution limit; a timeout can still strand resources before teardown.
+    timeout-minutes: 330
     permissions:
       id-token: write
       contents: read
@@ -97,9 +100,9 @@ jobs:
         run: |
           set -euo pipefail
           case "${HOLD_MINUTES}" in
-            0|15) ;;
+            0|15|60|120|240) ;;
             *)
-              echo "::error::hold_minutes must be either 0 or 15; re-dispatch with a listed choice."
+              echo "::error::hold_minutes must be one of 0, 15, 60, 120, or 240; re-dispatch with a listed choice."
               exit 1
               ;;
           esac
@@ -464,8 +467,11 @@ jobs:
           github.event_name == 'workflow_dispatch' &&
           inputs.hold_minutes != '0' &&
           steps.tf-apply.outcome == 'success'
-        timeout-minutes: 17
+        timeout-minutes: 245
+        env:
+          HOLD_MINUTES: ${{ inputs.hold_minutes }}
         run: |
+          set -euo pipefail
           instance_id="$(
             jq -er '
               .all.children.pdq_servers.hosts
@@ -479,14 +485,24 @@ jobs:
             instance_id='unavailable'
           fi
 
-          echo "Holding EC2 instance ${instance_id} for 15 minutes."
-          for remaining_minutes in 10 5 0; do
+          remaining_minutes="${HOLD_MINUTES}"
+          echo "Holding EC2 instance ${instance_id} for ${remaining_minutes} minutes."
+          while (( remaining_minutes > 0 )); do
             sleep 300
+            remaining_minutes=$((remaining_minutes - 5))
             echo "Hold heartbeat for EC2 instance ${instance_id}: ${remaining_minutes} minutes remaining."
           done
           exit 0
 
-      # Teardown reuses the one 7,800-second credential session; it is not refreshed here.
+      - name: Refresh AWS credentials for teardown (OIDC)
+        if: always() && steps.tf-init.outcome == 'success'
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ env.DEPLOY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
+          role-session-name: aws-deploy-${{ github.run_id }}-teardown
+          role-duration-seconds: 3600
 
       # An administrator can alter attachments outside Terraform. Re-read the dependency graph
       # immediately before destroy and leave an incident, rather than mutate a cross-owned edge.
@@ -521,6 +537,15 @@ jobs:
             -var "repository_id=${GITHUB_REPOSITORY_ID}" \
             -var "commit_sha=$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)" \
             -var "run_id=${GITHUB_RUN_ID}"
+
+      - name: Bound the cleanup proof when the run is cancelled
+        if: cancelled() && steps.tf-init.outcome == 'success'
+        run: |
+          set -euo pipefail
+          {
+            echo 'CLEAN_PROOF_ATTEMPTS=3'
+            echo 'CLEAN_PROOF_DELAY_SECONDS=5'
+          } >> "${GITHUB_ENV}"
 
       - name: Prove no live repository-owned AWS resources remain
         if: always() && steps.tf-destroy.outcome == 'success'

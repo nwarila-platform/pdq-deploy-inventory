@@ -7,22 +7,18 @@
 # NO .tf files of its own: resources live in the pinned framework, configuration in the pinned
 # ansible-framework plus this repository's roles.
 #
-# REACHABILITY — ZERO INBOUND, SSH OVER SSM. The security group allows no ingress at all. The
-# runner reaches the instance through an SSM session (AWS-StartSSHSession) riding the SSM
-# agent's own outbound 443. The deploy subnet sets MapPublicIpOnLaunch, so the pre-created ENI
-# is auto-assigned a public IPv4 at launch and the agent egresses through the internet gateway.
-# No Elastic IP is involved. The account has no NAT and no VPC endpoints, so that auto-assigned
-# address is the only egress route — SSM registration is the proof it carries traffic.
+# REACHABILITY — DIRECT SSH OVER A PUBLIC IPv4. The workflow discovers the runner's public IPv4
+# and passes it as the framework's runtime-only runner_ip variable. The framework attaches one
+# security group scoped to that address to every interface. The instance receives a public IPv4
+# at launch; no Elastic IP is involved. The account has no NAT and no VPC endpoints.
 #
 # The dependency worth knowing: MapPublicIpOnLaunch is an attribute of a shared subnet no
-# repository owns. If it is ever turned off, an instance without an Elastic IP launches with no
-# address and no egress, and the failure appears minutes later as an SSM agent that never
-# registers rather than as an apply error.
+# repository owns. Direct SSH requires the instance's launch-time public address as well as the
+# runner-scoped security group.
 #
-# readiness_gate is FALSE by design: the framework's gate dials the instance directly over SSH,
-# which a zero-ingress security group forbids. The playbook's first play waits for readiness
-# over SSM-SSH instead. The OpenSSH DefaultShell stays cmd — the boot default — because a
-# PowerShell login shell breaks ansible's module bootstrap.
+# readiness_gate is FALSE by design: the playbook owns the bounded direct-SSH readiness check.
+# The OpenSSH DefaultShell stays cmd — the boot default — because a PowerShell login shell breaks
+# ansible's module bootstrap.
 #
 # =========================================================================================== #
 
@@ -53,10 +49,8 @@ all_systems = [
     # PDQ Deploy and PDQ Inventory are co-located on ONE Central Server host with their own
     # database engine; 4 GiB is not enough headroom for an all-in-one install.
     instance_type = "t3.large"
-    # "ssh-ssm" names what actually happens: SSH on the wire, reached through an SSM tunnel
-    # with no inbound path opened. The framework requires readiness_gate = false for this
-    # transport because its own gate dials directly and cannot traverse the tunnel.
-    connection_type = "ssh-ssm"
+    # Direct SSH reaches the launch-time public IPv4 through the runner-scoped framework SG.
+    connection_type = "ssh"
     readiness_user  = null
 
     readiness_gate             = false
@@ -108,14 +102,31 @@ all_systems = [
         interface_type  = null
         private_ip      = null
         security_groups = []
-        # Non-null ingress + egress => the framework creates and attaches the group.
-        # Ingress [] = ZERO inbound: the runner's SSH rides the SSM agent's own outbound
-        # session, so nothing on the internet can dial this instance. Egress is HTTPS only —
-        # the SSM agent registering and streaming through the internet gateway.
-        ingress = []
+        # Deliberate temporary development-cycle allowance: SSH from the whole IPv4 space, split
+        # into two halves because the framework refuses a zero-length prefix; remove when the cycle ends.
+        ingress = [
+          {
+            description                  = "SSH from first half of IPv4"
+            ip_protocol                  = "tcp"
+            from_port                    = 22
+            to_port                      = 22
+            cidr_ipv4                    = "0.0.0.0/1"
+            prefix_list_id               = null
+            referenced_security_group_id = null
+          },
+          {
+            description                  = "SSH from second half of IPv4"
+            ip_protocol                  = "tcp"
+            from_port                    = 22
+            to_port                      = 22
+            cidr_ipv4                    = "128.0.0.0/1"
+            prefix_list_id               = null
+            referenced_security_group_id = null
+          }
+        ]
         egress = [
           {
-            description                  = "HTTPS out (SSM agent registration and sessions)"
+            description                  = "HTTPS out"
             ip_protocol                  = "tcp"
             from_port                    = 443
             to_port                      = 443
@@ -128,10 +139,8 @@ all_systems = [
       }
     ]
 
-    # No Elastic IP: the subnet auto-assigns a public IPv4 at launch, which is all the SSM
-    # agent's outbound registration needs. This is zero-inbound either way — the security
-    # group allows no ingress — so the address is an egress route, not a door.
-    associate_public_ip = false
+    # No Elastic IP: request the launch-time public IPv4 used by the direct-SSH inventory path.
+    associate_public_ip = true
   }
 ]
 

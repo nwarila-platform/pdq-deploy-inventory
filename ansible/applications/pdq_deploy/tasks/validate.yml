@@ -42,10 +42,9 @@
   ansible.builtin.assert:
     that:
       - __arp__.display_name | default('') | length > 0
-      - __arp__.uninstall_roots | default([]) | length >= 1
       - pdq_deploy_running.service_name | default('') | length > 0
     fail_msg: >-
       Refusing to deploy: the product identity probes are incomplete. Install state is read from
-      Add/Remove Programs, so a display name and at least one uninstall root are required, and the
-      service name is required as a postcondition.
+      Add/Remove Programs, so a display name is required, and the service name is required as a
+      postcondition. The uninstall roots are not settings — the read script owns them.
     quiet: true

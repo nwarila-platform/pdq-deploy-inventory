@@ -365,7 +365,7 @@ $Ansible.Changed = $Result.changed
 $Ansible.Result = $Result
 
 # The result is published either way, so a caller can see WHAT was found before the failure is
-# raised — an error that hides its own evidence costs a second run to diagnose.
+# raised -- an error that hides its own evidence costs a second run to diagnose.
 If ($Result.ambiguous) {
   $Ansible.Failed = $True
 }

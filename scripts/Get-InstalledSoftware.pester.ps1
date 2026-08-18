@@ -337,8 +337,11 @@ Describe 'Get-InstalledSoftware' {
         ConvertFrom-Json
 
       $Result.count | Should -Be 1
-      $Result.entries[0].DisplayVersion | Should -BeNullOrEmpty
-      $Result.entries[0].InstallLocation | Should -BeNullOrEmpty
+      # Assert the properties are ABSENT rather than reading them: a registration that never
+      # carried them yields an entry that does not either, and reading a property that is not
+      # there is fatal under strict mode on some PowerShell versions.
+      $Result.entries[0].PSObject.Properties.Name | Should -Not -Contain 'DisplayVersion'
+      $Result.entries[0].PSObject.Properties.Name | Should -Not -Contain 'InstallLocation'
     }
   }
 

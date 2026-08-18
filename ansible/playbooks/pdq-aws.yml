@@ -47,21 +47,22 @@
 
     - name: 'INVENTORY | Select The Sole Terraform Instance'
       ansible.builtin.set_fact:
+        cacheable: false
         __pdq_inventory_host__: "{{ __pdq_inventory_hosts__ | first }}"
 
     - name: 'INVENTORY | Assert Instance, Platform, Region, And Ownership Tags'
       vars:
         __selected__: "{{ hostvars[__pdq_inventory_host__] }}"
-        __selected_tags__: "{{ __selected__.ec2_tags | default({}) }}"
+        __selected_tags__: "{{ __selected__.aws_tags | default({}) }}"
       ansible.builtin.assert:
         that:
-          - __selected__.ec2_instance_id is match('^i-[0-9a-f]+$')
-          - __pdq_inventory_host__ == __selected__.ec2_instance_id
-          - (__selected__.ec2_platform | default('') | lower) == 'windows'
-          - (__selected__.ec2_state.name | default('')) == 'running'
+          - __selected__.aws_instance_id is match('^i-[0-9a-f]+$')
+          - __pdq_inventory_host__ == __selected__.aws_instance_id
+          - (__selected__.aws_platform | default('') | lower) == 'windows'
+          - (__selected__.aws_state.name | default('')) == 'running'
           - (__selected_tags__.Function | default('')) == 'pdq'
           - (__selected_tags__['RepositoryId'] | default('') | string) == __expected_repository_id__
-          - (__selected__.ec2_placement.availability_zone | default('')).startswith(__expected_region__)
+          - (__selected__.aws_placement.availability_zone | default('')).startswith(__expected_region__)
           - (__selected_tags__['RunId'] | default('') | string) == __expected_run_id__
         fail_msg: >-
           Refusing to configure {{ __pdq_inventory_host__ }}: it is not the one running Windows
@@ -88,30 +89,39 @@
   tasks:
     - name: 'READY | Wait For The Direct SSH Port'
       delegate_to: 'localhost'
+
       ansible.builtin.wait_for:
+        active_connection_states: [ 'ESTABLISHED', 'FIN_WAIT1', 'FIN_WAIT2', 'SYN_RECV', 'SYN_SENT', 'TIME_WAIT' ]
+        connect_timeout: 5
+        delay: 0
         host: "{{ ansible_host }}"
         port: 22
-        connect_timeout: 5
         sleep: 15
+        state: 'started'
         timeout: 900
 
     - name: 'READY | Confirm The Direct SSH Path End To End'
+      changed_when: false
+      delay: 15
       delegate_to: 'localhost'
+      failed_when: __ssh_ready__.rc != 0
+      register: '__ssh_ready__'
+      retries: 20
+      until: __ssh_ready__.rc == 0
+
       ansible.builtin.command:
         cmd: >-
           ssh {{ ansible_ssh_common_args }} -i {{ ansible_ssh_private_key_file }}
           -o BatchMode=yes -o ConnectTimeout=15
           {{ ansible_user }}@{{ ansible_host }} exit
-      register: '__ssh_ready__'
-      retries: 20
-      delay: 15
-      until: __ssh_ready__.rc == 0
-      failed_when: __ssh_ready__.rc != 0
-      changed_when: false
+        expand_argument_vars: true
+        stdin_add_newline: true
+        strip_empty_ends: true
 
     - name: 'READY | Wait For EC2Launch Provisioning To Complete'
-      ansible.builtin.raw: '"C:\Program Files\Amazon\EC2Launch\EC2Launch.exe" status -b'
       changed_when: false
+
+      ansible.builtin.raw: '"C:\Program Files\Amazon\EC2Launch\EC2Launch.exe" status -b'
 
 #endregion --- [ Play: Windows Readiness ] ---------------------------------------------------- #
 
@@ -185,6 +195,7 @@
             path: 'applications/pdq/Deploy_20.1.8.0.exe'
             version: '20.1.8.0'
             sha256: '856dbe3dd4544d4b9ae1f382ee51f2a5f25f41714c462fa4afcff9743cc85eb9'
+
     #endregion --- [ Roles: PDQ Deploy ] ------------------------------------------------------ #
 
   #endregion --- [ Roles ] -------------------------------------------------------------------- #

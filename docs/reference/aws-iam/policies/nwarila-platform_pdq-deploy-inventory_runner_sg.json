@@ -1,0 +1,99 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "DescribeSecurityGroups",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeSecurityGroups",
+                "ec2:DescribeSecurityGroupRules"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "CreateTaggedSecurityGroup",
+            "Effect": "Allow",
+            "Action": "ec2:CreateSecurityGroup",
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:RequestTag/Repository": "nwarila-platform/pdq-deploy-inventory",
+                    "aws:RequestTag/RepositoryId": "1316209027",
+                    "aws:RequestTag/ManagedBy": "Terraform"
+                },
+                "Null": {
+                    "aws:RequestTag/CommitSha": "false",
+                    "aws:RequestTag/RunId": "false",
+                    "aws:RequestTag/Environment": "false"
+                }
+            }
+        },
+        {
+            "Sid": "CreateSecurityGroupVpcResource",
+            "Effect": "Allow",
+            "Action": "ec2:CreateSecurityGroup",
+            "Resource": "arn:aws:ec2:us-east-1:<account-id>:vpc/*"
+        },
+        {
+            "Sid": "ManageOwnedGroupsOnly",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:AuthorizeSecurityGroupEgress",
+                "ec2:RevokeSecurityGroupEgress",
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:RevokeSecurityGroupIngress",
+                "ec2:ModifySecurityGroupRules",
+                "ec2:DeleteSecurityGroup"
+            ],
+            "Resource": [
+                "arn:aws:ec2:us-east-1:<account-id>:security-group/*"
+            ],
+            "Condition": {
+                "StringEquals": {
+                    "ec2:ResourceTag/Repository": "nwarila-platform/pdq-deploy-inventory",
+                    "ec2:ResourceTag/RepositoryId": "1316209027",
+                    "ec2:ResourceTag/ManagedBy": "Terraform"
+                },
+                "Null": {
+                    "ec2:ResourceTag/CommitSha": "false",
+                    "ec2:ResourceTag/RunId": "false",
+                    "ec2:ResourceTag/Environment": "false"
+                }
+            }
+        },
+        {
+            "Sid": "TagOnCreateOnly",
+            "Effect": "Allow",
+            "Action": "ec2:CreateTags",
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {
+                    "ec2:CreateAction": [
+                        "CreateSecurityGroup",
+                        "CreateVolume",
+                        "RunInstances",
+                        "CreateNetworkInterface"
+                    ]
+                }
+            }
+        },
+        {
+            "Sid": "TagSecurityGroupRulesOnCreate",
+            "Effect": "Allow",
+            "Action": "ec2:CreateTags",
+            "Resource": "arn:aws:ec2:us-east-1:<account-id>:security-group-rule/*"
+        },
+        {
+            "Sid": "ManageRuleObjectsInOwnedGroups",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:AuthorizeSecurityGroupEgress",
+                "ec2:RevokeSecurityGroupEgress",
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:RevokeSecurityGroupIngress",
+                "ec2:ModifySecurityGroupRules"
+            ],
+            "Resource": "arn:aws:ec2:us-east-1:<account-id>:security-group-rule/*"
+        }
+    ]
+}

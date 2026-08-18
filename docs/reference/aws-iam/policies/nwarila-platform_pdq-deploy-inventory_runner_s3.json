@@ -1,0 +1,73 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadWriteOnlyTheStateFileAndItsLock",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::<account-id>-terraform/nwarila-platform/pdq-deploy-inventory/aws-poc.tfstate",
+        "arn:aws:s3:::<account-id>-terraform/nwarila-platform/pdq-deploy-inventory/aws-poc.tfstate.tflock"
+      ]
+    },
+    {
+      "Sid": "ListOnlyThoseTwoKeys",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::<account-id>-terraform",
+      "Condition": {
+        "StringEquals": {
+          "s3:prefix": [
+            "nwarila-platform/pdq-deploy-inventory/aws-poc.tfstate",
+            "nwarila-platform/pdq-deploy-inventory/aws-poc.tfstate.tflock"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ReadOnlyThePDQLicences",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": [
+        "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-deploy-license.lic",
+        "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-inventory-license.lic"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "<account-id>"
+        }
+      }
+    },
+    {
+      "Sid": "ReadOnlyTheDeployInstaller",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": [
+        "arn:aws:s3:::<account-id>-apprepo/PDQ/Deploy/*/*.exe",
+        "arn:aws:s3:::<account-id>-apprepo/PDQ/Inventory/*/*.exe"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "<account-id>"
+        }
+      }
+    },
+    {
+      "Sid": "ReadOnlyTheServiceAccountSecret",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": [
+        "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-password.txt"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "<account-id>"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "ReadTheImageCatalogParametersOnly",
+            "Effect": "Allow",
+            "Action": [
+                "ssm:GetParameter",
+                "ssm:GetParameters"
+            ],
+            "Resource": "arn:aws:ssm:us-east-1:<account-id>:parameter/nwarila/ami/*"
+        },
+        {
+            "Sid": "DescribeSsmManagedInstances",
+            "Effect": "Allow",
+            "Action": "ssm:DescribeInstanceInformation",
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:RequestedRegion": "us-east-1"
+                }
+            }
+        },
+        {
+            "Sid": "SsmSessionOnlyToOurTaggedInstances",
+            "Effect": "Allow",
+            "Action": "ssm:StartSession",
+            "Resource": "arn:aws:ec2:us-east-1:*:instance/*",
+            "Condition": {
+                "StringEquals": {
+                    "ssm:resourceTag/RepositoryId": "1316209027"
+                }
+            }
+        },
+        {
+            "Sid": "SsmStartSshSessionDocument",
+            "Effect": "Allow",
+            "Action": "ssm:StartSession",
+            "Resource": "arn:aws:ssm:us-east-1::document/AWS-StartSSHSession"
+        },
+        {
+            "Sid": "SsmSessionTeardownInRegion",
+            "Effect": "Allow",
+            "Action": [
+                "ssm:TerminateSession",
+                "ssm:ResumeSession"
+            ],
+            "Resource": "arn:aws:ssm:us-east-1:*:session/${aws:userid}-*"
+        },
+        {
+            "Sid": "SendCommandOnlyToOurTaggedInstances",
+            "Effect": "Allow",
+            "Action": "ssm:SendCommand",
+            "Resource": "arn:aws:ec2:us-east-1:*:instance/*",
+            "Condition": {
+                "StringEquals": {
+                    "ssm:resourceTag/RepositoryId": "1316209027"
+                }
+            }
+        },
+        {
+            "Sid": "SendCommandOnlyWithThePowerShellDocument",
+            "Effect": "Allow",
+            "Action": "ssm:SendCommand",
+            "Resource": "arn:aws:ssm:us-east-1::document/AWS-RunPowerShellScript"
+        },
+        {
+            "Sid": "ReadOwnCommandResults",
+            "Effect": "Allow",
+            "Action": [
+                "ssm:GetCommandInvocation",
+                "ssm:ListCommandInvocations"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:RequestedRegion": "us-east-1"
+                }
+            }
+        }
+    ]
+}

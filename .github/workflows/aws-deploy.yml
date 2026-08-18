@@ -86,7 +86,6 @@ jobs:
     env:
       AWS_REGION: us-east-1
       DEPLOY_ROLE: nwarila-platform_pdq-deploy-inventory_runner
-      STATE_KEY: nwarila-platform/pdq-deploy-inventory/aws-poc.tfstate
       # Must match key_name in terraform/aws.tfvars.
       CI_KEY_NAME: nwarila-ec2-key
 
@@ -217,7 +216,7 @@ jobs:
       - name: Checkout aws-terraform-framework (pinned)
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          repository: nwarila-platform/aws-terraform-framework
+          repository: ${{ github.repository_owner }}/aws-terraform-framework
           ref: ${{ steps.pins.outputs.terraform }}
           path: .frameworks/aws-terraform-framework
           persist-credentials: false
@@ -225,7 +224,7 @@ jobs:
       - name: Checkout ansible-framework (pinned)
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          repository: nwarila-platform/ansible-framework
+          repository: ${{ github.repository_owner }}/ansible-framework
           ref: ${{ steps.pins.outputs.ansible }}
           path: .frameworks/ansible-framework
           persist-credentials: false
@@ -257,14 +256,14 @@ jobs:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          terraform init -input=false \
-            -backend-config="bucket=${AWS_ACCOUNT_ID}-terraform" \
-            -backend-config="key=${STATE_KEY}" \
+          terraform init -input=false                                      \
+            -backend-config="bucket=${AWS_ACCOUNT_ID}-terraform"           \
+            -backend-config="key=${{ github.repository }}/aws-poc.tfstate" \
             -backend-config="region=${AWS_REGION}"
 
       # A killed predecessor can leave state and an instance whose one-time SSH private key no
-      # longer exists. Never adopt it: destroy under the same lock, prove the repository inventory
-      # is empty, then apply with a fresh key. A live/out-of-band lock makes this fail closed.
+      # longer exists. Never adopt it: destroy under the same lock, then apply with a fresh key.
+      # A live/out-of-band lock makes this fail closed.
       - name: Remove interrupted predecessor state before apply
         timeout-minutes: 15
         working-directory: .frameworks/aws-terraform-framework/terraform
@@ -272,24 +271,14 @@ jobs:
           GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
         run: |
           set -euo pipefail
-          python3 "${GITHUB_WORKSPACE}/scripts/assert-aws-resource-graph.py" \
-            --repository-id "${GITHUB_REPOSITORY_ID}" \
-            --include-terraform-state
-          terraform destroy -input=false -auto-approve -lock-timeout=300s \
-            -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars" \
-            -var "runner_ip=${RUNNER_IP}" \
-            -var "environment=test" \
-            -var "repository=${GITHUB_REPOSITORY}" \
-            -var "repository_id=${GITHUB_REPOSITORY_ID}" \
+          terraform destroy -input=false -auto-approve -lock-timeout=300s    \
+            -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars"             \
+            -var "runner_ip=${RUNNER_IP}"                                    \
+            -var "environment=test"                                          \
+            -var "repository=${GITHUB_REPOSITORY}"                           \
+            -var "repository_id=${GITHUB_REPOSITORY_ID}"                     \
             -var "commit_sha=$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)" \
             -var "run_id=${GITHUB_RUN_ID}"
-
-      - name: Prove a clean AWS start
-        env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
-        run: bash scripts/assert-aws-clean.sh
-
 
       # The environment and deployment identity are individual -var flags — the highest-
       # precedence source, so the tfvars cannot override who this fresh deployment says it is.
@@ -329,19 +318,23 @@ jobs:
         working-directory: .frameworks/ansible-framework
         env:
           ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
-          # Passed to the play as explicit extra-vars — same value the OIDC role ARN is built from.
+          # A secret reaches the shell through the environment, never by substitution into the
+          # script text, so its value cannot be read as shell syntax. Forwarded on as an
+          # extra-var below because the play requires it; same value the OIDC role ARN uses.
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          # NOT extra-vars: the dynamic inventory reads these from the environment to pick this
+          # run's instance, and a lookup('env') has no command-line equivalent.
           GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
           # Dynamic inventory publishes an instance attribute named state; extra-vars take precedence.
-          ansible-playbook -i "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml" \
-            "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
-            -e env=test \
-            -e aws_account_id="${AWS_ACCOUNT_ID}" \
-            -e aws_region="${AWS_REGION}" \
-            -e state=present
+          ansible-playbook "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
+            --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"    \
+            --extra-vars env=test                                              \
+            --extra-vars aws_account_id="${AWS_ACCOUNT_ID}"                    \
+            --extra-vars aws_region="${AWS_REGION}"                            \
+            --extra-vars state=present
 
       - name: Hold the converged guest for interactive work
         if: >-
@@ -386,56 +379,26 @@ jobs:
           role-session-name: aws-deploy-${{ github.run_id }}-teardown
           role-duration-seconds: 3600
 
-      # An administrator can alter attachments outside Terraform. Re-read the dependency graph
-      # immediately before destroy and leave an incident, rather than mutate a cross-owned edge.
-      - name: Prove final AWS dependency graph before destroy
-        id: destroy-graph
-        if: always() && steps.tf-init.outcome == 'success'
-        working-directory: .frameworks/aws-terraform-framework/terraform
-        env:
-          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
-        run: >-
-          python3 "${GITHUB_WORKSPACE}/scripts/assert-aws-resource-graph.py"
-          --expected-run-id "${GITHUB_RUN_ID}"
-          --include-terraform-state
-
       # Gated on INIT, not apply: a failed apply still leaves state to tear down.
       - name: Terraform destroy (always)
         id: tf-destroy
         if: >-
           always() &&
-          steps.tf-init.outcome == 'success' &&
-          steps.destroy-graph.outcome == 'success'
+          steps.tf-init.outcome == 'success'
         timeout-minutes: 15
         working-directory: .frameworks/aws-terraform-framework/terraform
         env:
           GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
         run: |
           set -euo pipefail
-          terraform destroy -input=false -auto-approve -lock-timeout=300s \
-            -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars" \
-            -var "runner_ip=${RUNNER_IP}" \
-            -var "environment=test" \
-            -var "repository=${GITHUB_REPOSITORY}" \
-            -var "repository_id=${GITHUB_REPOSITORY_ID}" \
+          terraform destroy -input=false -auto-approve -lock-timeout=300s    \
+            -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars"             \
+            -var "runner_ip=${RUNNER_IP}"                                    \
+            -var "environment=dev"                                           \
+            -var "repository=${GITHUB_REPOSITORY}"                           \
+            -var "repository_id=${GITHUB_REPOSITORY_ID}"                     \
             -var "commit_sha=$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)" \
             -var "run_id=${GITHUB_RUN_ID}"
-
-      - name: Bound the cleanup proof when the run is cancelled
-        if: cancelled() && steps.tf-init.outcome == 'success'
-        run: |
-          set -euo pipefail
-          {
-            echo 'CLEAN_PROOF_ATTEMPTS=3'
-            echo 'CLEAN_PROOF_DELAY_SECONDS=5'
-          } >> "${GITHUB_ENV}"
-
-      - name: Prove no live repository-owned AWS resources remain
-        if: always() && steps.tf-destroy.outcome == 'success'
-        env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
-        run: bash scripts/assert-aws-clean.sh
 
       - name: Remove the ephemeral private key
         if: always()

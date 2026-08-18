@@ -19,15 +19,19 @@ strict: true
 groups:
   pdq_servers: 'true'
 
+# Namespace every attribute this plugin publishes. Without it the plugin exposes a host variable
+# named 'state' — the EC2 instance state — which collides with the role input of the same name that
+# selects present_windows.yml or clean_windows.yml. Prefixing removes the collision at the source
+# rather than relying on each caller to override it, and it protects any future generic name too.
+#
+# The prefix is applied BEFORE 'compose' evaluates, so expressions below read the prefixed names.
+# Host names are resolved from the raw instance data and are unaffected, as are the AWS-side filters.
+hostvars_prefix: 'aws_'
+
 compose:
-  ansible_host: public_ip_address
+  ansible_host: aws_public_ip_address
   ansible_connection: "'ssh'"
   ansible_user: "'Administrator'"
   ansible_shell_type: "'cmd'"
   ansible_ssh_private_key_file: "lookup('ansible.builtin.env', 'CI_PRIVATE_KEY')"
   ansible_ssh_common_args: "'-o StrictHostKeyChecking=accept-new'"
-  ec2_instance_id: instance_id
-  ec2_platform: "platform | default('linux', true)"
-  ec2_state: state
-  ec2_placement: placement
-  ec2_tags: tags

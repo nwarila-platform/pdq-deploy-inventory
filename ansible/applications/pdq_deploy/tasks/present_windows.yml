@@ -1,246 +1,331 @@
-# =========================================================================================== #
+# ============================================================================================= #
 # File: '{{ role_path }}/tasks/present_windows.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
 # Installs PDQ Deploy at the pinned version.
 #
-# BEGIN reads the machine and decides ONE action — install, upgrade, or none. Every later block
-# is gated on that decision, so the state is read once and acted on once, and a converged host
-# does no work at all.
+# BEGIN reads the machine and decides ONE action — install, upgrade, or none. PROCESS acts on that
+# decision, and END proves the result and cleans up. Every PROCESS task carries the decision
+# individually rather than the stage carrying it once, so a run always lists the same steps in the
+# same order: a converged host reads as a column of skips, not a stage that vanished.
+#
+# END is deliberately ungated, so a converged host proves the same state as a freshly built one.
+#
+# Install state comes from Add/Remove Programs, read by a first-class PowerShell script rather than
+# an inline block: the guest-side logic is developed and Pester-tested once under scripts/, and the
+# role executes a materialized copy. ARP carries the version and the install location together and
+# Windows removes the entry on uninstall, which the vendor's own product key cannot answer because
+# it survives uninstall. Not the MSI ProductCode, which changes every release.
 #
 # Everything moves through the runner: the controller fetches the installer and hands it to the
 # target, so the guest never receives cloud credentials or any other reach into S3. The digest is
 # verified on the guest, because that is the copy that executes.
 #
-# Install state keys on 'InstallDir', which the vendor removes at uninstall, paired with the
-# console version. Not the MSI ProductCode, which changes every release.
+# Return code 3010 is a success: it means the product installed and wants a restart. The role
+# restarts when the installer asks for one, and only then.
+#
+# Cleanup lives under END's 'always', which means it does NOT run after an unrescued PROCESS
+# failure. That is the accepted trade of the three-stage shape: the residue is a controller temp
+# directory and an installer on the guest, and the proof bed is rebuilt for every run.
 #
 # Licensing is a separate capability and a separate region.
 #
-# =========================================================================================== #
+# ============================================================================================= #
 ---
-#region ------ [ Begin ] --------------------------------------------------------------------- #
+#region ------ [ Begin: Install PDQ Deploy on Windows ] --------------------------------------- #
 
-# Add/Remove Programs is the source of truth for install state: it carries the version and the
-# install location together, and Windows removes the entry on uninstall. The vendor's own product
-# key survives with no install-path value, so it cannot answer "is this installed, and at what
-# version".
-- name: 'BEGIN | Read The Installed Product From Add/Remove Programs'
-  vars:
-    __arp__: "{{ pdq_deploy_running.arp }}"
-  ansible.windows.win_shell: |
-    $ErrorActionPreference = 'Stop'
-    $roots = @({{ __arp__.uninstall_roots | map('regex_replace', '^(.*)$', "'\1'") | join(', ') }})
-    $found = foreach ($root in $roots) {
-      if (Test-Path -LiteralPath $root) {
-        Get-ChildItem -LiteralPath $root |
-          ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
-          Where-Object { $_.DisplayName -eq {{ __arp__.display_name | quote }} }
-      }
-    }
-    $entries = @($found | ForEach-Object {
-      [pscustomobject]@{
-        version  = [string]$_.DisplayVersion
-        location = [string]$_.InstallLocation
-      }
-    })
-    ConvertTo-Json -InputObject @($entries) -Depth 3 -Compress
-  register: '__pdq_deploy_arp__'
-  changed_when: false
+- name: 'BEGIN | Read The Machine And Decide One Action'
+  # Begin The 'Begin' Block
+  block:
 
-- name: 'BEGIN | Refuse An Ambiguous Product State'
-  vars:
-    __entries__: "{{ __pdq_deploy_arp__.stdout | trim | from_json }}"
-  ansible.builtin.assert:
-    that:
-      - __entries__ | length <= 1
-    fail_msg: >-
-      This machine carries {{ __entries__ | length }} entries named
-      '{{ pdq_deploy_running.arp.display_name }}' in Add/Remove Programs
-      ({{ __entries__ | map(attribute='version') | list }}). Two registrations of one product
-      cannot both own the install, and choosing one would be a guess.
-    quiet: true
+    #region ------ [ Begin: Read The Installed Product ] -------------------------------------- #
+    # Add/Remove Programs is the source of truth for install state: it carries the version and
+    # the install location together, and Windows removes the entry on uninstall. The vendor's own
+    # product key survives with no install-path value, so it cannot answer "is this installed,
+    # and at what version". Parameters cross as typed module options, never Jinja spliced into
+    # the script source, which is what keeps the injection surface at zero. No changed_when: the
+    # script's $Ansible.Changed is the change report, and a read never changes anything. The
+    # referenced .ps1 is MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the
+    # role tracks only files/Get-InstalledSoftware.ps1.stub); run it before this role.
 
-#endregion --- [ Begin ] --------------------------------------------------------------------- #
+    - name: 'BEGIN | Read The Installed Product From Add/Remove Programs'
+      register: '__pdq_deploy_arp__'
 
-#region ------ [ Main ] ---------------------------------------------------------------------- #
+      ansible.windows.win_powershell:
+        # The module default of 2 serializes 'entries' but stringifies the objects inside it,
+        # which would turn every entry into a blob. 3 is the depth that keeps their properties
+        # addressable; the payload is a handful of registrations, so the cost is nil.
+        depth: 3
+        error_action: 'stop'
+        parameters:
+          DisplayName: "{{ pdq_deploy_running.arp.display_name }}"
+          Version: "{{ pdq_deploy_running.installer.version }}"
+        remote_src: false
+        script: "{{ lookup('ansible.builtin.file', 'Get-InstalledSoftware.ps1') }}"
 
-- name: 'MAIN | Install PDQ Deploy At The Pinned Version'
+    #endregion --- [ Begin: Read The Installed Product ] -------------------------------------- #
+
+#endregion --- [ Begin: Install PDQ Deploy on Windows ] --------------------------------------- #
+
+
+#region ------ [ Process: Install PDQ Deploy on Windows ] ------------------------------------- #
+
+- name: 'PROCESS | Install PDQ Deploy At The Pinned Version'
   vars:
     __install__: "{{ pdq_deploy_running.install }}"
     __installer_name__: "{{ pdq_deploy_running.installer.path | basename }}"
     __guest_installer__: "{{ __install__.staging_dir }}\\{{ __installer_name__ }}"
-    __installed__: "{{ __pdq_deploy_arp__.stdout | trim | from_json }}"
-    # One decision, made in BEGIN, gating everything below: absent, or older than the pin.
-    __action_required__: >-
-      {{ __installed__ | length == 0
-         or (__installed__ | first).version | default('0.0.0.0')
-            is version(pdq_deploy_running.installer.version, '<') }}
+    __action_required__: "{{ __pdq_deploy_arp__.result.action_required }}"
+  # Begin The 'Process' Block
+  block:
+
+    #region ------ [ Process: Create The Controller Staging Directory ] ----------------------- #
+
+    - name: 'PROCESS | Create The Controller Staging Directory'
+      changed_when: false
+      delegate_to: 'localhost'
+      register: '__pdq_deploy_stage__'
+      when: __action_required__ | bool
+
+      ansible.builtin.tempfile:
+        prefix: 'pdq-deploy-'
+        state: 'directory'
+        suffix: ''
+
+    #endregion --- [ Process: Create The Controller Staging Directory ] ----------------------- #
+
+    #region ------ [ Process: Fetch The Installer To The Controller ] ------------------------- #
+    # The module probes the BUCKET before the object, and that probe is authorized by a bucket-
+    # level grant this deployment deliberately does not hold: reading one pinned prefix must not
+    # imply the right to see the bucket. Skipping the probe is the module's documented answer for
+    # exactly that policy shape. A missing object still fails loudly — the key check uses
+    # head_object, which the object-level grant does authorize.
+
+    - name: 'PROCESS | Fetch The Installer To The Controller'
+      delegate_to: 'localhost'
+      when: __action_required__ | bool
+
+      amazon.aws.s3_object:
+        bucket: "{{ pdq_deploy_running.artifact_bucket }}"
+        ceph: false
+        debug_botocore_endpoint_logs: false
+        dest: "{{ __pdq_deploy_stage__.path }}/{{ __installer_name__ }}"
+        dualstack: false
+        encrypt: true
+        encryption_mode: 'AES256'
+        expiry: 600
+        ignore_nonexistent_bucket: true
+        mode: 'get'
+        object: "{{ pdq_deploy_running.installer.path }}"
+        overwrite: 'different'
+        permission: [ 'private' ]
+        prefix: ''
+        purge_tags: true
+        retries: 0
+        sig_v4: true
+        validate_bucket_name: true
+        validate_certs: true
+
+    #endregion --- [ Process: Fetch The Installer To The Controller ] ------------------------- #
+
+    #region ------ [ Process: Ensure The Guest Staging Directory Exists ] --------------------- #
+    # Everything moves through the runner: the controller holds the S3 credentials and hands the
+    # file to the guest, so the guest never receives any reach into S3.
+
+    - name: 'PROCESS | Ensure The Guest Staging Directory Exists'
+      when: __action_required__ | bool
+
+      ansible.windows.win_file:
+        access_time_format: 'yyyy-MM-dd HH:mm:ss'
+        modification_time_format: 'yyyy-MM-dd HH:mm:ss'
+        path: "{{ __install__.staging_dir }}"
+        state: 'directory'
+
+    #endregion --- [ Process: Ensure The Guest Staging Directory Exists ] --------------------- #
+
+    #region ------ [ Process: Copy The Installer To The Guest ] ------------------------------- #
+    # remote_src stays false because the source is the controller copy fetched above, and force
+    # stays true so a partial or stale staged file is replaced rather than trusted.
+
+    - name: 'PROCESS | Copy The Installer To The Guest'
+      register: '__pdq_deploy_copied__'
+      when: __action_required__ | bool
+
+      ansible.windows.win_copy:
+        backup: false
+        decrypt: true
+        dest: "{{ __guest_installer__ }}"
+        force: true
+        local_follow: true
+        remote_src: false
+        src: "{{ __pdq_deploy_stage__.path }}/{{ __installer_name__ }}"
+
+    #endregion --- [ Process: Copy The Installer To The Guest ] ------------------------------- #
+
+    #region ------ [ Process: Install Silently From The Verified Copy ] ----------------------- #
+    # The vendor's silent switch and success code are properties of this binary, not operator
+    # choices, so they live beside the package invocation. The digest is verified on the guest,
+    # because that is the copy that executes. A wrong silent switch can leave the installer
+    # waiting on a dialog rather than returning, so the run is bounded and fails inside Ansible.
+    # 3010 is accepted alongside 0 because it is not a failure: it means the product installed
+    # and wants a restart to finalise. The module turns that exact code into reboot_required,
+    # which the next region acts on, so the install is only reported complete once the machine is
+    # in the state the installer asked for.
+
+    - name: 'PROCESS | Install Silently From The Verified Copy'
+      async: "{{ __install__.timeout_seconds }}"
+      poll: 15
+      register: '__pdq_deploy_installed__'
+      when: __action_required__ | bool
+
+      ansible.windows.win_package:
+        arguments: '/s'
+        checksum_algorithm: 'sha256'
+        checksum: "{{ pdq_deploy_running.installer.sha256 }}"
+        expected_return_code: [ 0, 3010 ]
+        follow_redirects: 'safe'
+        force_basic_auth: false
+        http_agent: 'ansible-httpget'
+        maximum_redirection: 50
+        path: "{{ __guest_installer__ }}"
+        provider: 'auto'
+        proxy_use_default_credential: false
+        state: 'present'
+        url_timeout: 30
+        use_default_credential: false
+        use_proxy: true
+        validate_certs: true
+        verify_signature: false
+        wait_for_children: false
+
+    #endregion --- [ Process: Install Silently From The Verified Copy ] ----------------------- #
+
+    #region ------ [ Process: Reboot When The Installer Requires It ] ------------------------- #
+    # reboot_required is set by the module for return code 3010 and nothing else, so this acts on
+    # the installer's own request rather than on a guess. It is the only condition needed: a run
+    # that never installed leaves no reboot_required to be true.
+
+    - name: 'PROCESS | Reboot When The Installer Requires It'
+      when: __pdq_deploy_installed__.reboot_required | default(false) | bool
+
+      # boot_time_command is deliberately NOT pinned. It is the module's internal probe for
+      # "has the machine come back", not a behavioural setting, and pinning it would both embed
+      # PowerShell in a task file that carries none and freeze an implementation detail we would
+      # want to inherit if upstream improved it.
+      ansible.windows.win_reboot:
+        connect_timeout: 5
+        msg: 'Restarting to finalise the PDQ Deploy installation.'
+        post_reboot_delay: 0
+        pre_reboot_delay: 2
+        reboot_timeout: 600
+
+    #endregion --- [ Process: Reboot When The Installer Requires It ] ------------------------- #
+
+#endregion --- [ Process: Install PDQ Deploy on Windows ] ------------------------------------- #
+
+
+#region ------ [ End: Install PDQ Deploy on Windows ] ----------------------------------------- #
+
+- name: 'END | Prove The Result And Clean Up'
+  vars:
+    __install__: "{{ pdq_deploy_running.install }}"
+
+  # Begin The 'End' Block
 
   block:
 
-    - name: 'MAIN | Deliver And Install'
-      when: __action_required__ | bool
-      block:
+    #region ------ [ End: Re-Read The Installed Product ] ------------------------------------- #
+    # Ungated, so a converged host proves the same state as a freshly built one. This is the same
+    # read BEGIN performed, against the same script, so the two cannot disagree about what counts
+    # as installed.
 
-        - name: 'MAIN | Create The Controller Staging Directory'
-          delegate_to: 'localhost'
-          ansible.builtin.tempfile:
-            state: 'directory'
-            prefix: 'pdq-deploy-'
-          register: '__pdq_deploy_stage__'
-          changed_when: false
-
-        # The module probes the BUCKET before the object, and that probe is authorized by a
-        # bucket-level grant this deployment deliberately does not hold: reading one pinned
-        # prefix must not imply the right to see the bucket. Skipping the probe is the module's
-        # documented answer for exactly that policy shape. A missing object still fails loudly —
-        # the key check uses head_object, which the object-level grant does authorize.
-        - name: 'MAIN | Fetch The Installer To The Controller'
-          delegate_to: 'localhost'
-          amazon.aws.s3_object:
-            bucket: "{{ pdq_deploy_running.artifact_bucket }}"
-            object: "{{ pdq_deploy_running.installer.path }}"
-            dest: "{{ __pdq_deploy_stage__.path }}/{{ __installer_name__ }}"
-            mode: 'get'
-            overwrite: 'different'
-            ignore_nonexistent_bucket: true
-
-        - name: 'MAIN | Ensure The Guest Staging Directory Exists'
-          ansible.windows.win_file:
-            path: "{{ __install__.staging_dir }}"
-            state: 'directory'
-
-        - name: 'MAIN | Copy The Installer To The Guest'
-          ansible.windows.win_copy:
-            src: "{{ __pdq_deploy_stage__.path }}/{{ __installer_name__ }}"
-            dest: "{{ __guest_installer__ }}"
-          register: '__pdq_deploy_copied__'
-
-        # The vendor's silent switch and success code are properties of this binary, not operator
-        # choices, so they live beside the package invocation. A wrong silent switch can leave the
-        # installer waiting on a dialog rather than returning, so the run is bounded and fails
-        # inside Ansible while cleanup can still run.
-        - name: 'MAIN | Install Silently From The Verified Copy'
-          ansible.windows.win_package:
-            path: "{{ __guest_installer__ }}"
-            arguments: '/s'
-            checksum: "{{ pdq_deploy_running.installer.sha256 }}"
-            checksum_algorithm: 'sha256'
-            expected_return_code:
-              - 0
-            state: 'present'
-          async: "{{ __install__.timeout_seconds }}"
-          poll: 15
-
-    #region ------ [ Main: Postconditions ] ------------------------------------------------ #
-
-    # Outside the action gate, so a converged host proves the same state as a freshly built one.
-    - name: 'MAIN | Re-Read The Installed Product From Add/Remove Programs'
-      vars:
-        __arp__: "{{ pdq_deploy_running.arp }}"
-      ansible.windows.win_shell: |
-        $ErrorActionPreference = 'Stop'
-        $roots = @({{ __arp__.uninstall_roots | map('regex_replace', '^(.*)$', "'\1'") | join(', ') }})
-        $found = foreach ($root in $roots) {
-          if (Test-Path -LiteralPath $root) {
-            Get-ChildItem -LiteralPath $root |
-              ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
-              Where-Object { $_.DisplayName -eq {{ __arp__.display_name | quote }} }
-          }
-        }
-        $entries = @($found | ForEach-Object {
-          [pscustomobject]@{
-            version  = [string]$_.DisplayVersion
-            location = [string]$_.InstallLocation
-          }
-        })
-        ConvertTo-Json -InputObject @($entries) -Depth 3 -Compress
+    - name: 'END | Re-Read The Installed Product From Add/Remove Programs'
       register: '__pdq_deploy_final_arp__'
-      changed_when: false
 
-    # Only when the product is not registered as expected. A postcondition that fails without
-    # saying what the machine actually looks like costs a whole deployment to learn one fact.
-    # Costs nothing on a healthy converge.
-    # Registry values are deliberately withheld because this tree carries PDQ secret material:
-    # 'License' and 'Secure Key', which is generated at install time. A failed assertion in this
-    # public repository reaches a world-readable log.
-    - name: 'MAIN | Gather Product Evidence When The Product Is Not Registered'
-      vars:
-        __final__: "{{ __pdq_deploy_final_arp__.stdout | trim | from_json }}"
-      when: __final__ | length != 1
-      ansible.windows.win_shell: |
-        $ErrorActionPreference = 'SilentlyContinue'
-        'REGISTRY KEYS AND PROPERTY NAMES:'
-        foreach ($root in 'HKLM:\SOFTWARE', 'HKLM:\SOFTWARE\Wow6432Node') {
-          Get-ChildItem -LiteralPath $root |
-            Where-Object { $_.PSChildName -match 'PDQ|Admin Arsenal' } |
-            ForEach-Object {
-              $_.Name
-              Get-ChildItem -LiteralPath $_.PSPath -Recurse -Depth 1 | ForEach-Object {
-                '  ' + $_.Name
-                $props = Get-ItemProperty -LiteralPath $_.PSPath
-                $props.PSObject.Properties |
-                  Where-Object { $_.Name -notmatch '^PS' } |
-                  ForEach-Object { '      ' + $_.Name }
-              }
-            }
-        }
-        'SERVICES:'
-        Get-Service | Where-Object { $_.Name -match 'PDQ' } |
-          ForEach-Object { '  ' + $_.Name + ' = ' + $_.Status }
-        'INSTALLED PROGRAMS:'
-        foreach ($u in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
-                       'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall') {
-          Get-ChildItem -LiteralPath $u |
-            ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath } |
-            Where-Object { $_.DisplayName -match 'PDQ' } |
-            ForEach-Object { '  ' + $_.DisplayName + ' | ver ' + $_.DisplayVersion + ' | at ' + $_.InstallLocation }
-        }
-      register: '__pdq_deploy_evidence__'
-      changed_when: false
+      ansible.windows.win_powershell:
+        depth: 3
+        error_action: 'stop'
+        parameters:
+          DisplayName: "{{ pdq_deploy_running.arp.display_name }}"
+          Version: "{{ pdq_deploy_running.installer.version }}"
+        remote_src: false
+        script: "{{ lookup('ansible.builtin.file', 'Get-InstalledSoftware.ps1') }}"
 
-    - name: 'MAIN | Assert The Product Is Registered Exactly Once At Or Above The Pin'
+    #endregion --- [ End: Re-Read The Installed Product ] ------------------------------------- #
+
+    #region ------ [ End: Prove The Product Is Registered ] ----------------------------------- #
+    # Zero entries means the installer reported success without registering the product, which is
+    # the failure this postcondition exists to catch: an exit code is the installer's opinion,
+    # Add/Remove Programs is the machine's.
+
+    - name: 'END | Prove The Product Is Registered Exactly Once At Or Above The Pin'
       vars:
-        __final__: "{{ __pdq_deploy_final_arp__.stdout | trim | from_json }}"
+        __final__: "{{ __pdq_deploy_final_arp__.result }}"
+
       ansible.builtin.assert:
-        that:
-          - __final__ | length == 1
-          - not ((__final__ | first).version | default('0.0.0.0')
-                 is version(pdq_deploy_running.installer.version, '<'))
         fail_msg: >-
-          Expected exactly one '{{ pdq_deploy_running.arp.display_name }}' registered at
-          {{ pdq_deploy_running.installer.version }} or above; found {{ __final__ | length }}
-          entries {{ __final__ | map(attribute='version') | list }}. Zero means the installer
-          reported success without registering the product.
-          {{ __pdq_deploy_evidence__.stdout | default('') }}
+          Expected '{{ pdq_deploy_running.arp.display_name }}' registered at
+          {{ pdq_deploy_running.installer.version }} or above; found
+          '{{ __final__.installed_version }}'. An empty version means the installer reported
+          success without registering the product.
         quiet: true
+        that:
+          - not __final__.action_required
 
-    - name: 'MAIN | Assert The Background Service Exists'
+    #endregion --- [ End: Prove The Product Is Registered ] ----------------------------------- #
+
+    #region ------ [ End: Prove The Background Service Exists ] ------------------------------- #
+    # The product registers, then its service must exist: a registration without the service is a
+    # broken install that would otherwise pass unnoticed until the console failed to start.
+
+    - name: 'END | Prove The Background Service Exists'
+      failed_when: (__pdq_deploy_service__.services | default([]) | length) != 1
+      register: '__pdq_deploy_service__'
+
       ansible.windows.win_service_info:
         name: "{{ pdq_deploy_running.service_name }}"
-      register: '__pdq_deploy_service__'
-      changed_when: false
-      failed_when: (__pdq_deploy_service__.services | default([]) | length) != 1
 
-    #endregion --- [ Main: Postconditions ] ------------------------------------------------ #
+    #endregion --- [ End: Prove The Background Service Exists ] ------------------------------- #
+
+#endregion --- [ End: Install PDQ Deploy on Windows ] ----------------------------------------- #
+
+
+#region ------ [ Always: Install PDQ Deploy on Windows ] -------------------------------------- #
 
   always:
 
+    #region ------ [ Always: Remove The Staged Installer From The Guest ] --------------------- #
     # Gated on the copy having been attempted, so a run that never staged deletes nothing while a
     # partial copy is still cleaned up.
-    - name: 'CLEANUP | Remove The Staged Installer From The Guest'
+
+    - name: 'END | Remove The Staged Installer From The Guest'
       when: __pdq_deploy_copied__ is defined and not (__pdq_deploy_copied__ is skipped)
+
       ansible.windows.win_file:
+        access_time_format: 'yyyy-MM-dd HH:mm:ss'
+        modification_time_format: 'yyyy-MM-dd HH:mm:ss'
         path: "{{ __install__.staging_dir }}"
         state: 'absent'
 
-    - name: 'CLEANUP | Remove The Controller Staging Directory'
-      when: __pdq_deploy_stage__ is defined and not (__pdq_deploy_stage__ is skipped)
-      delegate_to: 'localhost'
-      ansible.builtin.file:
-        path: "{{ __pdq_deploy_stage__.path }}"
-        state: 'absent'
-      changed_when: false
+    #endregion --- [ Always: Remove The Staged Installer From The Guest ] --------------------- #
 
-#endregion --- [ Main ] ---------------------------------------------------------------------- #
+    #region ------ [ Always: Remove The Controller Staging Directory ] ------------------------ #
+
+    - name: 'END | Remove The Controller Staging Directory'
+      changed_when: false
+      delegate_to: 'localhost'
+      when: __pdq_deploy_stage__ is defined and not (__pdq_deploy_stage__ is skipped)
+
+      ansible.builtin.file:
+        access_time_format: '%Y%m%d%H%M.%S'
+        follow: true
+        force: false
+        modification_time_format: '%Y%m%d%H%M.%S'
+        path: "{{ __pdq_deploy_stage__.path }}"
+        recurse: false
+        state: 'absent'
+        unsafe_writes: false
+
+    #endregion --- [ Always: Remove The Controller Staging Directory ] ------------------------ #
+
+#endregion --- [ Always: Install PDQ Deploy on Windows ] -------------------------------------- #

@@ -73,6 +73,8 @@
     __installer_name__: "{{ pdq_deploy_running.installer.path | basename }}"
     __guest_installer__: "{{ pdq_deploy_running.install.staging_dir }}\\{{ __installer_name__ }}"
     __action_required__: "{{ __pdq_deploy_arp__.result.action_required }}"
+    __repository_dir__: >-
+      {{ pdq_deploy_running.repository.drive }}:\{{ pdq_deploy_running.repository.directory }}
 
   # Begin The 'Process' Block
   block:
@@ -337,6 +339,9 @@
       when: __pdq_deploy_installed__.reboot_required | default(false) | bool
 
       ansible.windows.win_reboot:
+        boot_time_command: >-
+          (Get-CimInstance -ClassName Win32_OperatingSystem -Property
+          LastBootUpTime).LastBootUpTime.ToFileTime()
         connect_timeout: 5
         msg: 'Restarting to finalise the PDQ Deploy installation.'
         post_reboot_delay: 0
@@ -401,11 +406,29 @@
     # measured on a converged host 2026-08-18. The slice keeps both markers because the vendor
     # requires them, and the two replacements normalise every ending to CRLF whatever the object
     # used. No guard on an empty match is needed, because the digest above pins the exact bytes.
-    # Ungated and idempotent, so a licence removed by hand is restored on the next converge.
+    #
+    # The product REWRITES what it is given: measured 2026-08-18, a 17-line CRLF block came back
+    # as one 620-character line with every break stripped, the same characters in a different
+    # shape. Comparing literally would therefore report a change on every converge and bounce the
+    # service with it, so the comparison ignores whitespace and asks only whether the licence
+    # itself differs. A licence removed or replaced by hand is still restored.
+
+    - name: 'PROCESS | Read The Licence Already Stored'
+      no_log: true
+      register: '__pdq_deploy_license_current__'
+
+      ansible.windows.win_reg_stat:
+        name: 'License'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy'
+
+    # ----------------------------------------------------------------------------------------- #
 
     - name: 'PROCESS | Apply The Product Licence'
       no_log: true
       register: '__pdq_deploy_license_applied__'
+      when: >-
+        __pdq_deploy_license_current__.value | default('') | regex_replace('\s', '')
+        != __licence__ | regex_replace('\s', '')
       vars:
         __licence__: >-
           {{ __pdq_deploy_license__.contents
@@ -417,7 +440,7 @@
         data: "{{ __licence__ }}"
         delete_key: true
         name: 'License'
-        path: "{{ pdq_deploy_running.registry_path }}"
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy'
         state: 'present'
         type: 'string'
 
@@ -456,22 +479,22 @@
         data: "{{ __database_file__ }}"
         delete_key: true
         name: 'FileName'
-        path: "{{ pdq_deploy_running.registry_path }}\\Settings\\Database"
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy\Settings\Database'
         state: 'present'
         type: 'string'
 
     #endregion --- [ Process: Place The Database On The Dedicated Drive ] --------------------- #
 
-    #region ------ [ Process: Share The Repository Over The Network ] ------------------------- #
-    # Deployments read their package files from the repository, and the vendor requires it be
-    # reached over UNC rather than by local path: pull copy mode has the TARGET fetch the files,
-    # and Central Server has several consoles read the same ones. A local path works for neither.
-    # The Background Service User is granted full control because it both writes packages
-    # imported from the Package Library and serves them; Administrators keep their own grant so
-    # the share stays manageable by hand. rule_action is 'set' so the permission list is exactly
-    # what is named here -- an access another run granted is removed rather than accumulating.
-    # A folder is shared rather than the volume root, so share and NTFS permissions can both be
-    # narrowed later without fighting the defaults Windows puts on a drive root.
+    #region ------ [ Process: Prepare The Repository Directory ] ------------------------------ #
+    # The directory is created and locked down BEFORE it is published: a share that exists
+    # ahead of its ACL is readable by whoever the volume root lets in, for as long as the gap
+    # lasts. Inheritance is broken first and the inherited entries discarded rather than copied,
+    # because they come from that root -- copying them would preserve underneath every rule set
+    # here exactly what breaking inheritance is meant to remove. Users get read and write since
+    # administrators curate packages by hand; Administrators and SYSTEM keep full control so the
+    # directory stays manageable and backupable. The service account is named nowhere: it is an
+    # Administrator by vendor requirement, and repeating that would be a second place to
+    # maintain one fact.
 
     - name: 'PROCESS | Create The Repository Directory On Its Dedicated Drive'
       ansible.windows.win_file:
@@ -479,26 +502,205 @@
         access_time_format: 'yyyy-MM-dd HH:mm:ss'
         modification_time: 'preserve'
         modification_time_format: 'yyyy-MM-dd HH:mm:ss'
-        path: >-
-          {{ pdq_deploy_running.repository.drive }}:\{{ pdq_deploy_running.repository.directory }}
+        path: "{{ __repository_dir__ }}"
         state: 'directory'
 
     # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Break Inherited Permissions On The Repository Directory'
+      ansible.windows.win_acl_inheritance:
+        path: "{{ __repository_dir__ }}"
+        reorganize: false
+        state: 'absent'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Grant Read And Write On The Repository Directory'
+      ansible.windows.win_acl:
+        follow: false
+        inherit: 'ContainerInherit, ObjectInherit'
+        path: "{{ __repository_dir__ }}"
+        propagation: 'None'
+        rights: 'Modify'
+        state: 'present'
+        type: 'allow'
+        user: 'BUILTIN\Users'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Grant Full Control To Administrators On The Repository Directory'
+      ansible.windows.win_acl:
+        follow: false
+        inherit: 'ContainerInherit, ObjectInherit'
+        path: "{{ __repository_dir__ }}"
+        propagation: 'None'
+        rights: 'FullControl'
+        state: 'present'
+        type: 'allow'
+        user: 'BUILTIN\Administrators'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Grant Full Control To The System Account On The Repository Directory'
+      ansible.windows.win_acl:
+        follow: false
+        inherit: 'ContainerInherit, ObjectInherit'
+        path: "{{ __repository_dir__ }}"
+        propagation: 'None'
+        rights: 'FullControl'
+        state: 'present'
+        type: 'allow'
+        user: 'NT AUTHORITY\SYSTEM'
+
+    #endregion --- [ Process: Prepare The Repository Directory ] ------------------------------ #
+
+    #region ------ [ Process: Share The Repository Over The Network ] ------------------------- #
+    # Published only once the directory beneath it is permissioned. The share is READ ONLY, to
+    # everyone: targets in pull copy mode fetch package files over it themselves, so read is the
+    # whole job, and Windows applies the more restrictive of share and NTFS -- making this the
+    # binding gate whoever the caller turns out to be. Writing happens locally against the
+    # directory, never across the wire. rule_action is 'set' so the list is exactly what is
+    # named here; an access another run granted is removed rather than accumulating.
 
     - name: 'PROCESS | Share The Repository Over The Network'
       ansible.windows.win_share:
         caching_mode: 'Manual'
         description: 'PDQ Deploy package repository'
         encrypt: false
-        full: "Administrators,{{ pdq_deploy_running.service_account.name }}"
         list: false
         name: "{{ pdq_deploy_running.repository.share_name }}"
-        path: >-
-          {{ pdq_deploy_running.repository.drive }}:\{{ pdq_deploy_running.repository.directory }}
+        path: "{{ __repository_dir__ }}"
+        read: 'Everyone'
         rule_action: 'set'
         state: 'present'
 
     #endregion --- [ Process: Share The Repository Over The Network ] ------------------------- #
+
+
+    #region ------ [ Process: Put The Console In Central Server Mode ] ------------------------ #
+    # PDQ Deploy and PDQ Inventory integrate only co-located and in the same operating mode, so
+    # an all-in-one Central Server is an invariant of this repository rather than a value to
+    # offer -- the mode is written literally, because an input here would be a knob that must
+    # never be turned. A silent install leaves it Local, which is why a console opened on an
+    # otherwise converged host still walks the Initialize wizard. Written before the service
+    # region because the product reads its protocol at start, and registered so the restart
+    # below picks a change up. Read back from a host configured by that wizard, 2026-08-18.
+
+    - name: 'PROCESS | Put The Console In Central Server Mode'
+      register: '__pdq_deploy_mode__'
+
+      ansible.windows.win_regedit:
+        data: 'Server'
+        delete_key: true
+        name: 'Mode'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy\Protocol'
+        state: 'present'
+        type: 'string'
+
+    #endregion --- [ Process: Put The Console In Central Server Mode ] ------------------------ #
+
+    #region ------ [ Process: Set The Central Server Port ] ----------------------------------- #
+    # The port client consoles connect to. 6336 is the product's own default, measured; the
+    # 7337 recorded in this repository's older notes is wrong. Deliberately NOT written beside
+    # it: LocalTcpPort, which the product assigns per host from the dynamic range, and
+    # ServicePrincipalName, which the wizard leaves as 'PDQDeploy/' with nothing after it and
+    # whose contract is not understood -- pinning a value we cannot explain is worse than
+    # leaving the product's own.
+
+    - name: 'PROCESS | Set The Central Server Port'
+      register: '__pdq_deploy_port__'
+
+      ansible.windows.win_regedit:
+        data: "{{ pdq_deploy_running.server.port }}"
+        delete_key: true
+        name: 'ServerPort'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy\Protocol'
+        state: 'present'
+        type: 'dword'
+
+    #endregion --- [ Process: Set The Central Server Port ] ----------------------------------- #
+
+    #region ------ [ Process: Choose The Addresses The Server Answers On ] -------------------- #
+    # Two halves of one decision, so they live together: name no addresses and the server
+    # answers on all of them, name some and it answers only there. A server bound to one
+    # address stops answering when that address changes, and this host's is assigned at launch,
+    # so every-address is the default. The flag is written on BOTH paths rather than only the
+    # first -- left at 1 it would outrank a named list, and a host moved from all-addresses to
+    # a list would keep answering everywhere while appearing not to.
+
+    - name: 'PROCESS | Answer Consoles On Every Address Unless Addresses Are Named'
+      register: '__pdq_deploy_listen__'
+
+      ansible.windows.win_regedit:
+        data: >-
+          {{ 0 if pdq_deploy_running.server.listen_addresses | default([], true) | length > 0
+             else 1 }}
+        delete_key: true
+        name: 'ServerListenAllAddresses'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy\Protocol'
+        state: 'present'
+        type: 'dword'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Answer Consoles On The Named Addresses'
+      register: '__pdq_deploy_listen_addresses__'
+      when: pdq_deploy_running.server.listen_addresses | default([], true) | length > 0
+
+      ansible.windows.win_regedit:
+        data: "{{ pdq_deploy_running.server.listen_addresses }}"
+        delete_key: true
+        name: 'ServerListenAddresses'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy\Protocol'
+        state: 'present'
+        type: 'multistring'
+
+    #endregion --- [ Process: Choose The Addresses The Server Answers On ] -------------------- #
+
+    #region ------ [ Process: Enable Role-Based Access Control ] ------------------------------ #
+    # Role-Based Access Control decides whether console users are authorised individually or
+    # simply by being administrators. Written from an input rather than fixed, because a
+    # deployment that has not yet modelled roles needs it off, and turning it on before then
+    # authorises nobody for anything. Lives at the product root rather than under Protocol, and
+    # is read at service start like the rest, so a change joins the restart below. The input is a
+    # boolean and the stored value a dword, so the filter is the whole translation between them.
+
+    - name: 'PROCESS | Enable Role-Based Access Control'
+      register: '__pdq_deploy_rbac__'
+
+      ansible.windows.win_regedit:
+        data: "{{ pdq_deploy_running.rbac_enabled | int }}"
+        delete_key: true
+        name: 'RBAC Enabled'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy'
+        state: 'present'
+        type: 'dword'
+
+    #endregion --- [ Process: Enable Role-Based Access Control ] ------------------------------ #
+
+    #region ------ [ Process: Open The Firewall For Client Consoles ] ------------------------- #
+    # Opening the port on the cloud side reaches the host and stops there: Windows Firewall is
+    # on for every profile on this image, so without this rule the service listens and nothing
+    # arrives. Scoped BOTH ways, as the product's own wizard scopes it -- to the service
+    # executable and to the port -- so the exception admits that one program on that one port
+    # rather than opening the port to whatever else may bind it later. The wizard names its
+    # rule by GUID and shows 'PDQ Deploy'; this names it directly, which is also what makes it
+    # idempotent and removable.
+
+    - name: 'PROCESS | Open The Firewall For Client Consoles'
+      community.windows.win_firewall_rule:
+        action: 'allow'
+        description: 'Inbound access to the PDQ Deploy background service for client consoles'
+        direction: 'in'
+        enabled: true
+        localport: "{{ pdq_deploy_running.server.port }}"
+        name: 'PDQ Deploy'
+        profiles: [ 'domain', 'private', 'public' ]
+        program: "{{ pdq_deploy_running.service_path }}"
+        protocol: 'tcp'
+        state: 'present'
+
+    #endregion --- [ Process: Open The Firewall For Client Consoles ] ------------------------- #
 
     #region ------ [ Process: Run The Background Service As The Service Account ] ------------- #
     # The product is installed and licensed by this point, so the service it registered exists
@@ -556,7 +758,9 @@
     - name: 'PROCESS | Restart The Background Service'
       when: >-
         __pdq_deploy_identity__ is changed or __pdq_deploy_license_applied__ is changed
-        or __pdq_deploy_database__ is changed
+        or __pdq_deploy_database__ is changed or __pdq_deploy_mode__ is changed
+        or __pdq_deploy_port__ is changed or __pdq_deploy_listen__ is changed
+        or __pdq_deploy_listen_addresses__ is changed or __pdq_deploy_rbac__ is changed
 
       ansible.windows.win_service:
         dependency_action: 'set'
@@ -566,6 +770,70 @@
         state: 'restarted'
 
     #endregion --- [ Process: Restart The Background Service ] -------------------------------- #
+
+    #region ------ [ Process: Apply The Declared Product Settings ] --------------------------- #
+    # The product answers its own command line only for the account its service runs as: an
+    # administrator and even SYSTEM are refused, because authorisation is a list of console
+    # users and a fresh install has none. Measured 2026-08-18. So every setting is applied AS
+    # the background service user, which needs no seeding because the product already trusts
+    # it. The credential crosses as a become secret rather than on the command line, which the
+    # vendor warns is visible in process listings.
+    #
+    # logon_type=batch is not decoration: become defaults to an INTERACTIVE logon, and this role
+    # denies the service account exactly that (STIG). A batch logon is the one a scheduled task
+    # uses, is granted through Administrators, and leaves the two deny rights intact.
+    #
+    # Read once, write only what differs: 'Settings' with no argument lists every name and
+    # value, so a converged host reports no change instead of rewriting the whole declaration.
+    # A null value is skipped, so a name can be declared without being managed. A name the
+    # product has never stored simply fails to match and is written -- '-Set' inserts a setting
+    # that does not yet exist rather than refusing it, so absent and wrong behave alike.
+    # This runs last because the CLI needs the service up, which the regions above guarantee.
+
+    - name: 'PROCESS | Read The Current Product Settings'
+      become: true
+      become_method: 'ansible.builtin.runas'
+      become_user: "{{ pdq_deploy_running.service_account.name }}"
+      changed_when: false
+      no_log: true
+      register: '__pdq_deploy_settings__'
+      vars:
+        ansible_become_flags: 'logon_type=batch'
+        ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
+
+      ansible.windows.win_command:
+        argv:
+          - "{{ pdq_deploy_running.cli_path }}"
+          - 'Settings'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Apply The Declared Product Settings'
+      become: true
+      become_method: 'ansible.builtin.runas'
+      become_user: "{{ pdq_deploy_running.service_account.name }}"
+      loop: "{{ pdq_deploy_running.settings | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      no_log: true
+      vars:
+        ansible_become_flags: 'logon_type=batch'
+        ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
+      when: >-
+        item.value is not none
+        and not (__pdq_deploy_settings__.stdout is search('^' ~ (item.key | regex_escape)
+                 ~ '\s*:\s*' ~ (item.value | string | regex_escape) ~ '\s*$', multiline=True))
+
+      ansible.windows.win_command:
+        argv:
+          - "{{ pdq_deploy_running.cli_path }}"
+          - 'Settings'
+          - '-Name'
+          - "{{ item.key }}"
+          - '-Set'
+          - "{{ item.value }}"
+
+    #endregion --- [ Process: Apply The Declared Product Settings ] --------------------------- #
 
 #endregion --- [ Process: Install PDQ Deploy on Windows ] ------------------------------------- #
 
@@ -617,10 +885,8 @@
     # The registry write is a means, not the goal -- the product either accepts the payload or
     # stays in Free mode, and only the product can say which. SystemInfo is a local read that
     # needs no console authorisation, unlike the commands that talk to the background service.
-    # The console path comes from Add/Remove Programs, already read above, because that is where
-    # the machine records it; the vendor's documented InstallDir value does not exist on a
-    # measured v20 install. Enterprise also gates Server mode and deployments, so a console
-    # silently left in Free mode is a broken build, not a lesser one.
+    # Enterprise also gates Server mode and deployments, so a console silently left in Free mode
+    # is a broken build, not a lesser one.
 
     - name: 'END | Read The Licence Mode From The Product'
       changed_when: false
@@ -628,7 +894,7 @@
 
       ansible.windows.win_command:
         argv:
-          - "{{ __pdq_deploy_final_arp__.result.entries[0].InstallLocation }}PDQDeploy.exe"
+          - "{{ pdq_deploy_running.cli_path }}"
           - 'SystemInfo'
 
     # ----------------------------------------------------------------------------------------- #

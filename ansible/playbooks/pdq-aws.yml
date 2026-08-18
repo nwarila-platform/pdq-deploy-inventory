@@ -229,6 +229,19 @@
           repository:
             drive: 'F'
 
+          # OFF for now. Console users and the roles they would be granted are not modelled by
+          # this deployment yet, and enabling access control before there are roles to grant
+          # leaves a console nobody is authorised to use. Revisit once console users are managed.
+          rbac_enabled: false
+
+          # The server answers consoles on the address this host actually holds, rather than on
+          # everything it happens to be attached to. It comes from the inventory because the
+          # address is assigned at launch and differs on every rebuild. The PUBLIC address is not
+          # usable here: AWS translates it, so the interface only ever sees the private one, and
+          # binding to an address the host does not own fails at service start.
+          server:
+            listen_addresses: [ "{{ aws_private_ip_address }}" ]
+
     #endregion --- [ Roles: PDQ Deploy ] ------------------------------------------------------ #
 
   #endregion --- [ Roles ] -------------------------------------------------------------------- #

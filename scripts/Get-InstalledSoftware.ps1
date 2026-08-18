@@ -235,29 +235,6 @@ If ($StandaloneRun) {
   }
 }
 
-# Strict mode makes reading an absent property fatal, and an uninstall root is
-# mostly subkeys that carry no DisplayName at all -- patches and components
-# register there too. Every registry read goes through this accessor so an
-# ordinary neighbour cannot abort the scan.
-Function Get-RegistryValue {
-  Param (
-    [Parameter(Mandatory = $True)]
-    [System.Object]
-    $Registration,
-
-    [Parameter(Mandatory = $True)]
-    [System.String]
-    $Name
-  )
-
-  $Property = $Registration.PSObject.Properties[$Name]
-  If ($Null -eq $Property) {
-    Return $Null
-  }
-
-  Return $Property.Value
-}
-
 #endregion --- [ Initialization ] ------------------------------------------------------------ #
 
 #region ------ [ Main ] ---------------------------------------------------------------------- #
@@ -283,7 +260,13 @@ $Entries = @(
 
       # Exact match, not a substring: 'PDQ Deploy Console' is a different
       # product from 'PDQ Deploy' and must not be collected as one.
-      If ((Get-RegistryValue -Registration:$Registration -Name:'DisplayName') -ne $DisplayName) {
+      #
+      # Read through the property collection rather than as a property: strict mode makes
+      # reading an absent one fatal, and an uninstall root is mostly subkeys carrying no
+      # DisplayName at all -- patches and components register there too. Indexing a missing
+      # name yields $Null instead, so an ordinary neighbour cannot abort the scan.
+      $DisplayNameProperty = $Registration.PSObject.Properties['DisplayName']
+      If ($Null -eq $DisplayNameProperty -or $DisplayNameProperty.Value -ne $DisplayName) {
         Continue
       }
 
@@ -294,7 +277,11 @@ $Entries = @(
       # No derived uninstall COMMAND is published. The module owns the uninstall, and the raw
       # UninstallString is already in the registration below for anything that wants it.
       $ProductId = [System.String]::Empty
-      $UninstallString = [System.String](Get-RegistryValue -Registration:$Registration -Name:'UninstallString')
+      $UninstallString = [System.String]::Empty
+      $UninstallStringProperty = $Registration.PSObject.Properties['UninstallString']
+      If ($Null -ne $UninstallStringProperty) {
+        $UninstallString = [System.String]$UninstallStringProperty.Value
+      }
       If ($UninstallString -match '(?i)msiexec.*?(\{[0-9A-F-]{36}\})') {
         $ProductId = $Matches[1]
       }
@@ -341,7 +328,10 @@ If ($Ambiguous) {
 # what version it is cannot be trusted to be current.
 $InstalledVersion = [System.String]::Empty
 If ($Entries.Count -eq 1) {
-  $InstalledVersion = [System.String](Get-RegistryValue -Registration:$Entries[0] -Name:'DisplayVersion')
+  $DisplayVersionProperty = $Entries[0].PSObject.Properties['DisplayVersion']
+  If ($Null -ne $DisplayVersionProperty) {
+    $InstalledVersion = [System.String]$DisplayVersionProperty.Value
+  }
 }
 
 $Installed = [System.Version]::new(0, 0, 0, 0)

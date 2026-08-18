@@ -71,26 +71,51 @@ all_systems = [
       tags                  = {}
       throughput            = null
       volume_type           = "gp3"
-      # The AMI's native size — PDQ's database and repository live on the data volume, so
+      # The AMI's native size — PDQ's databases and repository live on their own volumes, so
       # padding the ephemeral root is pure cost.
       volume_size = "30"
     }
 
-    # One RAW data disk. The deploy layer owns the hardware; the composed play's
-    # windows_disk_manager formats it and assigns its drive letter. The Function tag is the
-    # identity the disk role resolves it by (resolve_aws.yml), because a volume id only
-    # exists after apply.
+    # Three RAW data disks, one per concern, so each can be sized, backed up and permissioned
+    # on its own: PDQ Inventory's database, PDQ Deploy's database, and the shared package
+    # repository. The deploy layer owns the hardware; the composed play's windows_disk_manager
+    # formats each and assigns its drive letter. The Function tag is the identity the disk role
+    # resolves a volume by (resolve_aws.yml), because a volume id only exists after apply, so
+    # each tag here must be unique and must match the play's disk layout.
     ebs_block_devices = [
       {
-        resource_key = "pdqdata"
+        resource_key = "pdqinventory"
         device_index = 0
         iops         = null
         snapshot_id  = null
         skip_destroy = false
-        tags         = { Function = "PDQDATA" }
+        tags         = { Function = "PDQINVENTORY" }
         throughput   = null
         volume_type  = "gp3"
         volume_size  = "30"
+      },
+      {
+        resource_key = "pdqdeploy"
+        device_index = 1
+        iops         = null
+        snapshot_id  = null
+        skip_destroy = false
+        tags         = { Function = "PDQDEPLOY" }
+        throughput   = null
+        volume_type  = "gp3"
+        volume_size  = "30"
+      },
+      {
+        resource_key = "pdqrepository"
+        device_index = 2
+        iops         = null
+        snapshot_id  = null
+        skip_destroy = false
+        tags         = { Function = "PDQREPO" }
+        throughput   = null
+        volume_type  = "gp3"
+        # The repository holds every package's installer files, so it is the volume that grows.
+        volume_size = "60"
       }
     ]
 

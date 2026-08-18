@@ -35,6 +35,7 @@
 #region ------ [ Begin: Install PDQ Deploy on Windows ] --------------------------------------- #
 
 - name: 'BEGIN | Read The Machine And Decide One Action'
+
   # Begin The 'Begin' Block
   block:
 
@@ -52,9 +53,6 @@
       register: '__pdq_deploy_arp__'
 
       ansible.windows.win_powershell:
-        # The module default of 2 serializes 'entries' but stringifies the objects inside it,
-        # which would turn every entry into a blob. 3 is the depth that keeps their properties
-        # addressable; the payload is a handful of registrations, so the cost is nil.
         depth: 3
         error_action: 'stop'
         parameters:
@@ -70,14 +68,137 @@
 
 #region ------ [ Process: Install PDQ Deploy on Windows ] ------------------------------------- #
 
-- name: 'PROCESS | Install PDQ Deploy At The Pinned Version'
+- name: 'PROCESS | Install And Licence PDQ Deploy At The Pinned Version'
   vars:
-    __install__: "{{ pdq_deploy_running.install }}"
     __installer_name__: "{{ pdq_deploy_running.installer.path | basename }}"
-    __guest_installer__: "{{ __install__.staging_dir }}\\{{ __installer_name__ }}"
+    __guest_installer__: "{{ pdq_deploy_running.install.staging_dir }}\\{{ __installer_name__ }}"
     __action_required__: "{{ __pdq_deploy_arp__.result.action_required }}"
+
   # Begin The 'Process' Block
   block:
+
+    #region ------ [ Process: Fetch The Service Account Password ] ---------------------------- #
+    # Pulled as a STRING and never written to disk on either machine, exactly like the licence.
+    # The object holds the password with no trailing newline, so it is used verbatim; the digest
+    # pins that byte-for-byte, and a re-upload that adds whitespace fails the next task loudly.
+
+    - name: 'PROCESS | Fetch The Service Account Password'
+      delegate_to: 'localhost'
+      no_log: true
+      register: '__pdq_deploy_secret__'
+
+      amazon.aws.s3_object:
+        bucket: "{{ pdq_deploy_running.service_account.bucket }}"
+        ceph: false
+        debug_botocore_endpoint_logs: false
+        dualstack: false
+        encrypt: true
+        encryption_mode: 'AES256'
+        expiry: 600
+        ignore_nonexistent_bucket: true
+        mode: 'getstr'
+        object: "{{ pdq_deploy_running.service_account.object }}"
+        overwrite: 'different'
+        permission: [ 'private' ]
+        prefix: ''
+        purge_tags: true
+        retries: 0
+        sig_v4: true
+        validate_bucket_name: true
+        validate_certs: true
+
+    #endregion --- [ Process: Fetch The Service Account Password ] ---------------------------- #
+
+    #region ------ [ Process: Verify The Service Account Password Digest ] -------------------- #
+    # Same contract the installer and licence get: an object is trusted only once it matches the
+    # digest pinned in the playbook. Deliberately NOT no_log -- assert reports the expression text
+    # and our message, never the value, so a mismatch stays diagnosable without exposing a secret.
+
+    - name: 'PROCESS | Verify The Service Account Password Digest'
+      ansible.builtin.assert:
+        fail_msg: >-
+          The service account password object
+          '{{ pdq_deploy_running.service_account.object }}' does not match the sha256 pinned in
+          the playbook. Refusing to create an account from an unverified secret.
+        quiet: true
+        that: [ __pdq_deploy_secret__.contents | hash('sha256') == pdq_deploy_running.service_account.sha256 ]
+
+    #endregion --- [ Process: Verify The Service Account Password Digest ] -------------------- #
+
+    #region ------ [ Process: Ensure The Background Service User ] ---------------------------- #
+    # One Background Service User is shared by Deploy and Inventory, so this role ensures it
+    # rather than owning it. Membership is enforced EXACTLY: replace adds every listed group and
+    # removes the account from all others, so a membership widened by hand is pulled back to the
+    # single group the vendor requires instead of persisting unnoticed. Both roles name the same
+    # one group, so neither strips the other's work. update_password on_create means an existing
+    # account keeps its password and the task stays idempotent instead of resetting it every
+    # converge.
+
+    - name: 'PROCESS | Ensure The Background Service User'
+      no_log: true
+
+      ansible.windows.win_user:
+        groups: [ 'Administrators' ]
+        groups_action: 'replace'
+        name: "{{ pdq_deploy_running.service_account.name }}"
+        password: "{{ __pdq_deploy_secret__.contents }}"
+        password_never_expires: false
+        state: 'present'
+        update_password: 'on_create'
+        user_cannot_change_password: false
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Enforce The Service Account Password'
+      changed_when: false
+      no_log: true
+
+      ansible.windows.win_user:
+        groups_action: 'replace'
+        name: "{{ pdq_deploy_running.service_account.name }}"
+        password: "{{ __pdq_deploy_secret__.contents }}"
+        state: 'present'
+        update_password: 'always'
+
+    #endregion --- [ Process: Ensure The Background Service User ] ---------------------------- #
+
+    #region ------ [ Process: Grant Log On As A Service ] ------------------------------------- #
+    # A service account that cannot log on as a service fails at service start with an error that
+    # names neither the right nor the account. action adds rather than sets, so other holders of
+    # the right keep it.
+
+    - name: 'PROCESS | Grant Log On As A Service'
+      ansible.windows.win_user_right:
+        action: 'add'
+        name: 'SeServiceLogonRight'
+        users: [ ".\\{{ pdq_deploy_running.service_account.name }}" ]
+
+    #endregion --- [ Process: Grant Log On As A Service ] ------------------------------------- #
+
+    #region ------ [ Process: Deny Interactive Logon To The Service Account ] ----------------- #
+    # STIG: a service account must not be usable to sign in at the console. Denying the right
+    # outright beats relying on nobody knowing the password, and a service logon is unaffected
+    # because it is a different right. action adds, so other denied principals keep their entry.
+
+    - name: 'PROCESS | Deny Interactive Logon To The Service Account'
+      ansible.windows.win_user_right:
+        action: 'add'
+        name: 'SeDenyInteractiveLogonRight'
+        users: [ ".\\{{ pdq_deploy_running.service_account.name }}" ]
+
+    #endregion --- [ Process: Deny Interactive Logon To The Service Account ] ----------------- #
+
+    #region ------ [ Process: Deny Remote Interactive Logon To The Service Account ] ---------- #
+    # The same rule for the remote desktop path, which is a separate right: denying console logon
+    # alone would still leave the account able to sign in over RDP.
+
+    - name: 'PROCESS | Deny Remote Interactive Logon To The Service Account'
+      ansible.windows.win_user_right:
+        action: 'add'
+        name: 'SeDenyRemoteInteractiveLogonRight'
+        users: [ ".\\{{ pdq_deploy_running.service_account.name }}" ]
+
+    #endregion --- [ Process: Deny Remote Interactive Logon To The Service Account ] ---------- #
 
     #region ------ [ Process: Create The Controller Staging Directory ] ----------------------- #
 
@@ -88,6 +209,7 @@
       when: __action_required__ | bool
 
       ansible.builtin.tempfile:
+        path: '/tmp'
         prefix: 'pdq-deploy-'
         state: 'directory'
         suffix: ''
@@ -103,10 +225,14 @@
 
     - name: 'PROCESS | Fetch The Installer To The Controller'
       delegate_to: 'localhost'
+      vars:
+        __installer_key__: >-
+          {{ pdq_deploy_running.installer.path
+             | replace('<version>', pdq_deploy_running.installer.version) }}
       when: __action_required__ | bool
 
       amazon.aws.s3_object:
-        bucket: "{{ pdq_deploy_running.artifact_bucket }}"
+        bucket: "{{ pdq_deploy_running.installer.bucket }}"
         ceph: false
         debug_botocore_endpoint_logs: false
         dest: "{{ __pdq_deploy_stage__.path }}/{{ __installer_name__ }}"
@@ -116,7 +242,7 @@
         expiry: 600
         ignore_nonexistent_bucket: true
         mode: 'get'
-        object: "{{ pdq_deploy_running.installer.path }}"
+        object: "{{ __installer_key__ }}"
         overwrite: 'different'
         permission: [ 'private' ]
         prefix: ''
@@ -136,9 +262,11 @@
       when: __action_required__ | bool
 
       ansible.windows.win_file:
+        access_time: 'preserve'
         access_time_format: 'yyyy-MM-dd HH:mm:ss'
+        modification_time: 'preserve'
         modification_time_format: 'yyyy-MM-dd HH:mm:ss'
-        path: "{{ __install__.staging_dir }}"
+        path: "{{ pdq_deploy_running.install.staging_dir }}"
         state: 'directory'
 
     #endregion --- [ Process: Ensure The Guest Staging Directory Exists ] --------------------- #
@@ -173,7 +301,7 @@
     # in the state the installer asked for.
 
     - name: 'PROCESS | Install Silently From The Verified Copy'
-      async: "{{ __install__.timeout_seconds }}"
+      async: "{{ pdq_deploy_running.install.timeout_seconds }}"
       poll: 15
       register: '__pdq_deploy_installed__'
       when: __action_required__ | bool
@@ -201,17 +329,13 @@
     #endregion --- [ Process: Install Silently From The Verified Copy ] ----------------------- #
 
     #region ------ [ Process: Reboot When The Installer Requires It ] ------------------------- #
-    # reboot_required is set by the module for return code 3010 and nothing else, so this acts on
-    # the installer's own request rather than on a guess. It is the only condition needed: a run
-    # that never installed leaves no reboot_required to be true.
+    # reboot_required is set by the module for return code 3010 and nothing else, so this acts
+    # on the installer's own request rather than on a guess. It is the only condition needed: a
+    # run that never installed leaves no reboot_required to be true.
 
     - name: 'PROCESS | Reboot When The Installer Requires It'
       when: __pdq_deploy_installed__.reboot_required | default(false) | bool
 
-      # boot_time_command is deliberately NOT pinned. It is the module's internal probe for
-      # "has the machine come back", not a behavioural setting, and pinning it would both embed
-      # PowerShell in a task file that carries none and freeze an implementation detail we would
-      # want to inherit if upstream improved it.
       ansible.windows.win_reboot:
         connect_timeout: 5
         msg: 'Restarting to finalise the PDQ Deploy installation.'
@@ -221,17 +345,236 @@
 
     #endregion --- [ Process: Reboot When The Installer Requires It ] ------------------------- #
 
+    #region ------ [ Process: Fetch The Product Licence ] ------------------------------------- #
+    # The licence is secret material, so it is pulled as a STRING and never written to disk on
+    # either machine: getstr hands the content straight to the next task. no_log covers the
+    # task because the value is the secret itself, not merely a parameter that touches one.
+
+    - name: 'PROCESS | Fetch The Product Licence'
+      delegate_to: 'localhost'
+      no_log: true
+      register: '__pdq_deploy_license__'
+
+      amazon.aws.s3_object:
+        bucket: "{{ pdq_deploy_running.license.bucket }}"
+        ceph: false
+        debug_botocore_endpoint_logs: false
+        dualstack: false
+        encrypt: true
+        encryption_mode: 'AES256'
+        expiry: 600
+        ignore_nonexistent_bucket: true
+        mode: 'getstr'
+        object: "{{ pdq_deploy_running.license.object }}"
+        overwrite: 'different'
+        permission: [ 'private' ]
+        prefix: ''
+        purge_tags: true
+        retries: 0
+        sig_v4: true
+        validate_bucket_name: true
+        validate_certs: true
+
+    #endregion --- [ Process: Fetch The Product Licence ] ------------------------------------- #
+
+    #region ------ [ Process: Verify The Licence Digest ] ------------------------------------- #
+    # The same contract the installer gets: an object is trusted only after it matches a digest
+    # pinned in the playbook, so a replaced or truncated licence stops the deployment instead
+    # of reaching the registry. Verified at the point of USE -- this is the content the next task
+    # writes. Deliberately NOT no_log: assert reports the expression text and our message, never
+    # the evaluated value, so the failure stays readable without exposing the licence.
+
+    - name: 'PROCESS | Verify The Licence Digest'
+      ansible.builtin.assert:
+        fail_msg: >-
+          The licence object '{{ pdq_deploy_running.license.object }}' does not match the sha256
+          pinned in the playbook. Refusing to write an unverified licence to the registry: the
+          object in the bucket has changed, or the pin is stale.
+        quiet: true
+        that: [ __pdq_deploy_license__.contents | hash('sha256') == pdq_deploy_running.license.sha256 ]
+
+    #endregion --- [ Process: Verify The Licence Digest ] ------------------------------------- #
+
+    #region ------ [ Process: Apply The Product Licence ] ------------------------------------- #
+    # The product accepts the marker block and nothing else: the object carries trailing lines past
+    # the end marker and LF endings, and written verbatim it leaves the console in Free mode --
+    # measured on a converged host 2026-08-18. The slice keeps both markers because the vendor
+    # requires them, and the two replacements normalise every ending to CRLF whatever the object
+    # used. No guard on an empty match is needed, because the digest above pins the exact bytes.
+    # Ungated and idempotent, so a licence removed by hand is restored on the next converge.
+
+    - name: 'PROCESS | Apply The Product Licence'
+      no_log: true
+      register: '__pdq_deploy_license_applied__'
+      vars:
+        __licence__: >-
+          {{ __pdq_deploy_license__.contents
+             | regex_search('--- START LICENSE ---[\s\S]*--- END LICENSE ---')
+             | regex_replace('\r\n', '\n')
+             | regex_replace('\n', '\r\n') }}
+
+      ansible.windows.win_regedit:
+        data: "{{ __licence__ }}"
+        delete_key: true
+        name: 'License'
+        path: "{{ pdq_deploy_running.registry_path }}"
+        state: 'present'
+        type: 'string'
+
+    #endregion --- [ Process: Apply The Product Licence ] ------------------------------------- #
+
+    #region ------ [ Process: Place The Database On The Dedicated Drive ] --------------------- #
+    # The database is the one part of this product that grows without bound, so it lives on the
+    # drive provisioned for it rather than on the system volume. Set BEFORE the service is first
+    # started, which is why this sits above the service region: the product creates the database
+    # wherever this points on that first start, so there is nothing to stop, copy and restart.
+    # A host whose database already exists elsewhere is not migrated by this -- it would be left
+    # behind, and moving it is a different job from building a server. It goes in a FOLDER on that
+    # drive rather than at the root, because an ACL set on a directory can be tightened without
+    # disturbing the permissions Windows grants on a volume root.
+
+    - name: 'PROCESS | Create The Database Directory On The Dedicated Drive'
+      ansible.windows.win_file:
+        access_time: 'preserve'
+        access_time_format: 'yyyy-MM-dd HH:mm:ss'
+        modification_time: 'preserve'
+        modification_time_format: 'yyyy-MM-dd HH:mm:ss'
+        path: >-
+          {{ pdq_deploy_running.database.drive }}:\{{ pdq_deploy_running.database.directory }}
+        state: 'directory'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Point The Product At The Database On The Dedicated Drive'
+      register: '__pdq_deploy_database__'
+      vars:
+        __database_file__: >-
+          {{ pdq_deploy_running.database.drive }}:\{{ pdq_deploy_running.database.directory
+             }}\Database.db
+
+      ansible.windows.win_regedit:
+        data: "{{ __database_file__ }}"
+        delete_key: true
+        name: 'FileName'
+        path: "{{ pdq_deploy_running.registry_path }}\\Settings\\Database"
+        state: 'present'
+        type: 'string'
+
+    #endregion --- [ Process: Place The Database On The Dedicated Drive ] --------------------- #
+
+    #region ------ [ Process: Share The Repository Over The Network ] ------------------------- #
+    # Deployments read their package files from the repository, and the vendor requires it be
+    # reached over UNC rather than by local path: pull copy mode has the TARGET fetch the files,
+    # and Central Server has several consoles read the same ones. A local path works for neither.
+    # The Background Service User is granted full control because it both writes packages
+    # imported from the Package Library and serves them; Administrators keep their own grant so
+    # the share stays manageable by hand. rule_action is 'set' so the permission list is exactly
+    # what is named here -- an access another run granted is removed rather than accumulating.
+    # A folder is shared rather than the volume root, so share and NTFS permissions can both be
+    # narrowed later without fighting the defaults Windows puts on a drive root.
+
+    - name: 'PROCESS | Create The Repository Directory On Its Dedicated Drive'
+      ansible.windows.win_file:
+        access_time: 'preserve'
+        access_time_format: 'yyyy-MM-dd HH:mm:ss'
+        modification_time: 'preserve'
+        modification_time_format: 'yyyy-MM-dd HH:mm:ss'
+        path: >-
+          {{ pdq_deploy_running.repository.drive }}:\{{ pdq_deploy_running.repository.directory }}
+        state: 'directory'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Share The Repository Over The Network'
+      ansible.windows.win_share:
+        caching_mode: 'Manual'
+        description: 'PDQ Deploy package repository'
+        encrypt: false
+        full: "Administrators,{{ pdq_deploy_running.service_account.name }}"
+        list: false
+        name: "{{ pdq_deploy_running.repository.share_name }}"
+        path: >-
+          {{ pdq_deploy_running.repository.drive }}:\{{ pdq_deploy_running.repository.directory }}
+        rule_action: 'set'
+        state: 'present'
+
+    #endregion --- [ Process: Share The Repository Over The Network ] ------------------------- #
+
+    #region ------ [ Process: Run The Background Service As The Service Account ] ------------- #
+    # The product is installed and licensed by this point, so the service it registered exists
+    # and can be pointed at the account the previous regions built. The vendor requires an
+    # administrator on the console machine and the SeServiceLogonRight, both of which are already
+    # in place. A local account carries the '.\' prefix -- the same convention the product's own
+    # console uses when the domain field is left blank. The silent installer leaves the service
+    # DISABLED and never started -- observed on a converged host 2026-08-18 -- so the start mode
+    # and running state are set here as well, or nothing downstream can restart it and the
+    # product never reaches a working state. update_password is on_create so a settled
+    # host reports ok rather than rewriting the credential every converge; the module sets the
+    # password regardless whenever the account itself changes, so the first converge is complete.
+
+    - name: 'PROCESS | Run The Background Service As The Service Account'
+      no_log: true
+      register: '__pdq_deploy_identity__'
+
+      ansible.windows.win_service:
+        dependency_action: 'set'
+        desktop_interact: false
+        force_dependent_services: false
+        name: "{{ pdq_deploy_running.service_name }}"
+        password: "{{ __pdq_deploy_secret__.contents }}"
+        start_mode: 'auto'
+        state: 'started'
+        update_password: 'on_create'
+        username: ".\\{{ pdq_deploy_running.service_account.name }}"
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Enforce The Background Service Credential'
+      changed_when: false
+      no_log: true
+
+      ansible.windows.win_service:
+        dependency_action: 'set'
+        desktop_interact: false
+        force_dependent_services: false
+        name: "{{ pdq_deploy_running.service_name }}"
+        password: "{{ __pdq_deploy_secret__.contents }}"
+        update_password: 'always'
+        username: ".\\{{ pdq_deploy_running.service_account.name }}"
+
+    #endregion --- [ Process: Run The Background Service As The Service Account ] ------------- #
+
+    #region ------ [ Process: Restart The Background Service ] -------------------------------- #
+    # Both of the previous regions are inert until this bounce: Windows applies a new logon
+    # account only at next start, and the product reads its licence from the registry when the
+    # service starts. Gated rather than unconditional because 'restarted' always bounces, and
+    # this is a deployment server -- restarting it on every converge would drop whatever was in
+    # flight. The credential enforcement above cannot trigger it, since changed_when false means
+    # it never reports changed; that is right, because a rotated password only takes effect at
+    # the next start anyway.
+
+    - name: 'PROCESS | Restart The Background Service'
+      when: >-
+        __pdq_deploy_identity__ is changed or __pdq_deploy_license_applied__ is changed
+        or __pdq_deploy_database__ is changed
+
+      ansible.windows.win_service:
+        dependency_action: 'set'
+        desktop_interact: false
+        force_dependent_services: false
+        name: "{{ pdq_deploy_running.service_name }}"
+        state: 'restarted'
+
+    #endregion --- [ Process: Restart The Background Service ] -------------------------------- #
+
 #endregion --- [ Process: Install PDQ Deploy on Windows ] ------------------------------------- #
 
 
 #region ------ [ End: Install PDQ Deploy on Windows ] ----------------------------------------- #
 
 - name: 'END | Prove The Result And Clean Up'
-  vars:
-    __install__: "{{ pdq_deploy_running.install }}"
 
   # Begin The 'End' Block
-
   block:
 
     #region ------ [ End: Re-Read The Installed Product ] ------------------------------------- #
@@ -259,20 +602,46 @@
     # Add/Remove Programs is the machine's.
 
     - name: 'END | Prove The Product Is Registered Exactly Once At Or Above The Pin'
-      vars:
-        __final__: "{{ __pdq_deploy_final_arp__.result }}"
-
       ansible.builtin.assert:
         fail_msg: >-
           Expected '{{ pdq_deploy_running.arp.display_name }}' registered at
           {{ pdq_deploy_running.installer.version }} or above; found
-          '{{ __final__.installed_version }}'. An empty version means the installer reported
-          success without registering the product.
+          '{{ __pdq_deploy_final_arp__.result.installed_version }}'. An empty version means
+          the installer reported success without registering the product.
         quiet: true
-        that:
-          - not __final__.action_required
+        that: [ not __pdq_deploy_final_arp__.result.action_required ]
 
     #endregion --- [ End: Prove The Product Is Registered ] ----------------------------------- #
+
+    #region ------ [ End: Prove The Server Is Licensed For Enterprise ] ----------------------- #
+    # The registry write is a means, not the goal -- the product either accepts the payload or
+    # stays in Free mode, and only the product can say which. SystemInfo is a local read that
+    # needs no console authorisation, unlike the commands that talk to the background service.
+    # The console path comes from Add/Remove Programs, already read above, because that is where
+    # the machine records it; the vendor's documented InstallDir value does not exist on a
+    # measured v20 install. Enterprise also gates Server mode and deployments, so a console
+    # silently left in Free mode is a broken build, not a lesser one.
+
+    - name: 'END | Read The Licence Mode From The Product'
+      changed_when: false
+      register: '__pdq_deploy_systeminfo__'
+
+      ansible.windows.win_command:
+        argv:
+          - "{{ __pdq_deploy_final_arp__.result.entries[0].InstallLocation }}PDQDeploy.exe"
+          - 'SystemInfo'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'END | Prove The Server Is Licensed For Enterprise'
+      ansible.builtin.assert:
+        fail_msg: >-
+          The console is not licensed for Enterprise. SystemInfo reported:
+          {{ __pdq_deploy_systeminfo__.stdout | trim }}
+        quiet: true
+        that: [ __pdq_deploy_systeminfo__.stdout is search('LicenseMode\s*:\s*Enterprise') ]
+
+    #endregion --- [ End: Prove The Server Is Licensed For Enterprise ] ----------------------- #
 
     #region ------ [ End: Prove The Background Service Exists ] ------------------------------- #
     # The product registers, then its service must exist: a registration without the service is a
@@ -287,11 +656,34 @@
 
     #endregion --- [ End: Prove The Background Service Exists ] ------------------------------- #
 
+    #region ------ [ End: Prove The Service Runs As The Service Account ] --------------------- #
+    # Existing is not enough: the identity is what reads the licence and what reaches the
+    # targets, so a service left on its installation default is both unlicensed and unable to
+    # deploy while looking perfectly healthy. SCM reports the account in resolved form,
+    # MACHINE\name, so the machine half is dropped and the account compared -- that is the half
+    # this role sets, and it is what separates svc-pdq from the SYSTEM the installer chose.
+
+    - name: 'END | Prove The Background Service Runs As The Service Account'
+      ansible.builtin.assert:
+        fail_msg: >-
+          '{{ pdq_deploy_running.service_name }}' is running as
+          '{{ __pdq_deploy_service__.services[0].username }}', not
+          '{{ pdq_deploy_running.service_account.name }}'. The service picks up a new logon
+          account only when it restarts, so either the restart was skipped or the account was
+          rejected at start.
+        quiet: true
+        that:
+          - __pdq_deploy_service__.services[0].username | lower | split('\\') | last
+            == pdq_deploy_running.service_account.name | lower
+
+    #endregion --- [ End: Prove The Service Runs As The Service Account ] --------------------- #
+
 #endregion --- [ End: Install PDQ Deploy on Windows ] ----------------------------------------- #
 
 
 #region ------ [ Always: Install PDQ Deploy on Windows ] -------------------------------------- #
 
+  # Begin the 'Always' block
   always:
 
     #region ------ [ Always: Remove The Staged Installer From The Guest ] --------------------- #
@@ -302,9 +694,11 @@
       when: __pdq_deploy_copied__ is defined and not (__pdq_deploy_copied__ is skipped)
 
       ansible.windows.win_file:
+        access_time: 'preserve'
         access_time_format: 'yyyy-MM-dd HH:mm:ss'
+        modification_time: 'preserve'
         modification_time_format: 'yyyy-MM-dd HH:mm:ss'
-        path: "{{ __install__.staging_dir }}"
+        path: "{{ pdq_deploy_running.install.staging_dir }}"
         state: 'absent'
 
     #endregion --- [ Always: Remove The Staged Installer From The Guest ] --------------------- #

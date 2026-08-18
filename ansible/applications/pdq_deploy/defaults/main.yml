@@ -52,4 +52,51 @@ pdq_deploy_defaults:
 
   service_name: 'PDQDeploy'
 
+  #region ------ [ Installer layout ] -------------------------------------------------------- #
+
+  # The application repository is laid out <product>/<component>/<version>/<file>, so older
+  # builds stay addressable for rollback rather than being overwritten in place. The literal
+  # token <version> is replaced with installer.version at fetch time, which is why the playbook
+  # supplies only a version and a digest. A repository laid out differently overrides this whole
+  # path, with or without the token.
+  installer:
+    path: 'PDQ/Deploy/<version>/PDQ_Deploy_x86-x64.exe'
+
+  #endregion --- [ Installer layout ] -------------------------------------------------------- #
+
+  #region ------ [ Background service user ] ------------------------------------------------- #
+
+  # Deploy and Inventory are co-located and share ONE Background Service User, so the name is
+  # product identity rather than a deployment choice. Where its password lives IS deployment
+  # specific, so the bucket, object and digest come from the playbook.
+  service_account:
+    name: 'svc-pdq'
+
+  #endregion --- [ Background service user ] ------------------------------------------------- #
+
+  # The NATIVE 64-bit root, not the redirected one, even though the product itself is 32-bit.
+  # Measured on a converged host 2026-08-18: a licence written under WOW6432Node left the product
+  # in Free mode and the same payload here flipped it to Enterprise, and a database path set under
+  # WOW6432Node was ignored while the same value here moved the database. The vendor's registry
+  # page names the redirected view for 64-bit systems; v20 does not behave that way. Both the
+  # licence and the settings tree hang off this one root, so it is named once.
+  registry_path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy'
+
+  # The product creates its database here the first time the service starts, so the role sets the
+  # path before that happens and never has to stop, copy and restart. The DRIVE comes from the
+  # playbook -- this role consumes a letter, it does not provision the disk. The folder is not
+  # decoration: an ACL belongs on a directory, where it can be set without touching the volume
+  # root and the permissions Windows grants there by default.
+  database:
+    directory: 'PDQ Deploy'
+
+  # The repository holds the package files a deployment copies to its targets, so it is reached
+  # over UNC rather than by local path: the vendor requires that for pull copy mode and for
+  # Central Server, where several consoles read the same files. Shared from a folder rather than
+  # the volume root for the same reason the database sits in one -- the share and its directory
+  # can then be permissioned independently of the disk.
+  repository:
+    directory: 'PDQ Repository'
+    share_name: 'AppRepo$'
+
   #endregion --- [ Product identity ] -------------------------------------------------------- #

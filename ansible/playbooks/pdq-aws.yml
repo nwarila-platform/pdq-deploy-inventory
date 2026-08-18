@@ -2,7 +2,7 @@
 # File: 'ansible/playbooks/pdq-aws.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# Provisions the declared Windows data disk on the EPHEMERAL EC2 instance, then applies the PDQ
+# Provisions the declared Windows data disks on the EPHEMERAL EC2 instance, then applies the PDQ
 # Deploy role. Runs from the COMPOSED tree only — in CI, .github/workflows/aws-deploy.yml
 # overlays this repository's roles into the pinned ansible-framework checkout and executes this
 # playbook against a dynamic EC2 inventory filtered to this run and verified against live EC2
@@ -134,11 +134,21 @@
   any_errors_fatal: true
   vars:
     ENV: "{{ env }}"
+    # One volume per concern, matching terraform/aws.tfvars by Function tag. The letters are the
+    # contract this play publishes to the roles below: Inventory's database on D, Deploy's on E,
+    # and the shared package repository on F.
     pdq_disk_layout:
-      data:
-        function: 'PDQDATA'
+      - function: 'PDQINVENTORY'
+        drive_letter: 'D'
+        label: 'PDQINVENTORY'
+        allocation_unit: 65536
+      - function: 'PDQDEPLOY'
         drive_letter: 'E'
-        label: 'PDQDATA'
+        label: 'PDQDEPLOY'
+        allocation_unit: 65536
+      - function: 'PDQREPO'
+        drive_letter: 'F'
+        label: 'PDQREPO'
         allocation_unit: 65536
 
   #region ------ [ Pre-Tasks ] ---------------------------------------------------------------- #
@@ -166,35 +176,58 @@
 
     #region ------ [ Roles: Windows Disk Manager ] -------------------------------------------- #
     # Guest disk provisioning is delegated to the composed framework role — this repository
-    # never duplicates it. `function` names the EBS volume's Function tag (declared in
+    # never duplicates it. `function` names each EBS volume's Function tag (declared in
     # terraform/aws.tfvars) and the role resolves it to the attached disk itself, because a
-    # volume id only exists after apply.
+    # volume id only exists after apply. The layout is passed through whole: adding a volume is
+    # a change in two files, not three.
     - role: 'windows_disk_manager'
       vars:
         windows_disk_manager:
           platform: 'aws'
-          disks:
-            - function: "{{ pdq_disk_layout.data.function }}"
-              drive_letter: "{{ pdq_disk_layout.data.drive_letter }}"
-              label: "{{ pdq_disk_layout.data.label }}"
-              allocation_unit: "{{ pdq_disk_layout.data.allocation_unit }}"
+          disks: "{{ pdq_disk_layout }}"
     #endregion --- [ Roles: Windows Disk Manager ] -------------------------------------------- #
 
     #region ------ [ Roles: PDQ Deploy ] ------------------------------------------------------ #
     - role: 'pdq_deploy'
       vars:
         pdq_deploy:
-          # The bucket carries the account id, so it is composed here rather than defaulted in
-          # the role — a role default holding one account's bucket is not a default.
-          artifact_bucket: "{{ aws_account_id }}-ansible"
 
           # What is actually being installed, stated where a reader can see it. The digest is
           # verified on the GUEST immediately before the installer executes, so a changed object
           # with an unchanged pin stops the deployment.
+          # Each artifact names its own bucket: executables live in the application repository,
+          # licences stay beside the other deployment material. Both carry the account id, so they
+          # are composed here rather than defaulted in the role.
           installer:
-            path: 'applications/pdq/Deploy_20.1.8.0.exe'
+            bucket: "{{ aws_account_id }}-apprepo"
             version: '20.1.8.0'
             sha256: '856dbe3dd4544d4b9ae1f382ee51f2a5f25f41714c462fa4afcff9743cc85eb9'
+
+          # The licence itself never appears here: only the object that holds it, in the same
+          # bucket the installer comes from. It is fetched as a string and written straight to the
+          # registry, so it touches no disk on either machine.
+          # The password itself never appears here: only the object that holds it and the digest
+          # that pins it. Fetched as a string and used to create the account; never on disk.
+          service_account:
+            bucket: "{{ aws_account_id }}-ansible"
+            object: 'applications/pdq/svc-pdq-password.txt'
+            sha256: 'd522139ebd26b7729f781d88aa9b41fcf189c6e59719ab3c46be32cd003ea729'
+
+          license:
+            bucket: "{{ aws_account_id }}-ansible"
+            object: 'applications/pdq/pdq-deploy-license.lic'
+            sha256: '4fc848aabff6ff6ecb1c09c9017d40da306bd3c9dd2d075b9082e03608dce58c'
+
+          # The database grows without bound, so it goes on the volume provisioned for it rather
+          # than the system disk. Only the letter belongs here: which disk this host dedicates to
+          # PDQ is a property of the host, and the folder beneath it is the role's business.
+          database:
+            drive: 'E'
+
+          # The repository is shared out over the network, so it gets its own volume: package
+          # files are written by administrators and read by every deployment.
+          repository:
+            drive: 'F'
 
     #endregion --- [ Roles: PDQ Deploy ] ------------------------------------------------------ #
 

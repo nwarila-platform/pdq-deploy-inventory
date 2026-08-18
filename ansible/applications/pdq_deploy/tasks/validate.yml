@@ -14,34 +14,41 @@
 - name: 'VALIDATE | Require The Artifact Source And Its Pinned Digests'
   ansible.builtin.assert:
     that:
-      - pdq_deploy_running.artifact_bucket | default('') | length > 0
+      - pdq_deploy_running.installer.bucket | default('') | length > 0
       - pdq_deploy_running.installer.path | default('') | length > 0
       - pdq_deploy_running.installer.version | default('') is match('^[0-9]+(\\.[0-9]+){3}$')
       - pdq_deploy_running.installer.sha256 | default('') is match('^[0-9a-f]{64}$')
+      - pdq_deploy_running.license.bucket | default('') | length > 0
+      - pdq_deploy_running.license.object | default('') | length > 0
+      - pdq_deploy_running.license.sha256 | default('') is match('^[0-9a-f]{64}$')
+      - pdq_deploy_running.service_account.name | default('') | length > 0
+      - pdq_deploy_running.database.drive | default('') is match('^[A-Za-z]$')
+      - pdq_deploy_running.repository.drive | default('') is match('^[A-Za-z]$')
+      - pdq_deploy_running.service_account.bucket | default('') | length > 0
+      - pdq_deploy_running.service_account.object | default('') | length > 0
+      - pdq_deploy_running.service_account.sha256 | default('') is match('^[0-9a-f]{64}$')
+      - pdq_deploy_running.registry_path | default('') is match('^HKLM:')
     fail_msg: >-
       Refusing to deploy: the artifact source is incomplete. The playbook must supply
-      pdq_deploy.artifact_bucket and an installer declaring a path, a four-part version, and a
+      an installer declaring its bucket, a path, a four-part version, and a
       lowercase 64-character sha256, because the object is verified against its digest before it
-      executes.
+      executes. The licence names its own object in the same bucket and the registry key the
+      product reads it from.
       See meta/main.yml for the full input contract.
     quiet: true
 
 - name: 'VALIDATE | Require A Usable Install Contract'
-  vars:
-    __install__: "{{ pdq_deploy_running.install }}"
   ansible.builtin.assert:
     that:
-      - __install__.staging_dir is match('^[A-Za-z]:\\\\')
+      - pdq_deploy_running.install.staging_dir is match('^[A-Za-z]:\\\\')
     fail_msg: >-
       Refusing to deploy: install.staging_dir must be an absolute Windows path.
     quiet: true
 
 - name: 'VALIDATE | Require The Product Identity Probes'
-  vars:
-    __arp__: "{{ pdq_deploy_running.arp }}"
   ansible.builtin.assert:
     that:
-      - __arp__.display_name | default('') | length > 0
+      - pdq_deploy_running.arp.display_name | default('') | length > 0
       - pdq_deploy_running.service_name | default('') | length > 0
     fail_msg: >-
       Refusing to deploy: the product identity probes are incomplete. Install state is read from

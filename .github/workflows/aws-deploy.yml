@@ -302,6 +302,12 @@ jobs:
       - name: Compose the Ansible tree
         run: |
           set -euo pipefail
+          # A role that runs a first-class PowerShell script tracks only files/<Name>.ps1.stub;
+          # the script itself is developed and pair-tested under scripts/ and copied into place
+          # here. This must precede the rsync below, which is what carries the materialized copy
+          # into the composed tree.
+          bash "${GITHUB_WORKSPACE}/scripts/materialize-role-scripts.sh"
+
           framework_dir="${GITHUB_WORKSPACE}/.frameworks/ansible-framework"
           for role_source in "${GITHUB_WORKSPACE}"/ansible/applications/*; do
             role_name="$(basename "${role_source}")"

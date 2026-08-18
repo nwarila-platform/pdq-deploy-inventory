@@ -52,6 +52,43 @@ pdq_deploy_defaults:
 
   service_name: 'PDQDeploy'
 
+  # Client consoles reach the background service on this port. The product's own default, measured
+  # on a converged host 2026-08-18 -- the 7337 named in older notes here is wrong. A site that must
+  # move it overrides this; the MODE itself is not offered, because an all-in-one Central Server is
+  # a design invariant of this repository rather than a choice.
+  # Whether console users are authorised individually rather than by being administrators. True by
+  # default because that is the tighter posture and the one the product's own wizard selects; a
+  # deployment that is not ready to model roles sets it false explicitly rather than by accident.
+  # Stated as a boolean because that is what an on-or-off setting looks like everywhere else; the
+  # dword the registry actually stores is the role's business, not the caller's.
+  rbac_enabled: true
+
+  server:
+    port: 6336
+
+    # Which addresses the server answers consoles on. Null means every address, which is what a
+    # host whose address is assigned at launch needs, and what the wizard chooses by default. A
+    # site that must bind explicitly supplies a list instead, and the all-addresses flag is
+    # cleared for it.
+    listen_addresses: null
+
+  # The product's command line, which is how the role asks the product about itself. Hardcoded
+  # rather than read from Add/Remove Programs because the path cannot vary: the vendor stub
+  # swallows INSTALLLOCATION, APPLICATIONFOLDER and /p without effect and returns 0 either way,
+  # so every silent install lands here (measured 2026-08-18). Deriving it would suggest a
+  # flexibility that does not exist.
+  cli_path: 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
+
+  # The background service executable, which is what the firewall exception is written for. Same
+  # fixed location as the command line above, and fixed for the same reason.
+  service_path: 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeployService.exe'
+
+  # Product settings the deployment declares, as name => value. Empty by default because a
+  # setting is a deployment choice, never a universal one; the playbook supplies whatever it
+  # wants applied and the role neither knows nor cares which names exist. Run
+  # 'PDQDeploy Settings' on a converged host to see the current set.
+  settings: {}
+
   #region ------ [ Installer layout ] -------------------------------------------------------- #
 
   # The application repository is laid out <product>/<component>/<version>/<file>, so older
@@ -73,14 +110,6 @@ pdq_deploy_defaults:
     name: 'svc-pdq'
 
   #endregion --- [ Background service user ] ------------------------------------------------- #
-
-  # The NATIVE 64-bit root, not the redirected one, even though the product itself is 32-bit.
-  # Measured on a converged host 2026-08-18: a licence written under WOW6432Node left the product
-  # in Free mode and the same payload here flipped it to Enterprise, and a database path set under
-  # WOW6432Node was ignored while the same value here moved the database. The vendor's registry
-  # page names the redirected view for 64-bit systems; v20 does not behave that way. Both the
-  # licence and the settings tree hang off this one root, so it is named once.
-  registry_path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy'
 
   # The product creates its database here the first time the service starts, so the role sets the
   # path before that happens and never has to stop, copy and restart. The DRIVE comes from the

@@ -27,7 +27,6 @@
       - pdq_deploy_running.service_account.bucket | default('') | length > 0
       - pdq_deploy_running.service_account.object | default('') | length > 0
       - pdq_deploy_running.service_account.sha256 | default('') is match('^[0-9a-f]{64}$')
-      - pdq_deploy_running.registry_path | default('') is match('^HKLM:')
     fail_msg: >-
       Refusing to deploy: the artifact source is incomplete. The playbook must supply
       an installer declaring its bucket, a path, a four-part version, and a
@@ -50,6 +49,14 @@
     that:
       - pdq_deploy_running.arp.display_name | default('') | length > 0
       - pdq_deploy_running.service_name | default('') | length > 0
+      - pdq_deploy_running.rbac_enabled is boolean
+      - pdq_deploy_running.server.port | int > 0
+      - pdq_deploy_running.server.port | int < 65536
+      - pdq_deploy_running.server.listen_addresses is none
+        or pdq_deploy_running.server.listen_addresses is sequence
+      - pdq_deploy_running.cli_path | default('') is match('^[A-Za-z]:\\\\')
+      - pdq_deploy_running.service_path | default('') is match('^[A-Za-z]:\\\\')
+      - pdq_deploy_running.settings is mapping
     fail_msg: >-
       Refusing to deploy: the product identity probes are incomplete. Install state is read from
       Add/Remove Programs, so a display name is required, and the service name is required as a

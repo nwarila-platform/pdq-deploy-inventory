@@ -147,6 +147,28 @@ all_systems = [
             cidr_ipv4                    = "128.0.0.0/1"
             prefix_list_id               = null
             referenced_security_group_id = null
+          },
+          # PDQ Deploy Central Server. Client consoles connect to the background service on this
+          # port; it is the product's own default and is set independently by the play, so the two
+          # move together by hand. Split into halves for the same reason SSH is, and open to the
+          # same range under the same temporary development-cycle allowance.
+          {
+            description                  = "PDQ Deploy console from first half of IPv4"
+            ip_protocol                  = "tcp"
+            from_port                    = 6336
+            to_port                      = 6336
+            cidr_ipv4                    = "0.0.0.0/1"
+            prefix_list_id               = null
+            referenced_security_group_id = null
+          },
+          {
+            description                  = "PDQ Deploy console from second half of IPv4"
+            ip_protocol                  = "tcp"
+            from_port                    = 6336
+            to_port                      = 6336
+            cidr_ipv4                    = "128.0.0.0/1"
+            prefix_list_id               = null
+            referenced_security_group_id = null
           }
         ]
         egress = [

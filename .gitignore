@@ -58,7 +58,7 @@
 # --- [ allowed: GitHub configuration ] ------------------------------------------------------ #
 !/.github/CODEOWNERS
 !/.github/workflows/aws-deploy.yml
-!/.github/workflows/iam.yml
+!/.github/workflows/powershell.yml
 !/.github/terraform-framework-pin
 !/.github/ansible-framework-pin
 
@@ -66,6 +66,9 @@
 !/ansible/applications/pdq_deploy/README.md
 !/ansible/applications/pdq_deploy/defaults/main.yml
 !/ansible/applications/pdq_deploy/files/.gitkeep
+# The stub names its source script under scripts/; the materialized files/Get-InstalledSoftware.ps1
+# is a build artifact and is deliberately NEVER allowlisted, so it cannot be committed.
+!/ansible/applications/pdq_deploy/files/Get-InstalledSoftware.ps1.stub
 !/ansible/applications/pdq_deploy/meta/main.yml
 !/ansible/applications/pdq_deploy/tasks/clean_windows.yml
 !/ansible/applications/pdq_deploy/tasks/main.yml
@@ -103,14 +106,11 @@
 !/docs/reference/pdq-automation.md
 
 # --- [ allowed: scripts ] ------------------------------------------------------------------- #
-!/scripts/assert-aws-clean.sh
-!/scripts/assert-aws-resource-graph.py
-!/scripts/bootstrap-iam.sh
-!/scripts/check-iam-literals.sh
-!/scripts/check-winshell-splitargs.py
-!/scripts/check-workflow-trigger.sh
+# PowerShell ships as a pair: the script and its spec are both tracked here.
+!/scripts/Get-InstalledSoftware.pester.ps1
+!/scripts/Get-InstalledSoftware.ps1
 !/scripts/compose-and-run.sh
-!/scripts/test-iam-policies.sh
+!/scripts/materialize-role-scripts.sh
 
 # --- [ allowed: terraform (data-only; resources live in the pinned framework) ] -------------- #
 !/terraform/README.md

@@ -425,7 +425,7 @@
 
     - name: 'PROCESS | Apply The Product Licence'
       no_log: true
-      register: '__pdq_deploy_license_applied__'
+      notify: 'pdq-deploy-restart-required'
       when: >-
         __pdq_deploy_license_current__.value | default('') | regex_replace('\s', '')
         != __licence__ | regex_replace('\s', '')
@@ -469,7 +469,7 @@
     # ----------------------------------------------------------------------------------------- #
 
     - name: 'PROCESS | Point The Product At The Database On The Dedicated Drive'
-      register: '__pdq_deploy_database__'
+      notify: 'pdq-deploy-restart-required'
       vars:
         __database_file__: >-
           {{ pdq_deploy_running.database.drive }}:\{{ pdq_deploy_running.database.directory
@@ -552,7 +552,7 @@
     # below picks a change up. Read back from a host configured by that wizard, 2026-08-18.
 
     - name: 'PROCESS | Put The Console In Central Server Mode'
-      register: '__pdq_deploy_mode__'
+      notify: 'pdq-deploy-restart-required'
 
       ansible.windows.win_regedit:
         data: 'Server'
@@ -573,7 +573,7 @@
     # leaving the product's own.
 
     - name: 'PROCESS | Set The Central Server Port'
-      register: '__pdq_deploy_port__'
+      notify: 'pdq-deploy-restart-required'
 
       ansible.windows.win_regedit:
         data: "{{ pdq_deploy_running.server.port }}"
@@ -594,7 +594,7 @@
     # a list would keep answering everywhere while appearing not to.
 
     - name: 'PROCESS | Answer Consoles On Every Address Unless Addresses Are Named'
-      register: '__pdq_deploy_listen__'
+      notify: 'pdq-deploy-restart-required'
 
       ansible.windows.win_regedit:
         data: >-
@@ -609,7 +609,7 @@
     # ----------------------------------------------------------------------------------------- #
 
     - name: 'PROCESS | Answer Consoles On The Named Addresses'
-      register: '__pdq_deploy_listen_addresses__'
+      notify: 'pdq-deploy-restart-required'
       when: pdq_deploy_running.server.listen_addresses | default([], true) | length > 0
 
       ansible.windows.win_regedit:
@@ -631,7 +631,7 @@
     # boolean and the stored value a dword, so the filter is the whole translation between them.
 
     - name: 'PROCESS | Enable Role-Based Access Control'
-      register: '__pdq_deploy_rbac__'
+      notify: 'pdq-deploy-restart-required'
 
       ansible.windows.win_regedit:
         data: "{{ pdq_deploy_running.rbac_enabled | int }}"
@@ -685,7 +685,7 @@
 
     - name: 'PROCESS | Run The Background Service As The Service Account'
       no_log: true
-      register: '__pdq_deploy_identity__'
+      notify: 'pdq-deploy-restart-required'
 
       ansible.windows.win_service:
         dependency_action: 'set'
@@ -745,7 +745,7 @@
 
     - name: 'PROCESS | Record The Service Credential With The Product'
       no_log: true
-      register: '__pdq_deploy_recorded__'
+      notify: 'pdq-deploy-restart-required'
       when: >-
         __pdq_deploy_recorded_account__.value | default('') | lower | split('\\') | last
         != pdq_deploy_running.service_account.name | lower
@@ -761,34 +761,16 @@
 
     #endregion --- [ Process: Record The Service Credential With The Product ] ---------------- #
 
-    #region ------ [ Process: Restart The Background Service ] -------------------------------- #
-    # Both of the previous regions are inert until this bounce: Windows applies a new logon
-    # account only at next start, and the product reads its licence from the registry when the
-    # service starts. Gated rather than unconditional because 'restarted' always bounces, and
-    # this is a deployment server. The trade, measured across the 2026-08-20 campaign: a settled
-    # host NEVER restarts (some twenty converges, zero bounces), so only a converge that actually
-    # changes server configuration bounces the service -- and the vendor queues deployments while
-    # the service is down rather than losing them. Changing a busy server's configuration is the
-    # operator's timing call, not this role's. The credential enforcement above cannot trigger it, since changed_when false means
-    # it never reports changed; that is right, because a rotated password only takes effect at
-    # the next start anyway.
+    #region ------ [ Process: Apply Any Pending Restart ] ------------------------------------- #
+    # Handlers would otherwise run at the very END of the play, after this role's own proofs.
+    # Flushing here means the product has already restarted by the time END asks it whether it
+    # is licensed and which account it runs as -- so those proofs describe the converged host
+    # rather than the one that existed before the bounce.
 
-    - name: 'PROCESS | Restart The Background Service'
-      when: >-
-        __pdq_deploy_identity__ is changed or __pdq_deploy_license_applied__ is changed
-        or __pdq_deploy_database__ is changed or __pdq_deploy_mode__ is changed
-        or __pdq_deploy_port__ is changed or __pdq_deploy_listen__ is changed
-        or __pdq_deploy_listen_addresses__ is changed or __pdq_deploy_rbac__ is changed
-        or __pdq_deploy_recorded__ is changed
+    - name: 'PROCESS | Apply Any Pending Restart'
+      ansible.builtin.meta: 'flush_handlers'
 
-      ansible.windows.win_service:
-        dependency_action: 'set'
-        desktop_interact: false
-        force_dependent_services: false
-        name: "{{ pdq_deploy_running.service_name }}"
-        state: 'restarted'
-
-    #endregion --- [ Process: Restart The Background Service ] -------------------------------- #
+    #endregion --- [ Process: Apply Any Pending Restart ] ------------------------------------- #
 
     #region ------ [ Process: Apply The Declared Product Settings ] --------------------------- #
     # The product answers its own command line only for the account its service runs as: an

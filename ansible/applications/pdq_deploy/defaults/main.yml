@@ -83,14 +83,15 @@ pdq_deploy_defaults:
   # fixed location as the command line above, and fixed for the same reason.
   service_path: 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeployService.exe'
 
-  # Product settings the deployment declares, keyed by the PARAMETER names the settings script
-  # publishes -- DeploymentCleanupDays, PerformanceCopyMode, RepositoryPath -- not by the
+  # Product settings the deployment declares, keyed by the names in the settings script's
+  # SETTINGS table -- DeploymentCleanupDays, PerformanceCopyMode, RepositoryPath -- not by the
   # product's own dotted spelling, which the script owns the translation for. A name absent here
-  # is unmanaged, which is a different thing from one set to the product's default. Empty by
-  # default because a setting is a deployment choice, never a universal one. Run
-  # 'Get-Help scripts/Set-PdqSetting.ps1' for every name, the page it belongs to, and whether it
-  # is proven or inferred; only the families the product's service actually reads are offered --
-  # the console-side pages live in a per-user hive no converge can reach.
+  # is unmanaged, which is a different thing from one set to the product's default; a name the
+  # table does not carry is a typo and fails the run. Empty by default because a setting is a
+  # deployment choice, never a universal one. The table is the inventory: it names every setting,
+  # its type, the values an enumerated one allows, and which are inferred rather than proven.
+  # Only the families the product's SERVICE reads are offered -- the console-side pages live in a
+  # per-user hive no converge can reach.
   settings: {}
 
   #region ------ [ Installer layout ] -------------------------------------------------------- #

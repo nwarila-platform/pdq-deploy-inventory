@@ -808,7 +808,9 @@
     # trusts an exit code reports changes that never happened. The script exports the product's
     # own account of its configuration, writes only what differs, exports again, and proves each
     # name read back as asked; anything that did not is reported and fails the task. It also
-    # knows the one setting whose home is the database rather than the command line. Uncensored
+    # knows the one setting whose home is the database rather than the command line, and which
+    # names exist at all -- a typo is refused rather than stored as a row nothing reads.
+    # Uncensored
     # on purpose: every name and value it handles comes from the playbook, which is tracked in
     # git, and censoring cost the one thing a failing setting needs -- its name.
     #
@@ -829,7 +831,8 @@
       ansible.windows.win_powershell:
         depth: 3
         error_action: 'stop'
-        parameters: "{{ pdq_deploy_running.settings }}"
+        parameters:
+          Setting: "{{ pdq_deploy_running.settings }}"
         remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqSetting.ps1') }}"
 

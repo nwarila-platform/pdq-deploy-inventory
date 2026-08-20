@@ -41,7 +41,11 @@
     that:
       - pdq_deploy_running.install.staging_dir is match('^[A-Za-z]:\\\\')
     fail_msg: >-
-      Refusing to deploy: install.staging_dir must be an absolute Windows path.
+      Refusing to deploy: the install contract is malformed. staging_dir must be an absolute
+      Windows path, the install timeout a positive number, the database and repository
+      directories plain folder NAMES on their dedicated drives, the share name a legal SMB name,
+      every listen address a non-empty string, and every declared setting value a scalar --
+      a list or map here would reach the product's command line as mush.
     quiet: true
 
 - name: 'VALIDATE | Require The Product Identity Probes'
@@ -57,6 +61,16 @@
       - pdq_deploy_running.cli_path | default('') is match('^[A-Za-z]:\\\\')
       - pdq_deploy_running.service_path | default('') is match('^[A-Za-z]:\\\\')
       - pdq_deploy_running.settings is mapping
+      - pdq_deploy_running.settings | dict2items | selectattr('value', 'mapping')
+        | list | length == 0
+      - pdq_deploy_running.settings | dict2items | selectattr('value', 'sequence')
+        | rejectattr('value', 'string') | list | length == 0
+      - pdq_deploy_running.install.timeout_seconds | int > 0
+      - pdq_deploy_running.database.directory | default('') is match('^[^\\\\/:]+$')
+      - pdq_deploy_running.repository.directory | default('') is match('^[^\\\\/:]+$')
+      - pdq_deploy_running.repository.share_name | default('') is match('^[A-Za-z0-9_$. -]+$')
+      - (pdq_deploy_running.server.listen_addresses or [])
+        | reject('match', '.+') | list | length == 0
     fail_msg: >-
       Refusing to deploy: the product identity probes are incomplete. Install state is read from
       Add/Remove Programs, so a display name is required, and the service name is required as a

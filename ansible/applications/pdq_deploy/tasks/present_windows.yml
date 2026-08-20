@@ -474,7 +474,6 @@
         __database_file__: >-
           {{ pdq_deploy_running.database.drive }}:\{{ pdq_deploy_running.database.directory
              }}\Database.db
-
       ansible.windows.win_regedit:
         data: "{{ __database_file__ }}"
         delete_key: true
@@ -488,13 +487,15 @@
     #region ------ [ Process: Prepare The Repository Directory ] ------------------------------ #
     # The directory is created and locked down BEFORE it is published: a share that exists
     # ahead of its ACL is readable by whoever the volume root lets in, for as long as the gap
-    # lasts. Inheritance is broken first and the inherited entries discarded rather than copied,
-    # because they come from that root -- copying them would preserve underneath every rule set
-    # here exactly what breaking inheritance is meant to remove. Users get read and write since
-    # administrators curate packages by hand; Administrators and SYSTEM keep full control so the
-    # directory stays manageable and backupable. The service account is named nowhere: it is an
-    # Administrator by vendor requirement, and repeating that would be a second place to
-    # maintain one fact.
+    # lasts. The DACL is ENFORCED wholesale by a first-class script rather than granted entry
+    # by entry: the native module never removes an entry it did not write, so a hand-added
+    # grant -- Everyone at full control was the measured case, 2026-08-20 -- survived every
+    # converge. The script owns the whole list: inheritance from the volume root severed,
+    # SYSTEM and Administrators full control, Users modify, and ANY other entry removed. The
+    # service account is named nowhere: it is an Administrator by vendor requirement, and
+    # repeating that would be a second place to maintain one fact. The referenced .ps1 is
+    # MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role tracks only
+    # files/Set-RepositoryAcl.ps1.stub); run it before this role.
 
     - name: 'PROCESS | Create The Repository Directory On Its Dedicated Drive'
       ansible.windows.win_file:
@@ -507,50 +508,14 @@
 
     # ----------------------------------------------------------------------------------------- #
 
-    - name: 'PROCESS | Break Inherited Permissions On The Repository Directory'
-      ansible.windows.win_acl_inheritance:
-        path: "{{ __repository_dir__ }}"
-        reorganize: false
-        state: 'absent'
-
-    # ----------------------------------------------------------------------------------------- #
-
-    - name: 'PROCESS | Grant Read And Write On The Repository Directory'
-      ansible.windows.win_acl:
-        follow: false
-        inherit: 'ContainerInherit, ObjectInherit'
-        path: "{{ __repository_dir__ }}"
-        propagation: 'None'
-        rights: 'Modify'
-        state: 'present'
-        type: 'allow'
-        user: 'BUILTIN\Users'
-
-    # ----------------------------------------------------------------------------------------- #
-
-    - name: 'PROCESS | Grant Full Control To Administrators On The Repository Directory'
-      ansible.windows.win_acl:
-        follow: false
-        inherit: 'ContainerInherit, ObjectInherit'
-        path: "{{ __repository_dir__ }}"
-        propagation: 'None'
-        rights: 'FullControl'
-        state: 'present'
-        type: 'allow'
-        user: 'BUILTIN\Administrators'
-
-    # ----------------------------------------------------------------------------------------- #
-
-    - name: 'PROCESS | Grant Full Control To The System Account On The Repository Directory'
-      ansible.windows.win_acl:
-        follow: false
-        inherit: 'ContainerInherit, ObjectInherit'
-        path: "{{ __repository_dir__ }}"
-        propagation: 'None'
-        rights: 'FullControl'
-        state: 'present'
-        type: 'allow'
-        user: 'NT AUTHORITY\SYSTEM'
+    - name: 'PROCESS | Enforce The Repository Directory Permissions'
+      ansible.windows.win_powershell:
+        depth: 2
+        error_action: 'stop'
+        parameters:
+          Path: "{{ __repository_dir__ }}"
+        remote_src: false
+        script: "{{ lookup('ansible.builtin.file', 'Set-RepositoryAcl.ps1') }}"
 
     #endregion --- [ Process: Prepare The Repository Directory ] ------------------------------ #
 
@@ -710,7 +675,11 @@
     # console uses when the domain field is left blank. The silent installer leaves the service
     # DISABLED and never started -- observed on a converged host 2026-08-18 -- so the start mode
     # and running state are set here as well, or nothing downstream can restart it and the
-    # product never reaches a working state. update_password is on_create so a settled
+    # product never reaches a working state. DELAYED auto-start, not plain auto, because that is
+    # what the product's own SetServiceCredentials silently configures (measured 2026-08-20 via
+    # sc qc; WMI hides the distinction): declaring anything else made every credential recording
+    # poison the next converge's comparison, which then "corrected" the mode back and bounced the
+    # service once per fresh build. update_password is on_create so a settled
     # host reports ok rather than rewriting the credential every converge; the module sets the
     # password regardless whenever the account itself changes, so the first converge is complete.
 
@@ -724,7 +693,7 @@
         force_dependent_services: false
         name: "{{ pdq_deploy_running.service_name }}"
         password: "{{ __pdq_deploy_secret__.contents }}"
-        start_mode: 'auto'
+        start_mode: 'delayed'
         state: 'started'
         update_password: 'on_create'
         username: ".\\{{ pdq_deploy_running.service_account.name }}"
@@ -746,12 +715,61 @@
 
     #endregion --- [ Process: Run The Background Service As The Service Account ] ------------- #
 
+    #region ------ [ Process: Record The Service Credential With The Product ] ---------------- #
+    # Setting the account on the Windows service is not enough: the product keeps its OWN record
+    # of that credential, and a console finding it absent runs its initialisation wizard even
+    # though everything else is configured. Measured 2026-08-18 on a host built entirely by this
+    # role -- the service ran as svc-pdq and the product still had no idea. Only the vendor's
+    # command can write it: the value is an encrypted blob, and this is the command whose job
+    # that is.
+    #
+    # The password is fed on STDIN and never appears in an argument. That matters more than it
+    # looks: this image audits process creation WITH command lines, so a password passed as
+    # -Password is written into Security event 4688 and persists in a log that is usually shipped
+    # off the host -- a durable copy of the credential, not a transient one. The tool's own
+    # -SecurePassword reads the console directly and fails when input is redirected, so stdin is
+    # the only headless path that keeps the secret out of both the process table and the log.
+    #
+    # -NoRestart because restarting is the next region's job, not this one's; written only when
+    # the recorded account differs, because the command always writes and always reports success.
+
+    - name: 'PROCESS | Read The Credential The Product Has Recorded'
+      no_log: true
+      register: '__pdq_deploy_recorded_account__'
+
+      ansible.windows.win_reg_stat:
+        name: 'Background Service Username'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Record The Service Credential With The Product'
+      no_log: true
+      register: '__pdq_deploy_recorded__'
+      when: >-
+        __pdq_deploy_recorded_account__.value | default('') | lower | split('\\') | last
+        != pdq_deploy_running.service_account.name | lower
+
+      ansible.windows.win_command:
+        argv:
+          - "{{ pdq_deploy_running.cli_path }}"
+          - 'SetServiceCredentials'
+          - '-Username'
+          - ".\\{{ pdq_deploy_running.service_account.name }}"
+          - '-NoRestart'
+        stdin: "{{ __pdq_deploy_secret__.contents }}"
+
+    #endregion --- [ Process: Record The Service Credential With The Product ] ---------------- #
+
     #region ------ [ Process: Restart The Background Service ] -------------------------------- #
     # Both of the previous regions are inert until this bounce: Windows applies a new logon
     # account only at next start, and the product reads its licence from the registry when the
     # service starts. Gated rather than unconditional because 'restarted' always bounces, and
-    # this is a deployment server -- restarting it on every converge would drop whatever was in
-    # flight. The credential enforcement above cannot trigger it, since changed_when false means
+    # this is a deployment server. The trade, measured across the 2026-08-20 campaign: a settled
+    # host NEVER restarts (some twenty converges, zero bounces), so only a converge that actually
+    # changes server configuration bounces the service -- and the vendor queues deployments while
+    # the service is down rather than losing them. Changing a busy server's configuration is the
+    # operator's timing call, not this role's. The credential enforcement above cannot trigger it, since changed_when false means
     # it never reports changed; that is right, because a rotated password only takes effect at
     # the next start anyway.
 
@@ -761,6 +779,7 @@
         or __pdq_deploy_database__ is changed or __pdq_deploy_mode__ is changed
         or __pdq_deploy_port__ is changed or __pdq_deploy_listen__ is changed
         or __pdq_deploy_listen_addresses__ is changed or __pdq_deploy_rbac__ is changed
+        or __pdq_deploy_recorded__ is changed
 
       ansible.windows.win_service:
         dependency_action: 'set'
@@ -782,6 +801,12 @@
     # logon_type=batch is not decoration: become defaults to an INTERACTIVE logon, and this role
     # denies the service account exactly that (STIG). A batch logon is the one a scheduled task
     # uses, is granted through Administrators, and leaves the two deny rights intact.
+    #
+    # The WRITE below is deliberately not censored: every name and value it handles comes from
+    # the playbook, which is tracked in git -- there is nothing secret to protect, and censoring
+    # cost the one thing a failing setting needs, its name. The READ stays censored because its
+    # output lists every current value, including ones that never came from this repository. The
+    # become password never appears in either task's output; it crosses inside the transport.
     #
     # Read once, write only what differs: 'Settings' with no argument lists every name and
     # value, so a converged host reports no change instead of rewriting the whole declaration.
@@ -815,7 +840,7 @@
       loop: "{{ pdq_deploy_running.settings | dict2items }}"
       loop_control:
         label: "{{ item.key }}"
-      no_log: true
+      no_log: false
       vars:
         ansible_become_flags: 'logon_type=batch'
         ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
@@ -943,6 +968,26 @@
             == pdq_deploy_running.service_account.name | lower
 
     #endregion --- [ End: Prove The Service Runs As The Service Account ] --------------------- #
+
+    #region ------ [ End: Prove The Firewall Admits The Running Binary ] ---------------------- #
+    # The firewall exception is scoped to the executable service_path names, and nothing else
+    # ties that input to reality: point it at the wrong binary and the rule is still written,
+    # the service keeps listening, and every console is refused with no error anywhere. The
+    # service's own record of its binary is already fetched above, so the input is proven
+    # against what is actually running.
+
+    - name: 'END | Prove The Firewall Admits The Running Binary'
+      ansible.builtin.assert:
+        fail_msg: >-
+          The firewall exception admits '{{ pdq_deploy_running.service_path }}' but the
+          service runs '{{ __pdq_deploy_service__.services[0].path }}'. Consoles would be
+          silently refused: the rule matches a binary that is not the one listening.
+        quiet: true
+        that:
+          - pdq_deploy_running.service_path | lower
+            in __pdq_deploy_service__.services[0].path | lower
+
+    #endregion --- [ End: Prove The Firewall Admits The Running Binary ] ---------------------- #
 
 #endregion --- [ End: Install PDQ Deploy on Windows ] ----------------------------------------- #
 

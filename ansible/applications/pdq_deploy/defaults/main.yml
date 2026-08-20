@@ -106,6 +106,10 @@ pdq_deploy_defaults:
   # Deploy and Inventory are co-located and share ONE Background Service User, so the name is
   # product identity rather than a deployment choice. Where its password lives IS deployment
   # specific, so the bucket, object and digest come from the playbook.
+  #
+  # RENAMING does not retire the old account: present converges what is declared and removes
+  # nothing, so the previous name survives as a member of Administrators (measured 2026-08-20).
+  # Retirement is a removal, and removals belong to state=absent -- rename in two steps.
   service_account:
     name: 'svc-pdq'
 
@@ -124,6 +128,11 @@ pdq_deploy_defaults:
   # Central Server, where several consoles read the same files. Shared from a folder rather than
   # the volume root for the same reason the database sits in one -- the share and its directory
   # can then be permissioned independently of the disk.
+  #
+  # RENAMING the share or moving either directory retires nothing: the old share stays published
+  # and old data stays where it was (measured 2026-08-20, including a database the product simply
+  # recreates empty at a new path). Renames and moves are two-step operations through
+  # state=absent, never a silent side effect of present.
   repository:
     directory: 'PDQ Repository'
     share_name: 'AppRepo$'

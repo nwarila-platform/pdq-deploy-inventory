@@ -194,9 +194,7 @@
 
           # What is actually being installed, stated where a reader can see it. The digest is
           # verified on the GUEST immediately before the installer executes, so a changed object
-          # with an unchanged pin stops the deployment. That is also the ONLY moment it is
-          # checked: a converged host never re-fetches, so a rotted pin or object surfaces at the
-          # next version bump, not before -- the pin guards installs, it does not monitor S3.
+          # with an unchanged pin stops the deployment.
           # Each artifact names its own bucket: executables live in the application repository,
           # licences stay beside the other deployment material. Both carry the account id, so they
           # are composed here rather than defaulted in the role.
@@ -243,6 +241,13 @@
           # binding to an address the host does not own fails at service start.
           server:
             listen_addresses: [ "{{ aws_private_ip_address }}" ]
+
+          # Settings are named by the script's parameters, not the product's dotted spelling.
+          # An unlisted name is unmanaged, which is a different thing from one set to the
+          # product's default.
+          settings:
+            DeploymentCleanupDays: 40
+            PerformanceCopyMode: 'Pull'
 
     #endregion --- [ Roles: PDQ Deploy ] ------------------------------------------------------ #
 

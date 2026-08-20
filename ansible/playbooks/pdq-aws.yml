@@ -194,7 +194,9 @@
 
           # What is actually being installed, stated where a reader can see it. The digest is
           # verified on the GUEST immediately before the installer executes, so a changed object
-          # with an unchanged pin stops the deployment.
+          # with an unchanged pin stops the deployment. That is also the ONLY moment it is
+          # checked: a converged host never re-fetches, so a rotted pin or object surfaces at the
+          # next version bump, not before -- the pin guards installs, it does not monitor S3.
           # Each artifact names its own bucket: executables live in the application repository,
           # licences stay beside the other deployment material. Both carry the account id, so they
           # are composed here rather than defaulted in the role.

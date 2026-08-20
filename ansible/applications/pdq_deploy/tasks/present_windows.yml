@@ -793,70 +793,45 @@
     #region ------ [ Process: Apply The Declared Product Settings ] --------------------------- #
     # The product answers its own command line only for the account its service runs as: an
     # administrator and even SYSTEM are refused, because authorisation is a list of console
-    # users and a fresh install has none. Measured 2026-08-18. So every setting is applied AS
+    # users and a fresh install has none. Measured 2026-08-18. So the settings are applied AS
     # the background service user, which needs no seeding because the product already trusts
-    # it. The credential crosses as a become secret rather than on the command line, which the
+    # it. The credential crosses as a become secret rather than on a command line, which the
     # vendor warns is visible in process listings.
     #
-    # logon_type=batch is not decoration: become defaults to an INTERACTIVE logon, and this role
-    # denies the service account exactly that (STIG). A batch logon is the one a scheduled task
-    # uses, is granted through Administrators, and leaves the two deny rights intact.
+    # logon_type=batch is not decoration: become defaults to an INTERACTIVE logon, and this
+    # role denies the service account exactly that (STIG). A batch logon is the one a scheduled
+    # task uses, is granted through Administrators, and leaves the two deny rights intact.
     #
-    # The WRITE below is deliberately not censored: every name and value it handles comes from
-    # the playbook, which is tracked in git -- there is nothing secret to protect, and censoring
-    # cost the one thing a failing setting needs, its name. The READ stays censored because its
-    # output lists every current value, including ones that never came from this repository. The
-    # become password never appears in either task's output; it crosses inside the transport.
+    # A script rather than a loop of command lines, because writing a setting is the easy half.
+    # The product ACCEPTS any name and reports success whether or not it uses it -- measured
+    # 2026-08-20, RepositorySettings.Path inserts a row nothing reads -- so a converge that
+    # trusts an exit code reports changes that never happened. The script exports the product's
+    # own account of its configuration, writes only what differs, exports again, and proves each
+    # name read back as asked; anything that did not is reported and fails the task. It also
+    # knows the one setting whose home is the database rather than the command line. Uncensored
+    # on purpose: every name and value it handles comes from the playbook, which is tracked in
+    # git, and censoring cost the one thing a failing setting needs -- its name.
     #
-    # Read once, write only what differs: 'Settings' with no argument lists every name and
-    # value, so a converged host reports no change instead of rewriting the whole declaration.
-    # A null value is skipped, so a name can be declared without being managed. A name the
-    # product has never stored simply fails to match and is written -- '-Set' inserts a setting
-    # that does not yet exist rather than refusing it, so absent and wrong behave alike.
-    # This runs last because the CLI needs the service up, which the regions above guarantee.
-
-    - name: 'PROCESS | Read The Current Product Settings'
-      become: true
-      become_method: 'ansible.builtin.runas'
-      become_user: "{{ pdq_deploy_running.service_account.name }}"
-      changed_when: false
-      no_log: true
-      register: '__pdq_deploy_settings__'
-      vars:
-        ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
-
-      ansible.windows.win_command:
-        argv:
-          - "{{ pdq_deploy_running.cli_path }}"
-          - 'Settings'
-
-    # ----------------------------------------------------------------------------------------- #
+    # Runs last because the product's command line needs the service up, which the regions
+    # above guarantee. The referenced .ps1 is MATERIALIZED from scripts/ by
+    # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqSetting.ps1.stub);
+    # run it before this role.
 
     - name: 'PROCESS | Apply The Declared Product Settings'
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_deploy_running.service_account.name }}"
-      loop: "{{ pdq_deploy_running.settings | dict2items }}"
-      loop_control:
-        label: "{{ item.key }}"
-      no_log: false
       vars:
         ansible_become_flags: 'logon_type=batch'
         ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
-      when: >-
-        item.value is not none
-        and not (__pdq_deploy_settings__.stdout is search('^' ~ (item.key | regex_escape)
-                 ~ '\s*:\s*' ~ (item.value | string | regex_escape) ~ '\s*$', multiline=True))
+      when: pdq_deploy_running.settings | length > 0
 
-      ansible.windows.win_command:
-        argv:
-          - "{{ pdq_deploy_running.cli_path }}"
-          - 'Settings'
-          - '-Name'
-          - "{{ item.key }}"
-          - '-Set'
-          - "{{ item.value }}"
+      ansible.windows.win_powershell:
+        depth: 3
+        error_action: 'stop'
+        parameters: "{{ pdq_deploy_running.settings }}"
+        remote_src: false
+        script: "{{ lookup('ansible.builtin.file', 'Set-PdqSetting.ps1') }}"
 
     #endregion --- [ Process: Apply The Declared Product Settings ] --------------------------- #
 

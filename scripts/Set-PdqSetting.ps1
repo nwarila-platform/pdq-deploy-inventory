@@ -4,280 +4,78 @@
 
 <#
     .SYNOPSIS
-        Applies a set of PDQ preferences in one pass and proves each one took.
+        Applies a set of PDQ settings in one pass and proves each one took.
 
     .DESCRIPTION
-        PDQ keeps its preferences behind a command line that writes them one at
-        a time, and a key-value store that accepts ANY name whether the product
-        reads it or not. Setting a name the product does not read reports
-        success, inserts a row, and changes nothing -- measured 2026-08-18 with
-        RepositorySettings.Path, which the product reads from a system variable
+        PDQ keeps its settings behind a command line that writes them one at a time, and a
+        key-value store that accepts ANY name whether the product reads it or not. Setting a name
+        the product does not read reports success, inserts a row, and changes nothing -- measured
+        2026-08-20 with RepositorySettings.Path, which the product reads from a system variable
         instead. A caller that trusts the exit code cannot tell the difference.
 
-        A few settings are not reachable that way at all. The repository is a
-        built-in system variable, and the command line has no surface for
-        built-ins, so it is written into the product's own database instead.
-        Which mechanism a setting needs is data, not a special case, and the
-        proof afterwards is the same for both.
-
-        This script closes that gap by treating the product's own export as the
-        only account of what is configured. It exports once to learn the current
-        values, writes only the settings that differ, exports again, and
-        verifies every requested setting now reads back as asked. A setting that
-        did not take is reported as ignored and fails the run rather than being
+        This script closes that gap by treating the product's own export as the only account of
+        what is configured. It exports once to learn the current values, writes only the settings
+        that differ, exports again, and verifies every requested setting now reads back as asked.
+        A setting that did not take is reported as ignored and fails the run rather than being
         counted as applied.
 
-        Doing it here rather than task-by-task also collapses one round trip per
-        setting into two exports and N writes, which matters when a deployment
-        declares dozens.
+        Doing it here rather than task-by-task also collapses one round trip per setting into two
+        exports and N writes, which matters when a deployment declares dozens.
 
-        The product can only export to a FILE -- there is no stdout or in-memory
-        form -- so each export is read into memory and deleted immediately,
-        leaving it on disk for the write plus one read. Nothing secret is in it:
-        the export carries user names for mail, proxy and integrations, and no
-        password, token or secret element of any kind.
+        The product can only export to a FILE -- there is no stdout or in-memory form -- so each
+        export is read into memory and deleted immediately, leaving it on disk for the write plus
+        one read. Nothing secret is in it: the export carries user names for mail, proxy and
+        integrations, and no password, token or secret element of any kind.
 
-        Org scripts are a single straightforward process stage in the org script
-        template's architecture: one [ Script ] region carrying
-        [ Initialization ] (strict mode, transport detection, input
-        normalization), [ Main ] (read -> act -> verify -> build ONE result
+        WHAT IS SETTABLE, and how, is the SETTINGS table below rather than a parameter apiece.
+        The table is the whole contract: which names exist, what type each takes, which values an
+        enumerated one allows, and which of them lives in the product's database instead of on
+        its command line. Declaring the surface as data rather than as sixty-odd parameter
+        attributes keeps the file readable in one pass and small enough for the transport to log,
+        and the caller's experience is unchanged -- it passes the same map of names to values
+        either way.
+
+        Only the families the product's SERVICE reads are offered. The console-side pages --
+        alerts, interface, printing, log verbosity, target filters -- live in a per-user registry
+        hive that no converge can reach, so a name for them here would be a promise the product
+        does not keep.
+
+        Org scripts are a single straightforward process stage in the org script template's
+        architecture: one [ Script ] region carrying [ Initialization ] (strict mode, transport
+        detection, input normalization), [ Main ] (read -> act -> verify -> build ONE result
         object), and [ Output ] (the same object to $Ansible or as JSON).
 
-        One parameter per setting, all optional. A parameter the caller does not
-        pass is not managed -- which is a different thing from one set to the
-        product's default -- so a deployment states only what it means to own.
-        Ansible expresses the same idea with default(omit).
-
-        Run 'PDQDeploy ExportSettings -Path settings.xml' on a configured host
-        to see every name the product publishes; adding one here is a parameter
-        and a row in SETTING_NAMES.
-
-        Shipped by the org three-file convention: developed under scripts/ with
-        its sibling Set-PdqSetting.pester.ps1 spec, while the pdq_deploy role
-        carries files/Set-PdqSetting.ps1.stub, which the build resolves by
-        dropping this file into the role.
+        Shipped by the org three-file convention: developed under scripts/ with its sibling
+        Set-PdqSetting.pester.ps1 spec, while the pdq_deploy role carries
+        files/Set-PdqSetting.ps1.stub, which the build resolves by dropping this file into the
+        role.
 
     .PARAMETER DebugLevel
-        Three-digit control string configuring independent debugging
-        functions, one digit each. First digit: ErrorActionPreference
-        (0 SilentlyContinue, 1 Stop, 2 Continue, 3 Inquire, 4 Ignore,
-        5 Suspend). Second digit: Set-PSDebug (0 off, 1 trace 1, 2 trace 2,
-        3 trace 1 + step, 4 trace 2 + step). Third digit: Set-StrictMode
-        (0 off, 1-3 that version). Default '103': stop on error, no tracing,
-        strict mode 3.
+        Three-digit control string configuring independent debugging functions, one digit each.
+        First digit: ErrorActionPreference (0 SilentlyContinue, 1 Stop, 2 Continue, 3 Inquire,
+        4 Ignore, 5 Suspend). Second digit: Set-PSDebug (0 off, 1 trace 1, 2 trace 2,
+        3 trace 1 + step, 4 trace 2 + step). Third digit: Set-StrictMode (0 off, 1-3 that
+        version). Default '103': stop on error, no tracing, strict mode 3.
 
     .PARAMETER LogLevel
-        Six-digit control string setting the preference for each stream, in
-        the order Verbose, Debug, Information, Warning, Error, Fatal. Each
-        digit is an ActionPreference (0 SilentlyContinue, 1 Stop, 2 Continue,
-        3 Inquire, 4 Ignore, 5 Suspend).
-
-    .PARAMETER PackageLibraryAutoDeployDefaultApprovalMode
-        Package Library. Product setting AutoDeployDefaultSettings.ApprovalMode.
-
-    .PARAMETER PackageLibraryAutoDeployDefaultDelayedApprovalTimeSpan
-        Package Library. Product setting AutoDeployDefaultSettings.DelayedApprovalTimeSpan. Name inferred from the export, not yet proven.
-
-    .PARAMETER PackageLibraryAutoDeployDefaultIsEnabled
-        Package Library. Product setting AutoDeployDefaultSettings.IsEnabled. Name inferred from the export, not yet proven.
-
-    .PARAMETER PackageLibraryAutoDownloadArchiveCopiesToKeep
-        Package Library. Product setting AutoDownloadArchiveSettings.CopiesToKeep.
-
-    .PARAMETER PackageLibraryAutoDownloadArchiveIsArchiving
-        Package Library. Product setting AutoDownloadArchiveSettings.IsArchiving. Name inferred from the export, not yet proven.
-
-    .PARAMETER DatabaseDatabaseBackupBackupDirectory
-        Database. Product setting DatabaseBackupSettings.BackupDirectory.
-
-    .PARAMETER DatabaseDatabaseBackupCompress
-        Database. Product setting DatabaseBackupSettings.Compress. Name inferred from the export, not yet proven.
-
-    .PARAMETER DatabaseDatabaseBackupIsEnabled
-        Database. Product setting DatabaseBackupSettings.IsEnabled. Name inferred from the export, not yet proven.
-
-    .PARAMETER DatabaseDatabaseBackupKeep
-        Database. Product setting DatabaseBackupSettings.Keep.
-
-    .PARAMETER DeploymentCleanupDays
-        Deployment. Product setting DeploymentSettings.CleanupDays.
-
-    .PARAMETER DeploymentComputerTimeout
-        Deployment. Product setting DeploymentSettings.ComputerTimeout.
-
-    .PARAMETER DeploymentInventoryScanProfileId
-        Deployment. Product setting DeploymentSettings.InventoryScanProfileId. Name inferred from the export, not yet proven.
-
-    .PARAMETER DeploymentRunAs
-        Deployment. Product setting DeploymentSettings.RunAs. Name inferred from the export, not yet proven.
-
-    .PARAMETER DeploymentScanAfterDeployment
-        Deployment. Product setting DeploymentSettings.ScanAfterDeployment. Name inferred from the export, not yet proven.
-
-    .PARAMETER DeploymentOfflineRetryMaxTries
-        Deployment. Product setting OfflineSettings.RetryMaxTries.
-
-    .PARAMETER DeploymentOfflineUsePing
-        Deployment. Product setting OfflineSettings.UsePing. Name inferred from the export, not yet proven.
-
-    .PARAMETER DeploymentOfflineTryWol
-        Deployment. Product setting OfflineSettings.TryWol. Name inferred from the export, not yet proven.
-
-    .PARAMETER DeploymentOfflineIsRetryEnabled
-        Deployment. Product setting OfflineSettings.IsRetryEnabled. Name inferred from the export, not yet proven.
-
-    .PARAMETER DeploymentOfflineRetryInterval
-        Deployment. Product setting OfflineSettings.RetryInterval. Name inferred from the export, not yet proven.
-
-    .PARAMETER LoggingSentryCanSendAnonymousExceptionData
-        Logging. Product setting SentrySettings.CanSendAnonymousExceptionData. Name inferred from the export, not yet proven.
-
-    .PARAMETER LoggingAuditLogMinDaysRecordsKept
-        Logging. Product setting AuditLogSettings.MinDaysRecordsKept. Name inferred from the export, not yet proven.
-
-    .PARAMETER LoggingAuditLogMaxDaysRecordsKept
-        Logging. Product setting AuditLogSettings.MaxDaysRecordsKept. Name inferred from the export, not yet proven.
-
-    .PARAMETER LoggingAuditLogMinNumArchivedFiles
-        Logging. Product setting AuditLogSettings.MinNumArchivedFiles. Name inferred from the export, not yet proven.
-
-    .PARAMETER LoggingAuditLogMaxNumArchivedFiles
-        Logging. Product setting AuditLogSettings.MaxNumArchivedFiles. Name inferred from the export, not yet proven.
-
-    .PARAMETER LoggingAuditLogVerboseFileName
-        Logging. Product setting AuditLogSettings.VerboseFileName. Name inferred from the export, not yet proven.
-
-    .PARAMETER LoggingAuditLogDaysRecordsKept
-        Logging. Product setting AuditLogSettings.DaysRecordsKept.
-
-    .PARAMETER LoggingAuditLogWriteVerboseFile
-        Logging. Product setting AuditLogSettings.WriteVerboseFile. Name inferred from the export, not yet proven.
-
-    .PARAMETER LoggingAuditLogLoadCustomConfig
-        Logging. Product setting AuditLogSettings.LoadCustomConfig. Name inferred from the export, not yet proven.
-
-    .PARAMETER LoggingAuditLogVerboseFileDirectory
-        Logging. Product setting AuditLogSettings.VerboseFileDirectory. Name inferred from the export, not yet proven.
-
-    .PARAMETER LoggingAuditLogCustomConfigPath
-        Logging. Product setting AuditLogSettings.CustomConfigPath. Name inferred from the export, not yet proven.
-
-    .PARAMETER LoggingAuditLogNumArchivedFiles
-        Logging. Product setting AuditLogSettings.NumArchivedFiles. Name inferred from the export, not yet proven.
-
-    .PARAMETER LoggingAuditLogArchiveSchedule
-        Logging. Product setting AuditLogSettings.ArchiveSchedule. Name inferred from the export, not yet proven.
-
-    .PARAMETER MailServerEnableSSL
-        Mail Server. Product setting MailServerSettings.EnableSSL. Name inferred from the export, not yet proven.
-
-    .PARAMETER MailServerHost
-        Mail Server. Product setting MailServerSettings.Host.
-
-    .PARAMETER MailServerSender
-        Mail Server. Product setting MailServerSettings.Sender. Name inferred from the export, not yet proven.
-
-    .PARAMETER MailServerUser
-        Mail Server. Product setting MailServerSettings.User. Name inferred from the export, not yet proven.
-
-    .PARAMETER MailServerOAuth2ClientId
-        Mail Server. Product setting MailServerSettings.OAuth2ClientId. Name inferred from the export, not yet proven.
-
-    .PARAMETER MailServerOAuth2TenantId
-        Mail Server. Product setting MailServerSettings.OAuth2TenantId. Name inferred from the export, not yet proven.
-
-    .PARAMETER MailServerOAuth2RedirectUri
-        Mail Server. Product setting MailServerSettings.OAuth2RedirectUri. Name inferred from the export, not yet proven.
-
-    .PARAMETER MailServerOAuth2Provider
-        Mail Server. Product setting MailServerSettings.OAuth2Provider. Name inferred from the export, not yet proven.
-
-    .PARAMETER MailServerOAuth2Sender
-        Mail Server. Product setting MailServerSettings.OAuth2Sender. Name inferred from the export, not yet proven.
-
-    .PARAMETER MailServerMSGraphAPIClientId
-        Mail Server. Product setting MailServerSettings.MSGraphAPIClientId. Name inferred from the export, not yet proven.
-
-    .PARAMETER MailServerMSGraphAPITenantId
-        Mail Server. Product setting MailServerSettings.MSGraphAPITenantId. Name inferred from the export, not yet proven.
-
-    .PARAMETER MailServerMSGraphAPICloudHostUrl
-        Mail Server. Product setting MailServerSettings.MSGraphAPICloudHostUrl. Name inferred from the export, not yet proven.
-
-    .PARAMETER MailServerMSGraphAPISender
-        Mail Server. Product setting MailServerSettings.MSGraphAPISender. Name inferred from the export, not yet proven.
-
-    .PARAMETER PerformanceBandwidthLimitPercent
-        Performance. Product setting PerformanceSettings.BandwidthLimitPercent. Name inferred from the export, not yet proven.
-
-    .PARAMETER PerformanceCopyMode
-        Performance. Product setting PerformanceSettings.CopyMode.
-
-    .PARAMETER PerformanceMaxDeploymentThreads
-        Performance. Product setting PerformanceSettings.MaxDeploymentThreads.
-
-    .PARAMETER PerformanceMaxServerThreads
-        Performance. Product setting PerformanceSettings.MaxServerThreads. Name inferred from the export, not yet proven.
-
-    .PARAMETER PerformanceCredentialBatchSize
-        Performance. Product setting PerformanceSettings.CredentialBatchSize. Name inferred from the export, not yet proven.
-
-    .PARAMETER PerformanceIntegrationMessageTimeoutSeconds
-        Performance. Product setting PerformanceSettings.IntegrationMessageTimeoutSeconds. Name inferred from the export, not yet proven.
-
-    .PARAMETER ProxyHostName
-        Proxy. Product setting ProxySettings.HostName. Name inferred from the export, not yet proven.
-
-    .PARAMETER ProxyPort
-        Proxy. Product setting ProxySettings.Port.
-
-    .PARAMETER ProxyUserName
-        Proxy. Product setting ProxySettings.UserName. Name inferred from the export, not yet proven.
-
-    .PARAMETER ProxyUseSystemHost
-        Proxy. Product setting ProxySettings.UseSystemHost. Name inferred from the export, not yet proven.
-
-    .PARAMETER RepositoryEnableUnusedFilesWarning
-        Repository. Product setting RepositorySettings.EnableUnusedFilesWarning.
-
-    .PARAMETER RepositoryExclusions
-        Repository. Product setting RepositorySettings.Exclusions. Name inferred from the export, not yet proven.
-
-    .PARAMETER RepositoryPath
-        Repository. Product setting RepositorySettings.Path. Written to the product database, not the command line; see DATABASE_SETTINGS.
-
-    .PARAMETER SpiceworksHostName
-        Spiceworks. Product setting SpiceworksSettings.HostName. Name inferred from the export, not yet proven.
-
-    .PARAMETER SpiceworksIsEnabled
-        Spiceworks. Product setting SpiceworksSettings.IsEnabled. Name inferred from the export, not yet proven.
-
-    .PARAMETER SpiceworksPort
-        Spiceworks. Product setting SpiceworksSettings.Port.
-
-    .PARAMETER SpiceworksSyncInterval
-        Spiceworks. Product setting SpiceworksSettings.SyncInterval. Name inferred from the export, not yet proven.
-
-    .PARAMETER SpiceworksUserName
-        Spiceworks. Product setting SpiceworksSettings.UserName. Name inferred from the export, not yet proven.
-
-    .PARAMETER SpiceworksUseSSL
-        Spiceworks. Product setting SpiceworksSettings.UseSSL. Name inferred from the export, not yet proven.
-
-    .PARAMETER TargetServiceRemoteDirectory
-        Target Service. Product setting TargetServiceSettings.RemoteDirectory.
-
-    .PARAMETER TargetServiceSharePath
-        Target Service. Product setting TargetServiceSettings.SharePath. Name inferred from the export, not yet proven.
-
-    .PARAMETER AnalyticsCollectAnalyticsUsage
-        Analytics. Product setting AnalyticsSettings.CollectAnalyticsUsage.
-
-    .PARAMETER AnalyticsAlertFirstTimeAnalyticsDialog
-        Analytics. Product setting AnalyticsSettings.AlertFirstTimeAnalyticsDialog.
+        Six-digit control string setting the preference for each stream, in the order Verbose,
+        Debug, Information, Warning, Error, Fatal. Each digit is an ActionPreference
+        (0 SilentlyContinue, 1 Stop, 2 Continue, 3 Inquire, 4 Ignore, 5 Suspend).
+
+    .PARAMETER Setting
+        The settings to apply, as a map of NAME to desired value, where every name is one of the
+        Param entries in the SETTINGS table. A name absent from the map is not managed -- which
+        is a different thing from one set to the product's default -- so a deployment states only
+        what it means to own. A name the table does not carry is a typo and fails the run: it
+        would otherwise be a silent no-op that looks like success.
+
+        Values keep the types the caller supplied. Ansible's win_powershell passes this map
+        through as a Hashtable with numbers, strings and booleans intact (measured 2026-08-20),
+        so a setting typed Int32 in the table is checked against an actual integer rather than a
+        re-parsed string.
 
     .EXAMPLE
-        .\Set-PdqSetting.ps1 -DeploymentCleanupDays 45 -PerformanceCopyMode 'Pull'
+        .\Set-PdqSetting.ps1 -Setting @{ DeploymentCleanupDays = 45; PerformanceCopyMode = 'Pull' }
 
     .OUTPUTS
         One object carrying applied, unchanged, ignored, changed and msg.
@@ -286,708 +84,16 @@
 [CmdletBinding()]
 [OutputType([System.Void])]
 Param (
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
+  [Parameter(DontShow = $False, Mandatory = $False, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
   [ValidatePattern('^[0-5][0-4][0-3]$')]
-  [System.String]
-  $DebugLevel = '103',
+  [System.String] $DebugLevel = '103',
 
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
+  [Parameter(DontShow = $False, Mandatory = $False, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
   [ValidatePattern('^[0-5]{6}$')]
-  [System.String]
-  $LogLevel = '002223',
+  [System.String] $LogLevel = '002223',
 
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $PackageLibraryAutoDeployDefaultApprovalMode,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $PackageLibraryAutoDeployDefaultDelayedApprovalTimeSpan,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $PackageLibraryAutoDeployDefaultIsEnabled,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $PackageLibraryAutoDownloadArchiveCopiesToKeep,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $PackageLibraryAutoDownloadArchiveIsArchiving,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $DatabaseDatabaseBackupBackupDirectory,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $DatabaseDatabaseBackupCompress,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $DatabaseDatabaseBackupIsEnabled,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $DatabaseDatabaseBackupKeep,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $DeploymentCleanupDays,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $DeploymentComputerTimeout,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $DeploymentInventoryScanProfileId,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $DeploymentRunAs,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $DeploymentScanAfterDeployment,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $DeploymentOfflineRetryMaxTries,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $DeploymentOfflineUsePing,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $DeploymentOfflineTryWol,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $DeploymentOfflineIsRetryEnabled,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $DeploymentOfflineRetryInterval,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $LoggingSentryCanSendAnonymousExceptionData,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $LoggingAuditLogMinDaysRecordsKept,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $LoggingAuditLogMaxDaysRecordsKept,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $LoggingAuditLogMinNumArchivedFiles,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $LoggingAuditLogMaxNumArchivedFiles,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $LoggingAuditLogVerboseFileName,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $LoggingAuditLogDaysRecordsKept,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $LoggingAuditLogWriteVerboseFile,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $LoggingAuditLogLoadCustomConfig,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $LoggingAuditLogVerboseFileDirectory,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $LoggingAuditLogCustomConfigPath,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $LoggingAuditLogNumArchivedFiles,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $LoggingAuditLogArchiveSchedule,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $MailServerEnableSSL,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $MailServerHost,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $MailServerSender,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $MailServerUser,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $MailServerOAuth2ClientId,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $MailServerOAuth2TenantId,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $MailServerOAuth2RedirectUri,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $MailServerOAuth2Provider,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $MailServerOAuth2Sender,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $MailServerMSGraphAPIClientId,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $MailServerMSGraphAPITenantId,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $MailServerMSGraphAPICloudHostUrl,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $MailServerMSGraphAPISender,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $PerformanceBandwidthLimitPercent,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [ValidateSet('Push', 'Pull')]
-  [System.String]
-  $PerformanceCopyMode,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $PerformanceMaxDeploymentThreads,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $PerformanceMaxServerThreads,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $PerformanceCredentialBatchSize,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $PerformanceIntegrationMessageTimeoutSeconds,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $ProxyHostName,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $ProxyPort,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $ProxyUserName,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $ProxyUseSystemHost,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $RepositoryEnableUnusedFilesWarning,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $RepositoryExclusions,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $RepositoryPath,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $SpiceworksHostName,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $SpiceworksIsEnabled,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Int32]
-  $SpiceworksPort,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $SpiceworksSyncInterval,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $SpiceworksUserName,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $SpiceworksUseSSL,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $TargetServiceRemoteDirectory,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.String]
-  $TargetServiceSharePath,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $AnalyticsCollectAnalyticsUsage,
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Boolean]
-  $AnalyticsAlertFirstTimeAnalyticsDialog
+  [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
+  [System.Collections.IDictionary] $Setting
 )
 
 #region ------ [ Script ] -------------------------------------------------------------------- #
@@ -1000,109 +106,100 @@ New-Variable -Force -Name:'LOG_LEVELS' -Option:('Private', 'ReadOnly') -Value:(
   [System.String[]]@('Verbose', 'Debug', 'Information', 'Warning', 'Error', 'Fatal')
 )
 
-# The product's command line, and where its export is staged. Both are fixed,
-# not offered: the installer ignores every documented way to relocate the
-# product -- INSTALLLOCATION, APPLICATIONFOLDER and /p were each measured
-# accepted and ignored on 2026-08-18 -- so a path parameter would advertise a
-# choice that does not exist.
+# The product's command line, its sqlite tool, and where its export is staged. All fixed, not
+# offered: the installer ignores every documented way to relocate the product -- INSTALLLOCATION,
+# APPLICATIONFOLDER and /p were each measured accepted and ignored on 2026-08-18 -- so a path
+# parameter would advertise a choice that does not exist.
 New-Variable -Force -Name:'CLI_PATH' -Option:('Private', 'ReadOnly') -Value:(
   [System.String]'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
+)
+New-Variable -Force -Name:'SQLITE_PATH' -Option:('Private', 'ReadOnly') -Value:(
+  [System.String]'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\sqlite3.exe'
 )
 New-Variable -Force -Name:'EXPORT_PATH' -Option:('Private', 'ReadOnly') -Value:(
   [System.String]'C:\Windows\Temp\pdq-settings-export.xml'
 )
 
-# The product ships the sqlite tool it uses on its own database.
-New-Variable -Force -Name:'SQLITE_PATH' -Option:('Private', 'ReadOnly') -Value:(
-  [System.String]'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\sqlite3.exe'
-)
-
-# A few settings are system VARIABLES rather than settings, and the command line has no surface
-# for built-in ones: its variable commands carry custom variables only, which is why exporting
-# them on a host with thirteen system variables reports none found. Measured 2026-08-20, writing
-# the row directly is honoured with the service running and takes effect at once. Mapped here
-# rather than special-cased in the flow, so the difference is one row of data.
-New-Variable -Force -Name:'DATABASE_SETTINGS' -Option:('Private', 'ReadOnly') -Value:(
-  [System.Collections.Hashtable]@{
-    'RepositorySettings.Path' = 'Repository'
-  }
-)
-
-# Each parameter names one product setting. The product spells them with a dot
-# and a section that sometimes carries a view model; the parameters do not, so
-# the two are joined here rather than derived by a rule that would eventually
-# meet a name that breaks it. Adding a setting is a parameter and a row.
-New-Variable -Force -Name:'SETTING_NAMES' -Option:('Private', 'ReadOnly') -Value:(
-  [System.Collections.Hashtable]@{
-    'PackageLibraryAutoDeployDefaultApprovalMode'            = 'AutoDeployDefaultSettings.ApprovalMode'
-    'PackageLibraryAutoDeployDefaultDelayedApprovalTimeSpan' = 'AutoDeployDefaultSettings.DelayedApprovalTimeSpan'
-    'PackageLibraryAutoDeployDefaultIsEnabled'               = 'AutoDeployDefaultSettings.IsEnabled'
-    'PackageLibraryAutoDownloadArchiveCopiesToKeep'          = 'AutoDownloadArchiveSettings.CopiesToKeep'
-    'PackageLibraryAutoDownloadArchiveIsArchiving'           = 'AutoDownloadArchiveSettings.IsArchiving'
-    'DatabaseDatabaseBackupBackupDirectory'                  = 'DatabaseBackupSettings.BackupDirectory'
-    'DatabaseDatabaseBackupCompress'                         = 'DatabaseBackupSettings.Compress'
-    'DatabaseDatabaseBackupIsEnabled'                        = 'DatabaseBackupSettings.IsEnabled'
-    'DatabaseDatabaseBackupKeep'                             = 'DatabaseBackupSettings.Keep'
-    'DeploymentCleanupDays'                                  = 'DeploymentSettings.CleanupDays'
-    'DeploymentComputerTimeout'                              = 'DeploymentSettings.ComputerTimeout'
-    'DeploymentInventoryScanProfileId'                       = 'DeploymentSettings.InventoryScanProfileId'
-    'DeploymentRunAs'                                        = 'DeploymentSettings.RunAs'
-    'DeploymentScanAfterDeployment'                          = 'DeploymentSettings.ScanAfterDeployment'
-    'DeploymentOfflineRetryMaxTries'                         = 'OfflineSettings.RetryMaxTries'
-    'DeploymentOfflineUsePing'                               = 'OfflineSettings.UsePing'
-    'DeploymentOfflineTryWol'                                = 'OfflineSettings.TryWol'
-    'DeploymentOfflineIsRetryEnabled'                        = 'OfflineSettings.IsRetryEnabled'
-    'DeploymentOfflineRetryInterval'                         = 'OfflineSettings.RetryInterval'
-    'LoggingSentryCanSendAnonymousExceptionData'             = 'SentrySettings.CanSendAnonymousExceptionData'
-    'LoggingAuditLogMinDaysRecordsKept'                      = 'AuditLogSettings.MinDaysRecordsKept'
-    'LoggingAuditLogMaxDaysRecordsKept'                      = 'AuditLogSettings.MaxDaysRecordsKept'
-    'LoggingAuditLogMinNumArchivedFiles'                     = 'AuditLogSettings.MinNumArchivedFiles'
-    'LoggingAuditLogMaxNumArchivedFiles'                     = 'AuditLogSettings.MaxNumArchivedFiles'
-    'LoggingAuditLogVerboseFileName'                         = 'AuditLogSettings.VerboseFileName'
-    'LoggingAuditLogDaysRecordsKept'                         = 'AuditLogSettings.DaysRecordsKept'
-    'LoggingAuditLogWriteVerboseFile'                        = 'AuditLogSettings.WriteVerboseFile'
-    'LoggingAuditLogLoadCustomConfig'                        = 'AuditLogSettings.LoadCustomConfig'
-    'LoggingAuditLogVerboseFileDirectory'                    = 'AuditLogSettings.VerboseFileDirectory'
-    'LoggingAuditLogCustomConfigPath'                        = 'AuditLogSettings.CustomConfigPath'
-    'LoggingAuditLogNumArchivedFiles'                        = 'AuditLogSettings.NumArchivedFiles'
-    'LoggingAuditLogArchiveSchedule'                         = 'AuditLogSettings.ArchiveSchedule'
-    'MailServerEnableSSL'                                    = 'MailServerSettings.EnableSSL'
-    'MailServerHost'                                         = 'MailServerSettings.Host'
-    'MailServerSender'                                       = 'MailServerSettings.Sender'
-    'MailServerUser'                                         = 'MailServerSettings.User'
-    'MailServerOAuth2ClientId'                               = 'MailServerSettings.OAuth2ClientId'
-    'MailServerOAuth2TenantId'                               = 'MailServerSettings.OAuth2TenantId'
-    'MailServerOAuth2RedirectUri'                            = 'MailServerSettings.OAuth2RedirectUri'
-    'MailServerOAuth2Provider'                               = 'MailServerSettings.OAuth2Provider'
-    'MailServerOAuth2Sender'                                 = 'MailServerSettings.OAuth2Sender'
-    'MailServerMSGraphAPIClientId'                           = 'MailServerSettings.MSGraphAPIClientId'
-    'MailServerMSGraphAPITenantId'                           = 'MailServerSettings.MSGraphAPITenantId'
-    'MailServerMSGraphAPICloudHostUrl'                       = 'MailServerSettings.MSGraphAPICloudHostUrl'
-    'MailServerMSGraphAPISender'                             = 'MailServerSettings.MSGraphAPISender'
-    'PerformanceBandwidthLimitPercent'                       = 'PerformanceSettings.BandwidthLimitPercent'
-    'PerformanceCopyMode'                                    = 'PerformanceSettings.CopyMode'
-    'PerformanceMaxDeploymentThreads'                        = 'PerformanceSettings.MaxDeploymentThreads'
-    'PerformanceMaxServerThreads'                            = 'PerformanceSettings.MaxServerThreads'
-    'PerformanceCredentialBatchSize'                         = 'PerformanceSettings.CredentialBatchSize'
-    'PerformanceIntegrationMessageTimeoutSeconds'            = 'PerformanceSettings.IntegrationMessageTimeoutSeconds'
-    'ProxyHostName'                                          = 'ProxySettings.HostName'
-    'ProxyPort'                                              = 'ProxySettings.Port'
-    'ProxyUserName'                                          = 'ProxySettings.UserName'
-    'ProxyUseSystemHost'                                     = 'ProxySettings.UseSystemHost'
-    'RepositoryEnableUnusedFilesWarning'                     = 'RepositorySettings.EnableUnusedFilesWarning'
-    'RepositoryExclusions'                                   = 'RepositorySettings.Exclusions'
-    'RepositoryPath'                                         = 'RepositorySettings.Path'
-    'SpiceworksHostName'                                     = 'SpiceworksSettings.HostName'
-    'SpiceworksIsEnabled'                                    = 'SpiceworksSettings.IsEnabled'
-    'SpiceworksPort'                                         = 'SpiceworksSettings.Port'
-    'SpiceworksSyncInterval'                                 = 'SpiceworksSettings.SyncInterval'
-    'SpiceworksUserName'                                     = 'SpiceworksSettings.UserName'
-    'SpiceworksUseSSL'                                       = 'SpiceworksSettings.UseSSL'
-    'TargetServiceRemoteDirectory'                           = 'TargetServiceSettings.RemoteDirectory'
-    'TargetServiceSharePath'                                 = 'TargetServiceSettings.SharePath'
-    'AnalyticsCollectAnalyticsUsage'                         = 'AnalyticsSettings.CollectAnalyticsUsage'
-    'AnalyticsAlertFirstTimeAnalyticsDialog'                 = 'AnalyticsSettings.AlertFirstTimeAnalyticsDialog'
-  }
+# The settable surface, as data. Param is the name a caller uses; Name is the product's own,
+# which the export publishes as an element and its parent joined by a dot. Type is checked
+# against what the caller actually passed. Allowed, where present, is the complete set of legal
+# values. Variable marks the settings the command line cannot reach at all: those are system
+# VARIABLES, and the product's variable commands carry CUSTOM ones only, so they are written
+# into its database instead -- honoured with the service running and effective at once (measured
+# 2026-08-20). Names flagged inferred were derived from the export's shape rather than proven by
+# writing one; the verification pass is what decides, so a wrong guess fails loudly instead of
+# passing quietly.
+New-Variable -Force -Name:'SETTINGS' -Option:('Private', 'ReadOnly') -Value:(
+  [System.Collections.Hashtable[]]@(
+    @{ Param = 'PackageLibraryAutoDeployDefaultApprovalMode'           ; Name = 'AutoDeployDefaultSettings.ApprovalMode'              ; Type = 'String' }
+    @{ Param = 'PackageLibraryAutoDeployDefaultDelayedApprovalTimeSpan'; Name = 'AutoDeployDefaultSettings.DelayedApprovalTimeSpan'   ; Type = 'String' }   # inferred
+    @{ Param = 'PackageLibraryAutoDeployDefaultIsEnabled'              ; Name = 'AutoDeployDefaultSettings.IsEnabled'                 ; Type = 'Boolean' }   # inferred
+    @{ Param = 'PackageLibraryAutoDownloadArchiveCopiesToKeep'         ; Name = 'AutoDownloadArchiveSettings.CopiesToKeep'            ; Type = 'Int32' }
+    @{ Param = 'PackageLibraryAutoDownloadArchiveIsArchiving'          ; Name = 'AutoDownloadArchiveSettings.IsArchiving'             ; Type = 'Boolean' }   # inferred
+    @{ Param = 'DatabaseDatabaseBackupBackupDirectory'                 ; Name = 'DatabaseBackupSettings.BackupDirectory'              ; Type = 'String' }
+    @{ Param = 'DatabaseDatabaseBackupCompress'                        ; Name = 'DatabaseBackupSettings.Compress'                     ; Type = 'Boolean' }   # inferred
+    @{ Param = 'DatabaseDatabaseBackupIsEnabled'                       ; Name = 'DatabaseBackupSettings.IsEnabled'                    ; Type = 'Boolean' }   # inferred
+    @{ Param = 'DatabaseDatabaseBackupKeep'                            ; Name = 'DatabaseBackupSettings.Keep'                         ; Type = 'Int32' }
+    @{ Param = 'DeploymentCleanupDays'                                 ; Name = 'DeploymentSettings.CleanupDays'                      ; Type = 'Int32' }
+    @{ Param = 'DeploymentComputerTimeout'                             ; Name = 'DeploymentSettings.ComputerTimeout'                  ; Type = 'Int32' }
+    @{ Param = 'DeploymentInventoryScanProfileId'                      ; Name = 'DeploymentSettings.InventoryScanProfileId'           ; Type = 'String' }   # inferred
+    @{ Param = 'DeploymentRunAs'                                       ; Name = 'DeploymentSettings.RunAs'                            ; Type = 'String' }   # inferred
+    @{ Param = 'DeploymentScanAfterDeployment'                         ; Name = 'DeploymentSettings.ScanAfterDeployment'              ; Type = 'Boolean' }   # inferred
+    @{ Param = 'DeploymentOfflineRetryMaxTries'                        ; Name = 'OfflineSettings.RetryMaxTries'                       ; Type = 'Int32' }
+    @{ Param = 'DeploymentOfflineUsePing'                              ; Name = 'OfflineSettings.UsePing'                             ; Type = 'Boolean' }   # inferred
+    @{ Param = 'DeploymentOfflineTryWol'                               ; Name = 'OfflineSettings.TryWol'                              ; Type = 'Boolean' }   # inferred
+    @{ Param = 'DeploymentOfflineIsRetryEnabled'                       ; Name = 'OfflineSettings.IsRetryEnabled'                      ; Type = 'Boolean' }   # inferred
+    @{ Param = 'DeploymentOfflineRetryInterval'                        ; Name = 'OfflineSettings.RetryInterval'                       ; Type = 'String' }   # inferred
+    @{ Param = 'LoggingSentryCanSendAnonymousExceptionData'            ; Name = 'SentrySettings.CanSendAnonymousExceptionData'        ; Type = 'Boolean' }   # inferred
+    @{ Param = 'LoggingAuditLogMinDaysRecordsKept'                     ; Name = 'AuditLogSettings.MinDaysRecordsKept'                 ; Type = 'Int32' }   # inferred
+    @{ Param = 'LoggingAuditLogMaxDaysRecordsKept'                     ; Name = 'AuditLogSettings.MaxDaysRecordsKept'                 ; Type = 'Int32' }   # inferred
+    @{ Param = 'LoggingAuditLogMinNumArchivedFiles'                    ; Name = 'AuditLogSettings.MinNumArchivedFiles'                ; Type = 'Int32' }   # inferred
+    @{ Param = 'LoggingAuditLogMaxNumArchivedFiles'                    ; Name = 'AuditLogSettings.MaxNumArchivedFiles'                ; Type = 'Int32' }   # inferred
+    @{ Param = 'LoggingAuditLogVerboseFileName'                        ; Name = 'AuditLogSettings.VerboseFileName'                    ; Type = 'String' }   # inferred
+    @{ Param = 'LoggingAuditLogDaysRecordsKept'                        ; Name = 'AuditLogSettings.DaysRecordsKept'                    ; Type = 'Int32' }
+    @{ Param = 'LoggingAuditLogWriteVerboseFile'                       ; Name = 'AuditLogSettings.WriteVerboseFile'                   ; Type = 'Boolean' }   # inferred
+    @{ Param = 'LoggingAuditLogLoadCustomConfig'                       ; Name = 'AuditLogSettings.LoadCustomConfig'                   ; Type = 'Boolean' }   # inferred
+    @{ Param = 'LoggingAuditLogVerboseFileDirectory'                   ; Name = 'AuditLogSettings.VerboseFileDirectory'               ; Type = 'String' }   # inferred
+    @{ Param = 'LoggingAuditLogCustomConfigPath'                       ; Name = 'AuditLogSettings.CustomConfigPath'                   ; Type = 'String' }   # inferred
+    @{ Param = 'LoggingAuditLogNumArchivedFiles'                       ; Name = 'AuditLogSettings.NumArchivedFiles'                   ; Type = 'Int32' }   # inferred
+    @{ Param = 'LoggingAuditLogArchiveSchedule'                        ; Name = 'AuditLogSettings.ArchiveSchedule'                    ; Type = 'String' }   # inferred
+    @{ Param = 'MailServerEnableSSL'                                   ; Name = 'MailServerSettings.EnableSSL'                        ; Type = 'Boolean' }   # inferred
+    @{ Param = 'MailServerHost'                                        ; Name = 'MailServerSettings.Host'                             ; Type = 'String' }
+    @{ Param = 'MailServerSender'                                      ; Name = 'MailServerSettings.Sender'                           ; Type = 'String' }   # inferred
+    @{ Param = 'MailServerUser'                                        ; Name = 'MailServerSettings.User'                             ; Type = 'String' }   # inferred
+    @{ Param = 'MailServerOAuth2ClientId'                              ; Name = 'MailServerSettings.OAuth2ClientId'                   ; Type = 'String' }   # inferred
+    @{ Param = 'MailServerOAuth2TenantId'                              ; Name = 'MailServerSettings.OAuth2TenantId'                   ; Type = 'String' }   # inferred
+    @{ Param = 'MailServerOAuth2RedirectUri'                           ; Name = 'MailServerSettings.OAuth2RedirectUri'                ; Type = 'String' }   # inferred
+    @{ Param = 'MailServerOAuth2Provider'                              ; Name = 'MailServerSettings.OAuth2Provider'                   ; Type = 'String' }   # inferred
+    @{ Param = 'MailServerOAuth2Sender'                                ; Name = 'MailServerSettings.OAuth2Sender'                     ; Type = 'String' }   # inferred
+    @{ Param = 'MailServerMSGraphAPIClientId'                          ; Name = 'MailServerSettings.MSGraphAPIClientId'               ; Type = 'String' }   # inferred
+    @{ Param = 'MailServerMSGraphAPITenantId'                          ; Name = 'MailServerSettings.MSGraphAPITenantId'               ; Type = 'String' }   # inferred
+    @{ Param = 'MailServerMSGraphAPICloudHostUrl'                      ; Name = 'MailServerSettings.MSGraphAPICloudHostUrl'           ; Type = 'String' }   # inferred
+    @{ Param = 'MailServerMSGraphAPISender'                            ; Name = 'MailServerSettings.MSGraphAPISender'                 ; Type = 'String' }   # inferred
+    @{ Param = 'PerformanceBandwidthLimitPercent'                      ; Name = 'PerformanceSettings.BandwidthLimitPercent'           ; Type = 'Int32' }   # inferred
+    @{ Param = 'PerformanceCopyMode'                                   ; Name = 'PerformanceSettings.CopyMode'                        ; Type = 'String'; Allowed = @('Push', 'Pull') }
+    @{ Param = 'PerformanceMaxDeploymentThreads'                       ; Name = 'PerformanceSettings.MaxDeploymentThreads'            ; Type = 'Int32' }
+    @{ Param = 'PerformanceMaxServerThreads'                           ; Name = 'PerformanceSettings.MaxServerThreads'                ; Type = 'Int32' }   # inferred
+    @{ Param = 'PerformanceCredentialBatchSize'                        ; Name = 'PerformanceSettings.CredentialBatchSize'             ; Type = 'Int32' }   # inferred
+    @{ Param = 'PerformanceIntegrationMessageTimeoutSeconds'           ; Name = 'PerformanceSettings.IntegrationMessageTimeoutSeconds'; Type = 'Int32' }   # inferred
+    @{ Param = 'ProxyHostName'                                         ; Name = 'ProxySettings.HostName'                              ; Type = 'String' }   # inferred
+    @{ Param = 'ProxyPort'                                             ; Name = 'ProxySettings.Port'                                  ; Type = 'Int32' }
+    @{ Param = 'ProxyUserName'                                         ; Name = 'ProxySettings.UserName'                              ; Type = 'String' }   # inferred
+    @{ Param = 'ProxyUseSystemHost'                                    ; Name = 'ProxySettings.UseSystemHost'                         ; Type = 'Boolean' }   # inferred
+    @{ Param = 'RepositoryEnableUnusedFilesWarning'                    ; Name = 'RepositorySettings.EnableUnusedFilesWarning'         ; Type = 'Boolean' }
+    @{ Param = 'RepositoryExclusions'                                  ; Name = 'RepositorySettings.Exclusions'                       ; Type = 'String' }   # inferred
+    @{ Param = 'RepositoryPath'                                        ; Name = 'RepositorySettings.Path'                             ; Type = 'String'; Variable = 'Repository' }   # inferred
+    @{ Param = 'SpiceworksHostName'                                    ; Name = 'SpiceworksSettings.HostName'                         ; Type = 'String' }   # inferred
+    @{ Param = 'SpiceworksIsEnabled'                                   ; Name = 'SpiceworksSettings.IsEnabled'                        ; Type = 'Boolean' }   # inferred
+    @{ Param = 'SpiceworksPort'                                        ; Name = 'SpiceworksSettings.Port'                             ; Type = 'Int32' }
+    @{ Param = 'SpiceworksSyncInterval'                                ; Name = 'SpiceworksSettings.SyncInterval'                     ; Type = 'String' }   # inferred
+    @{ Param = 'SpiceworksUserName'                                    ; Name = 'SpiceworksSettings.UserName'                         ; Type = 'String' }   # inferred
+    @{ Param = 'SpiceworksUseSSL'                                      ; Name = 'SpiceworksSettings.UseSSL'                           ; Type = 'Boolean' }   # inferred
+    @{ Param = 'TargetServiceRemoteDirectory'                          ; Name = 'TargetServiceSettings.RemoteDirectory'               ; Type = 'String' }
+    @{ Param = 'TargetServiceSharePath'                                ; Name = 'TargetServiceSettings.SharePath'                     ; Type = 'String' }   # inferred
+    @{ Param = 'AnalyticsCollectAnalyticsUsage'                        ; Name = 'AnalyticsSettings.CollectAnalyticsUsage'             ; Type = 'Boolean' }
+    @{ Param = 'AnalyticsAlertFirstTimeAnalyticsDialog'                ; Name = 'AnalyticsSettings.AlertFirstTimeAnalyticsDialog'     ; Type = 'Boolean' }
+  )
 )
 
 # Initialize the custom stream preferences; the built-in ones already exist.
@@ -1179,20 +276,40 @@ If ($StandaloneRun) {
 #region ------ [ Main ] ---------------------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Main'
 
-# Only the parameters the caller actually passed are managed: an unbound one is
-# a setting this deployment does not speak to, which is different from one it
-# wants left at the default. The Ansible side expresses that with omit.
+# Validate and translate in one pass over what the caller actually asked for. Every name is
+# checked against the table before anything is read or written, so a typo fails here rather than
+# becoming a row the product stores and never reads.
 $Setting = @{}
-ForEach ($Bound In @($PSBoundParameters.Keys)) {
-  If ($SETTING_NAMES.ContainsKey($Bound)) {
-    $Given = $PSBoundParameters[$Bound]
-    # The export writes booleans lower case, so the comparison is made in the
-    # product's spelling rather than PowerShell's.
-    $Setting[$SETTING_NAMES[$Bound]] = If ($Given -is [System.Boolean]) {
-      ([System.String]$Given).ToLowerInvariant()
-    } Else {
-      [System.String]$Given
-    }
+$DatabaseVariable = @{}
+ForEach ($Given In @($PSBoundParameters['Setting'].Keys)) {
+  $Known = @($SETTINGS | Where-Object -FilterScript { $PSItem.Param -eq $Given })
+  If ($Known.Count -ne 1) {
+    Throw ('{0} is not a setting this script can apply; see the SETTINGS table' -f $Given)
+  }
+  $Entry = $Known[0]
+  $Value = $PSBoundParameters['Setting'][$Given]
+
+  If ($Null -eq $Value) {
+    # Declared without a value is declared without being managed, which the Ansible side spells
+    # as omit and a bare YAML key spells as null.
+    Continue
+  }
+  If ($Value.GetType().Name -ne $Entry.Type) {
+    Throw ('{0} takes a {1}, not a {2}' -f $Given, $Entry.Type, $Value.GetType().Name)
+  }
+  If ($Entry.ContainsKey('Allowed') -and $Entry.Allowed -notcontains $Value) {
+    Throw ('{0} takes one of: {1}' -f $Given, ($Entry.Allowed -join ', '))
+  }
+
+  # The export writes booleans lower case, so the comparison is made in the product's spelling
+  # rather than PowerShell's.
+  $Setting[$Entry.Name] = If ($Value -is [System.Boolean]) {
+    ([System.String]$Value).ToLowerInvariant()
+  } Else {
+    [System.String]$Value
+  }
+  If ($Entry.ContainsKey('Variable')) {
+    $DatabaseVariable[$Entry.Name] = $Entry.Variable
   }
 }
 
@@ -1276,7 +393,7 @@ Try {
           $Applied.Add($Name)
           Continue
         }
-        If ($DATABASE_SETTINGS.ContainsKey($Name)) {
+        If ($DatabaseVariable.ContainsKey($Name)) {
           # Where the database lives is a deployment choice, so it is asked for rather than
           # assumed: the product reports its own path and cannot be wrong about it.
           If (-not $DatabasePath) {
@@ -1294,7 +411,7 @@ Try {
           }
           $Statement = "UPDATE SystemVariables SET Value = '{0}', Modified = datetime('now') WHERE Name = '{1}';" -f @(
             $Desired.Replace("'", "''")
-            $DATABASE_SETTINGS[$Name].Replace("'", "''")
+            $DatabaseVariable[$Name].Replace("'", "''")
           )
           $Null = & $SQLITE_PATH $DatabasePath $Statement 2>&1
           If ($LASTEXITCODE -ne 0) {

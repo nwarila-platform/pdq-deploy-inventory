@@ -115,6 +115,8 @@
 !/scripts/Get-InstalledSoftware.ps1
 !/scripts/Set-RepositoryAcl.pester.ps1
 !/scripts/Set-RepositoryAcl.ps1
+!/scripts/Set-PdqSetting.pester.ps1
+!/scripts/Set-PdqSetting.ps1
 !/scripts/compose-and-run.sh
 !/scripts/materialize-role-scripts.sh
 

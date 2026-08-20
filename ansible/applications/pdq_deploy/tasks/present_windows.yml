@@ -26,7 +26,10 @@
 #
 # Cleanup lives under END's 'always', which means it does NOT run after an unrescued PROCESS
 # failure. That is the accepted trade of the three-stage shape: the residue is a controller temp
-# directory and an installer on the guest, and the proof bed is rebuilt for every run.
+# directory and an installer on the guest, and the proof bed is rebuilt for every run. PROCESS
+# carries an 'always' of its own for one thing only -- flushing a notified restart -- because a
+# service left running configuration that was already written is not residue to tidy up later,
+# it is a wrong state no later converge would ever correct.
 #
 # Licensing is a separate capability and a separate region.
 #
@@ -83,8 +86,11 @@
     # Pulled as a STRING and never written to disk on either machine, exactly like the licence.
     # The object holds the password with no trailing newline, so it is used verbatim; the digest
     # pins that byte-for-byte, and a re-upload that adds whitespace fails the next task loudly.
+    # Reading changes nothing and the task says so, which is what lets a converged host report
+    # no changes at all -- a fetch that claimed one would hide real drift behind constant noise.
 
     - name: 'PROCESS | Fetch The Service Account Password'
+      changed_when: false
       delegate_to: 'localhost'
       no_log: true
       register: '__pdq_deploy_secret__'
@@ -354,8 +360,10 @@
     # The licence is secret material, so it is pulled as a STRING and never written to disk on
     # either machine: getstr hands the content straight to the next task. no_log covers the
     # task because the value is the secret itself, not merely a parameter that touches one.
+    # Reading changes nothing and the task says so, for the same reason the password fetch does.
 
     - name: 'PROCESS | Fetch The Product Licence'
+      changed_when: false
       delegate_to: 'localhost'
       no_log: true
       register: '__pdq_deploy_license__'
@@ -426,15 +434,15 @@
     - name: 'PROCESS | Apply The Product Licence'
       no_log: true
       notify: 'pdq-deploy-restart-required'
-      when: >-
-        __pdq_deploy_license_current__.value | default('') | regex_replace('\s', '')
-        != __licence__ | regex_replace('\s', '')
       vars:
         __licence__: >-
           {{ __pdq_deploy_license__.contents
              | regex_search('--- START LICENSE ---[\s\S]*--- END LICENSE ---')
              | regex_replace('\r\n', '\n')
              | regex_replace('\n', '\r\n') }}
+      when: >-
+        __pdq_deploy_license_current__.value | default('') | regex_replace('\s', '')
+        != __licence__ | regex_replace('\s', '')
 
       ansible.windows.win_regedit:
         data: "{{ __licence__ }}"
@@ -821,6 +829,24 @@
     #endregion --- [ Process: Apply The Declared Product Settings ] --------------------------- #
 
 #endregion --- [ Process: Install PDQ Deploy on Windows ] ------------------------------------- #
+
+
+#region ------ [ Always: Apply Any Pending Restart ] ------------------------------------------ #
+# The flush above is reached only when PROCESS runs to completion. A converge that changed the
+# service's configuration and then failed before it would leave the product running its old
+# settings -- and the NEXT converge would write nothing, because the values are already correct,
+# so it would notify nothing and never restart either. The service would stay stale for good,
+# under a run that reports success. This closes that: an 'always' runs even when the block above
+# failed, and a handler that already ran is not run again, so a successful converge still
+# restarts exactly once. Restart only -- cleanup stays under END.
+
+  # Begin the 'Always' block
+  always:
+
+    - name: 'PROCESS | Apply Any Pending Restart Even After A Failure'
+      ansible.builtin.meta: 'flush_handlers'
+
+#endregion --- [ Always: Apply Any Pending Restart ] ------------------------------------------ #
 
 
 #region ------ [ End: Install PDQ Deploy on Windows ] ----------------------------------------- #

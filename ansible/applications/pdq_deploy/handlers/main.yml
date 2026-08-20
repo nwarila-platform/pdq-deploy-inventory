@@ -1,0 +1,26 @@
+# =========================================================================================== #
+# File: '{{ role_path }}/handlers/main.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# The background service reads its licence, operating mode, port, listen addresses, access
+# control flag, database location and its own record of the service credential once, at start.
+# Tasks in present_windows.yml write those, and none takes effect until the service is bounced,
+# so each notifies this handler rather than a result a growing condition would have to test.
+#
+# A handler runs once however many times it was notified: a converge that moves five of those
+# values bounces the service exactly once, and a converge that changes none never bounces it.
+#
+# The topic is deliberately specific. Handler names and listen topics are play-global, and the
+# co-located PDQ Inventory role wants the same behaviour for its own service.
+#
+# =========================================================================================== #
+---
+- name: 'Restart the PDQ Deploy background service'
+  listen: 'pdq-deploy-restart-required'
+
+  ansible.windows.win_service:
+    dependency_action: 'set'
+    desktop_interact: false
+    force_dependent_services: false
+    name: "{{ pdq_deploy_running.service_name }}"
+    state: 'restarted'

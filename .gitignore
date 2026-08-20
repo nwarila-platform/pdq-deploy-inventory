@@ -71,6 +71,8 @@
 !/ansible/applications/pdq_deploy/files/Get-InstalledSoftware.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-RepositoryAcl.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqSetting.ps1.stub
+!/ansible/applications/pdq_deploy/handlers/
+!/ansible/applications/pdq_deploy/handlers/main.yml
 !/ansible/applications/pdq_deploy/meta/main.yml
 !/ansible/applications/pdq_deploy/tasks/clean_windows.yml
 !/ansible/applications/pdq_deploy/tasks/main.yml

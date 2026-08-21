@@ -42,15 +42,18 @@ BeforeAll {
     Remove-Variable -Name 'Ansible' -Scope 'Global' -Force -ErrorAction 'SilentlyContinue'
   }
 
-  Function global:Assert-HiveLoaded {
+  Function Assert-HiveLoaded {
     Param ([System.String]$At)
     # HKCU is the caller's own always-mounted hive; only the transient mount is gated.
     If ($At -notlike 'HKCU:*' -and -not $global:FakeHiveLoaded) { Throw 'hive is not loaded' }
   }
 
   # reg.exe: load flips the gate open, unload flips it shut. The load can be
-  # told to fail, which must stop the run before any hive access.
-  Function global:C:\Windows\System32\reg.exe {
+  # told to fail, which must stop the run before any hive access. Created on the
+  # function: drive because the name is path-shaped; container scope, like every
+  # stub here, so nothing outlives the run -- the global: variant outlived it,
+  # and broke whatever the shared session ran next.
+  New-Item -Force -Path 'function:C:\Windows\System32\reg.exe' -Value {
     $global:RegCalls += , @($args)
     If ($args[0] -eq 'load') {
       If ($global:FakeLoadFails) { $global:LASTEXITCODE = 1; Return }
@@ -59,16 +62,16 @@ BeforeAll {
       $global:FakeHiveLoaded = $False
     }
     $global:LASTEXITCODE = 0
-  }
+  } | Out-Null
 
-  Function global:Test-Path {
+  Function Test-Path {
     [CmdletBinding()]
     Param ([Parameter()] [System.String]$LiteralPath)
     Assert-HiveLoaded -At:$LiteralPath
     $global:FakeHive.Contains($LiteralPath)
   }
 
-  Function global:Get-ItemProperty {
+  Function Get-ItemProperty {
     [CmdletBinding()]
     Param ([Parameter()] [System.String]$LiteralPath)
     Assert-HiveLoaded -At:$LiteralPath
@@ -76,14 +79,14 @@ BeforeAll {
     [PSCustomObject]$global:FakeHive[$LiteralPath]
   }
 
-  Function global:New-Item {
+  Function New-Item {
     [CmdletBinding()]
     Param ([Parameter()] [System.String]$Path, [Switch]$Force)
     Assert-HiveLoaded -At:$Path
     If (-not $global:FakeHive.Contains($Path)) { $global:FakeHive[$Path] = @{} }
   }
 
-  Function global:New-ItemProperty {
+  Function New-ItemProperty {
     [CmdletBinding()]
     Param (
       [Parameter()] [System.String]$LiteralPath,
@@ -99,16 +102,6 @@ BeforeAll {
 }
 
 Describe 'Set-PdqConsoleDefault' {
-  AfterAll {
-    # The stubs are global so a child SCRIPT resolves them; they must not outlive the container,
-    # or the next thing in this session to call Test-Path meets a stub whose helper is gone --
-    # exactly how this spec once broke the shared build session while passing its own tests.
-    ForEach ($F in 'C:\Windows\System32\reg.exe', 'Test-Path', 'Get-ItemProperty', 'New-Item',
-      'New-ItemProperty', 'Assert-HiveLoaded') {
-      Remove-Item -LiteralPath ('function:global:' + $F) -Force -ErrorAction 'SilentlyContinue'
-    }
-  }
-
   BeforeEach {
     $global:FakeHive = @{}
     $global:FakeHiveLoaded = $False

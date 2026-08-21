@@ -83,16 +83,112 @@ pdq_deploy_defaults:
   # fixed location as the command line above, and fixed for the same reason.
   service_path: 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeployService.exe'
 
-  # Product settings the deployment declares, keyed by the names in the settings script's
-  # SETTINGS table -- DeploymentCleanupDays, PerformanceCopyMode, RepositoryPath -- not by the
-  # product's own dotted spelling, which the script owns the translation for. A name absent here
-  # is unmanaged, which is a different thing from one set to the product's default; a name the
-  # table does not carry is a typo and fails the run. Empty by default because a setting is a
-  # deployment choice, never a universal one. The table is the inventory: it names every setting,
-  # its type, the values an enumerated one allows, and which are inferred rather than proven.
-  # Only the families the product's SERVICE reads are offered -- the console-side pages live in a
-  # per-user hive no converge can reach.
-  settings: {}
+  # Every setting the product's background service exposes, declared at the product's OWN default
+  # -- measured from its ExportSettings on a host built by this role, version 20.1.8.0, with the
+  # deployment's own overrides removed first (2026-08-20). Declared rather than left out on
+  # purpose: a role that states only what it changes leaves the rest to whatever the vendor
+  # ships, so an upgrade that moves a default silently moves this deployment with it. Stating
+  # the whole surface makes the converged host deterministic, and makes a vendor default change
+  # visible as a task that reports a change rather than as drift nobody sees.
+  #
+  # Keyed by the settings script's own parameter names, not the product's dotted spelling, which
+  # the script owns the translation for; a name its table does not carry is a typo and fails the
+  # run. A playbook overrides individual keys -- the loader merges recursively, so setting one
+  # here keeps the other sixty-four.
+  #
+  # Mail, proxy, Spiceworks and OAuth identity are blank because blank is what the product ships;
+  # a deployment that uses them sets them in its playbook, and blank here means the role restores
+  # blank on a host where someone configured them by hand rather than leaving a half-configured
+  # integration in place.
+  #
+  # RepositoryPath is absent because the role owns it: it derives the value from the share it
+  # publishes, so the folder, its permissions, its share name and the product's repository cannot
+  # disagree. InventoryScanProfileId is absent because it names an object inside PDQ Inventory,
+  # so there is no deterministic default to state.
+  #
+  # NINE more are absent because the product will not store them. Measured 2026-08-20: every
+  # member of AutoDeployDefaultSettings, AutoDownloadArchiveSettings and DatabaseBackupSettings --
+  # including its backup directory -- was accepted by the command line and then read back
+  # unchanged. They are real settings the export publishes, so the script still carries their
+  # names and a deployment that declares one fails loudly rather than silently doing nothing;
+  # they are simply not reachable from here, so they cannot be stated as a default.
+  settings:
+    # Deployments
+    DeploymentCleanupDays: 30
+    DeploymentComputerTimeout: 60
+    DeploymentRunAs: 'Admin'
+    DeploymentScanAfterDeployment: true
+
+    # Offline targets
+    DeploymentOfflineRetryMaxTries: 72
+    DeploymentOfflineUsePing: false
+    DeploymentOfflineTryWol: false
+    DeploymentOfflineIsRetryEnabled: false
+    DeploymentOfflineRetryInterval: '01:00:00'
+
+    # Logging and audit
+    LoggingSentryCanSendAnonymousExceptionData: true
+    LoggingAuditLogMinDaysRecordsKept: 5
+    LoggingAuditLogMaxDaysRecordsKept: 90
+    LoggingAuditLogMinNumArchivedFiles: 0
+    LoggingAuditLogMaxNumArchivedFiles: 50
+    LoggingAuditLogVerboseFileName: 'PDQDeployAuditLog.log'
+    LoggingAuditLogDaysRecordsKept: 30
+    LoggingAuditLogWriteVerboseFile: true
+    LoggingAuditLogLoadCustomConfig: false
+    LoggingAuditLogVerboseFileDirectory: 'C:\ProgramData\Admin Arsenal\PDQ Deploy'
+    LoggingAuditLogCustomConfigPath: ''
+    LoggingAuditLogNumArchivedFiles: 4
+    LoggingAuditLogArchiveSchedule: 'Monday'
+
+    # Mail server
+    MailServerEnableSSL: false
+    MailServerHost: ''
+    MailServerSender: ''
+    MailServerUser: ''
+    MailServerOAuth2ClientId: ''
+    MailServerOAuth2TenantId: ''
+    MailServerOAuth2RedirectUri: ''
+    MailServerOAuth2Provider: 'Microsoft'
+    MailServerOAuth2Sender: ''
+    MailServerMSGraphAPIClientId: ''
+    MailServerMSGraphAPITenantId: ''
+    MailServerMSGraphAPICloudHostUrl: 'Azure Public Cloud'
+    MailServerMSGraphAPISender: ''
+
+    # Performance
+    PerformanceBandwidthLimitPercent: 50
+    PerformanceCopyMode: 'Push'
+    PerformanceMaxDeploymentThreads: 8
+    PerformanceMaxServerThreads: 32
+    PerformanceCredentialBatchSize: 200
+    PerformanceIntegrationMessageTimeoutSeconds: 30
+
+    # Proxy
+    ProxyHostName: ''
+    ProxyPort: 8080
+    ProxyUserName: ''
+    ProxyUseSystemHost: true
+
+    # Repository
+    RepositoryEnableUnusedFilesWarning: true
+    RepositoryExclusions: ''
+
+    # Spiceworks
+    SpiceworksHostName: ''
+    SpiceworksIsEnabled: true
+    SpiceworksPort: 443
+    SpiceworksSyncInterval: '04:00:00'
+    SpiceworksUserName: ''
+    SpiceworksUseSSL: true
+
+    # Target service
+    TargetServiceRemoteDirectory: 'ADMIN$\AdminArsenal'
+    TargetServiceSharePath: ''
+
+    # Analytics
+    AnalyticsCollectAnalyticsUsage: false
+    AnalyticsAlertFirstTimeAnalyticsDialog: true
 
   #region ------ [ Installer layout ] -------------------------------------------------------- #
 

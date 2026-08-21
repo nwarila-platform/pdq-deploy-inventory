@@ -872,25 +872,87 @@
 
     #region ------ [ Process: Seed The Console Defaults For New Users ] ----------------------- #
     # A few console preferences are per-user: the product writes them to the signed-in user's own
-    # hive and nowhere else (measured 2026-08-21 against a console flipping every page). Profiles
-    # that do not exist yet are built from the Default profile, so seeding that one hive gives
-    # every FUTURE console user the deployment's starting point; existing profiles are
-    # deliberately left alone. The referenced .ps1 is MATERIALIZED from scripts/ by
-    # scripts/materialize-role-scripts.sh (the role tracks only
-    # files/Set-PdqConsoleDefault.ps1.stub); run it before this role.
+    # hive and nowhere else (measured 2026-08-21). A new profile is built from the Default
+    # profile, so its hive is seeded through win_regedit's own hive loader -- which loads, writes
+    # type-aware and idempotent, and unloads under its own finally, with none of the hand-rolled
+    # lifecycle a script would carry. The connection account's profile already exists and cannot
+    # inherit the Default, so its own hive is seeded too, but only where the product has never
+    # written: a preference someone saved is theirs. The string values (theme, release channel)
+    # are seeded only when declared -- an undeclared one is dropped by the reject filter, leaving
+    # the product's own first-run choice.
+    #
+    # vars is a list because each row is the same shape; the reject drops undeclared strings.
 
     - name: 'PROCESS | Seed The Console Defaults For New Users'
-      ansible.windows.win_powershell:
-        depth: 2
-        error_action: 'stop'
-        parameters:
-          AutoUpdateCheckEnabled: "{{ pdq_deploy_running.preferences.alerts.auto_update_check_enabled }}"
-          ColorTheme: "{{ pdq_deploy_running.preferences.interface.color_theme | default('', true) }}"
-          DisableSplashScreen: "{{ pdq_deploy_running.preferences.interface.disable_splash_screen }}"
-          ReleaseChannel: "{{ pdq_deploy_running.preferences.alerts.release_channel | default('', true) }}"
-          ShowWebcastAlerts: "{{ pdq_deploy_running.preferences.alerts.show_webcast_alerts }}"
-        remote_src: false
-        script: "{{ lookup('ansible.builtin.file', 'Set-PdqConsoleDefault.ps1') }}"
+      vars:
+        __console_seed__:
+          - name: 'Disable Splash Screen'
+            subkey: 'PDQ Deploy Console\Settings\Startup'
+            data: "{{ pdq_deploy_running.preferences.interface.disable_splash_screen | int }}"
+            type: 'dword'
+          - name: 'Auto Check Enabled'
+            subkey: 'PDQ Deploy\AutoUpdateChecker'
+            data: "{{ pdq_deploy_running.preferences.alerts.auto_update_check_enabled | int }}"
+            type: 'dword'
+          - name: 'Show Webcast Alerts'
+            subkey: 'PDQ Deploy\AutoUpdateChecker'
+            data: "{{ pdq_deploy_running.preferences.alerts.show_webcast_alerts | int }}"
+            type: 'dword'
+          - name: 'Color Theme'
+            subkey: 'PDQ Deploy Console\Settings\Startup'
+            data: "{{ pdq_deploy_running.preferences.interface.color_theme | default('', true) }}"
+            type: 'string'
+          - name: 'ReleaseChannel'
+            subkey: 'PDQ Deploy\AutoUpdateChecker'
+            data: "{{ pdq_deploy_running.preferences.alerts.release_channel | default('', true) }}"
+            type: 'string'
+        __console_declared__: "{{ __console_seed__ | rejectattr('data', 'equalto', '') | list }}"
+
+      ansible.windows.win_regedit:
+        data: "{{ item.data }}"
+        hive: 'C:\Users\Default\NTUSER.DAT'
+        name: "{{ item.name }}"
+        path: 'HKLM:\ANSIBLE\Software\Admin Arsenal\{{ item.subkey }}'
+        state: 'present'
+        type: "{{ item.type }}"
+      loop: "{{ __console_declared__ }}"
+      loop_control:
+        label: "{{ item.subkey }} :: {{ item.name }}"
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Read The Connection Account Console Defaults'
+      vars:
+        __console_seed__:
+          - { name: 'Disable Splash Screen', subkey: 'PDQ Deploy Console\Settings\Startup', data: "{{ pdq_deploy_running.preferences.interface.disable_splash_screen | int }}", type: 'dword' }
+          - { name: 'Auto Check Enabled', subkey: 'PDQ Deploy\AutoUpdateChecker', data: "{{ pdq_deploy_running.preferences.alerts.auto_update_check_enabled | int }}", type: 'dword' }
+          - { name: 'Show Webcast Alerts', subkey: 'PDQ Deploy\AutoUpdateChecker', data: "{{ pdq_deploy_running.preferences.alerts.show_webcast_alerts | int }}", type: 'dword' }
+          - { name: 'Color Theme', subkey: 'PDQ Deploy Console\Settings\Startup', data: "{{ pdq_deploy_running.preferences.interface.color_theme | default('', true) }}", type: 'string' }
+          - { name: 'ReleaseChannel', subkey: 'PDQ Deploy\AutoUpdateChecker', data: "{{ pdq_deploy_running.preferences.alerts.release_channel | default('', true) }}", type: 'string' }
+        __console_declared__: "{{ __console_seed__ | rejectattr('data', 'equalto', '') | list }}"
+      register: '__pdq_deploy_own_console__'
+
+      ansible.windows.win_reg_stat:
+        name: "{{ item.name }}"
+        path: 'HKCU:\Software\Admin Arsenal\{{ item.subkey }}'
+      loop: "{{ __console_declared__ }}"
+      loop_control:
+        label: "{{ item.subkey }} :: {{ item.name }}"
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Seed The Connection Account Where The Product Has Not Written'
+      when: not item.exists
+      loop: "{{ __pdq_deploy_own_console__.results }}"
+      loop_control:
+        label: "{{ item.item.subkey }} :: {{ item.item.name }}"
+
+      ansible.windows.win_regedit:
+        data: "{{ item.item.data }}"
+        name: "{{ item.item.name }}"
+        path: 'HKCU:\Software\Admin Arsenal\{{ item.item.subkey }}'
+        state: 'present'
+        type: "{{ item.item.type }}"
 
     #endregion --- [ Process: Seed The Console Defaults For New Users ] ------------------------ #
 

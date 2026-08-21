@@ -135,11 +135,13 @@ Describe 'Set-PdqConsoleDefault' {
     $global:FakeHive['HKCU:\Software\Admin Arsenal\PDQ Deploy\AutoUpdateChecker']['Auto Check Enabled'] | Should -Be 0
   }
 
-  It 'writes the theme only when one was asked for' {
+  It 'writes the theme and the channel only when asked for' {
     $Null = & $script:ScriptPath -DisableSplashScreen:$True -AutoUpdateCheckEnabled:$False -ShowWebcastAlerts:$False
     $global:FakeHive[$script:Startup].Contains('Color Theme') | Should -BeFalse
-    $Null = & $script:ScriptPath -DisableSplashScreen:$True -AutoUpdateCheckEnabled:$False -ShowWebcastAlerts:$False -ColorTheme 'Win11Dark'
+    $global:FakeHive[$script:Checker].Contains('ReleaseChannel') | Should -BeFalse
+    $Null = & $script:ScriptPath -DisableSplashScreen:$True -AutoUpdateCheckEnabled:$False -ShowWebcastAlerts:$False -ColorTheme 'Win11Dark' -ReleaseChannel 'Beta'
     $global:FakeHive[$script:Startup]['Color Theme'] | Should -Be 'Win11Dark'
+    $global:FakeHive[$script:Checker]['ReleaseChannel'] | Should -Be 'Beta'
   }
 
   It 'changes nothing and writes nothing the second time' {

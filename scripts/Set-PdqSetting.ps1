@@ -7,25 +7,18 @@
         Applies a set of PDQ settings in one pass and proves each one took.
 
     .DESCRIPTION
-        PDQ's command line accepts ANY setting name: a name the product never reads still
-        reports success and inserts a row, so an exit code proves nothing. Three legs close that
-        gap, each proven necessary by a distinct measured failure. The SETTINGS table below is
-        the whole contract -- which names exist, their types and legal values, and where each
-        one lives -- so a typo dies before anything runs. The settle poll waits for the service
-        to persist every queued write, because edits drain asynchronously and an early restart
-        eats the tail. And the product's own export is the verify oracle: export once to learn
-        the current values, write what differs, wait, export again -- a setting that does not
-        read back is reported as ignored and fails the run, which is the only defence against a
-        row nothing reads.
+        PDQ's command line accepts ANY setting name -- a dead row still reports success -- so
+        an exit code proves nothing. Three legs close that gap, each proven by a measured
+        failure: the SETTINGS table kills typos before anything runs, the settle poll outwaits
+        the service's asynchronous drain so a restart cannot eat queued writes, and the
+        product's own export is the verify oracle -- what does not read back is reported as
+        ignored and fails the run.
 
-        The product can only export to a FILE -- no stdout or in-memory form -- so each export
-        is read whole and deleted at once. Nothing secret is in it: user names for mail, proxy
-        and integrations, and no password, token or secret element of any kind.
+        The product exports only to a FILE, read whole and deleted at once; it carries user
+        names and no secret element of any kind.
 
-        Org scripts are a single straightforward process stage in the org script template's
-        architecture: one [ Script ] region carrying [ Initialization ] (strict mode, transport
-        detection, input normalization), [ Main ] (read -> act -> verify -> build ONE result
-        object), and [ Output ] (the same object to $Ansible or as JSON).
+        Org scripts are a single straightforward process stage: [ Initialization ], [ Main ]
+        (read -> act -> verify -> ONE result object), [ Output ].
 
         Shipped by the org three-file convention: developed under scripts/ with its sibling
         Set-PdqSetting.pester.ps1 spec, while the pdq_deploy role carries
@@ -46,11 +39,9 @@
 
     .PARAMETER Preference
         The preference tree, organised as the console's Preferences window is: a map of pages,
-        each holding that page's settings under the labels the page shows. Pages and names the
-        script does not own (per-user pages, the record_* event-log switches) are set aside for
-        the tasks that do; a name the table does not carry fails the run -- it would otherwise
-        be a silent no-op that looks like success. Absent means unmanaged; values keep the types
-        the caller supplied (win_powershell hands the tree over intact, measured 2026-08-20).
+        each holding that page's settings under the labels the page shows. Names the script
+        does not own are set aside for the tasks that do; a name the table does not carry fails
+        the run. Absent means unmanaged; values keep the caller's types (measured 2026-08-20).
 
     .PARAMETER DatabaseDrive
         The drive letter the database lives on; anchors the derived backup and log locations.
@@ -155,6 +146,10 @@ New-Variable -Force -Name:'SETTINGS' -Option:('Private', 'ReadOnly') -Value:(
     @{ Param = 'logging.archived_logs_maximum'; Name = 'AuditLogSettings.MaxNumArchivedFiles'; Type = 'Int32' }
     @{ Param = 'logging.use_logging_configuration_file'; Name = 'AuditLogSettings.LoadCustomConfig'; Type = 'Boolean' }
     @{ Param = 'logging.logging_configuration_file'; Name = 'AuditLogSettings.CustomConfigPath'; Type = 'String' }
+    @{ Param = 'interface.show_dashboard_on_launch'; Name = 'InterfaceSettings.ShowDashboardOnLaunch'; Type = 'Boolean' ; Unexported = $True }
+    @{ Param = 'interface.show_missing_package_popup_during_export'; Name = 'InterfaceSettings.ShowMissingPackagePopupDuringExport'; Type = 'Boolean' ; Unexported = $True }
+    @{ Param = 'interface.include_dependency_packages_in_export'; Name = 'InterfaceSettings.IncludeDependencyPackagesInExport'; Type = 'Boolean' ; Unexported = $True }
+    @{ Param = 'mail_server.authentication_method'; Name = 'MailServerSettings.SelectedAuthMethod'; Type = 'String' ; Unexported = $True }
     @{ Param = 'mail_server.enable_ssl'; Name = 'MailServerSettings.EnableSSL'; Type = 'Boolean' }
     @{ Param = 'mail_server.smtp_server'; Name = 'MailServerSettings.Host'; Type = 'String' }
     @{ Param = 'mail_server.sender_address'; Name = 'MailServerSettings.Sender'; Type = 'String' }
@@ -290,19 +285,23 @@ New-Variable -Force -Name:'SETTLE_POLL_MILLISECONDS' -Option:('Private', 'ReadOn
 Write-Debug -Message:'Entering Stage: Main'
 
 # The caller declares preferences the way the console shows them: a map of PAGES, each holding
-# that page's settings. This is where the role's routing lives, in plain sight: the alerts and
-# interface pages are per-user and belong to the profile seeding, the four record_* switches on
-# the logging page are machine registry values another task writes -- so all of those are set
-# aside here -- and everything else flattens to the table's page.setting names.
+# that page's settings. The role's routing lives here in plain sight: the alerts page, the
+# interface page's theme and splash (per-user, profile seeding) and the logging page's record_*
+# switches (machine registry, another task) are set aside; everything else -- the interface
+# page's dashboard and export controls included, measured landing in the database 2026-08-21 --
+# flattens to the table's page.setting names.
 $Flat = @{}
 ForEach ($PageName In @($PSBoundParameters['Preference'].Keys)) {
-  If ($PageName -in @('alerts', 'interface')) {
+  If ($PageName -eq 'alerts') {
     Continue
   }
   $Page = $PSBoundParameters['Preference'][$PageName]
   If ($Page -is [System.Collections.IDictionary]) {
     ForEach ($Leaf In @($Page.Keys)) {
       If ($PageName -eq 'logging' -and $Leaf -like 'record_*') {
+        Continue
+      }
+      If ($PageName -eq 'interface' -and $Leaf -in @('color_theme', 'disable_splash_screen')) {
         Continue
       }
       $Flat[('{0}.{1}' -f $PageName, $Leaf)] = $Page[$Leaf]
@@ -324,12 +323,12 @@ If ([System.String]::IsNullOrEmpty([System.String]$Flat['logging.verbose_log_dir
   $Flat['logging.verbose_log_directory'] = '{0}:\{1}\Logs' -f $DatabaseDrive, $DatabaseDirectory
 }
 
-# Validate and translate in one pass over what the caller asked for. Every name is checked
-# against the table before anything is read or written, so a typo fails here rather than
-# becoming a row the product stores and never reads.
+# Validate and translate in one pass: every name is checked against the table before anything
+# is read or written, so a typo fails before it can become a row nothing reads.
 $Setting = @{}
 $DatabaseVariable = @{}
 $StoreName = @{}
+$Unexported = @{}
 ForEach ($Given In @($Flat.Keys)) {
   $Known = @($SETTINGS | Where-Object -FilterScript { $PSItem.Param -eq $Given })
   If ($Known.Count -ne 1) {
@@ -363,10 +362,13 @@ ForEach ($Given In @($Flat.Keys)) {
   If ($Entry.ContainsKey('Store')) {
     $StoreName[$Entry.Name] = $Entry.Store
   }
+  If ($Entry.ContainsKey('Unexported')) {
+    $Unexported[$Entry.Name] = $True
+  }
 }
 
-# The run's working state: the three verdict lists the result reports, the queued command-line
-# writes the settle poll waits on, and the database path both write mechanisms share.
+# Working state: the verdict lists, the queued writes the settle poll waits on, the shared
+# database path.
 $Applied = [System.Collections.Generic.List[System.String]]::new()
 $Unchanged = [System.Collections.Generic.List[System.String]]::new()
 $Ignored = [System.Collections.Generic.List[System.String]]::new()
@@ -374,10 +376,24 @@ $CliWritten = @{}
 $DatabasePath = [System.String]::Empty
 
 Try {
-  # Two passes over the same reading code: once to decide what to write, once to
-  # prove it landed. The export is the product's own account of its
-  # configuration, and the only one that cannot be satisfied by a row nothing
-  # reads.
+  If ($Setting.Count -gt 0) {
+    # Where the database lives is a deployment choice, so it is asked for rather than assumed:
+    # the product reports its own path. The variable write, the settle poll and the unexported
+    # reads below all share it.
+    $Info = & $CLI_PATH 'SystemInfo' 2>&1
+    If ($LASTEXITCODE -ne 0) {
+      Throw ('SystemInfo failed with exit code {0}' -f $LASTEXITCODE)
+    }
+    $DatabasePath = (
+      @($Info | Where-Object -FilterScript { $PSItem -match '^\s*Database\s*:' }) |
+        Select-Object -First 1
+    ) -replace '^\s*Database\s*:\s*', ''
+    If (-not $DatabasePath) {
+      Throw 'SystemInfo did not report a database path'
+    }
+  }
+
+  # Two passes over the same reading code: decide, then prove.
   For ($Pass = 0; $Pass -lt 2; $Pass++) {
     If (Test-Path -LiteralPath:$EXPORT_PATH) {
       Remove-Item -LiteralPath:$EXPORT_PATH -Force
@@ -388,10 +404,9 @@ Try {
     }
 
     # Flatten the export to element.parent dotted names. LocalName, never Name: some grouping
-    # elements carry a 'name' ATTRIBUTE the XML adapter surfaces in place of the tag, which once
-    # hid nine stored settings behind their view-model spelling (measured 2026-08-21). Explicit
-    # stack because a script carries no functions to recurse with; the file is read whole and
-    # deleted at once -- it carries user names, so the shortest life is the cheapest care.
+    # elements carry a 'name' ATTRIBUTE the adapter surfaces in place of the tag, which once hid
+    # nine stored settings (measured 2026-08-21). Explicit stack -- no functions to recurse
+    # with; read whole, deleted at once.
     $Current = @{}
     $Document = [System.Xml.XmlDocument]::new()
     $Document.LoadXml((Get-Content -LiteralPath:$EXPORT_PATH -Raw))
@@ -417,9 +432,8 @@ Try {
         } Else {
           $Item.Node.InnerText
         }
-        # Indexed under both spellings: the product's command line takes the
-        # two-part name, while the export nests some sections under a view
-        # model, and a caller should not have to know which.
+        # Indexed under both spellings: some sections nest under a view model, and a caller
+        # should not have to know which.
         $Trail = [System.String[]]$Item.Trail
         $Current[($Trail -join '.')] = $Value
         If ($Trail.Count -ge 2) {
@@ -428,14 +442,36 @@ Try {
       }
     }
 
+    $PersistedNow = @{}
+    If ($Unexported.Count -gt 0) {
+      ForEach ($Row In @(& $SQLITE_PATH $DatabasePath 'SELECT Name, Value FROM Settings;' 2>&1)) {
+        $Parts = ([System.String]$Row).Split('|', 2)
+        If ($Parts.Count -eq 2) {
+          $PersistedNow[$Parts[0]] = $Parts[1]
+        }
+      }
+      If ($LASTEXITCODE -ne 0) {
+        Throw ('Reading the settings table failed with exit code {0}' -f $LASTEXITCODE)
+      }
+    }
+
+    # One effective view over both stores: the few measured names the export never publishes
+    # read from their database rows, everything else from the export.
+    $Effective = @{}
+    ForEach ($Name In @($Setting.Keys)) {
+      $Effective[$Name] = If ($Unexported.ContainsKey($Name)) {
+        $PersistedNow[$(If ($StoreName.ContainsKey($Name)) { $StoreName[$Name] } Else { $Name })]
+      } Else {
+        $Current[$Name]
+      }
+    }
+
     If ($Pass -eq 0) {
-      # Decide first, in one pass over the caller's names: a value the export already shows is
-            # recorded as unchanged, everything else queues for the write. A name the export does not
-      # carry still queues -- it may be one the product stores without publishing, and the
-      # verify pass is what decides whether it counted.
+      # Decide first: a value the store already shows is unchanged, everything else queues. A
+      # name neither store carries still queues -- the verify pass decides whether it counted.
       $ToWrite = [System.Collections.Generic.List[System.String]]::new()
       ForEach ($Name In @($Setting.Keys)) {
-        If ($Current.ContainsKey($Name) -and $Current[$Name] -eq [System.String]$Setting[$Name]) {
+        If ($Null -ne $Effective[$Name] -and [System.String]$Effective[$Name] -eq [System.String]$Setting[$Name]) {
           $Unchanged.Add($Name)
         } Else {
           $ToWrite.Add($Name)
@@ -445,23 +481,6 @@ Try {
         $Applied.AddRange($ToWrite)
         Break
       }
-      If ($ToWrite.Count -gt 0) {
-        # Where the database lives is a deployment choice, so it is asked for rather than
-        # assumed: the product reports its own path and cannot be wrong about it. Resolved once,
-        # here, because both the system-variable write and the settle poll below read it.
-        $Info = & $CLI_PATH 'SystemInfo' 2>&1
-        If ($LASTEXITCODE -ne 0) {
-          Throw ('SystemInfo failed with exit code {0}' -f $LASTEXITCODE)
-        }
-        $DatabasePath = (
-          @($Info | Where-Object -FilterScript { $PSItem -match '^\s*Database\s*:' }) |
-            Select-Object -First 1
-        ) -replace '^\s*Database\s*:\s*', ''
-        If (-not $DatabasePath) {
-          Throw 'SystemInfo did not report a database path'
-        }
-      }
-
       ForEach ($Name In $ToWrite) {
         $Desired = [System.String]$Setting[$Name]
         # A few families store under a different spelling than the export publishes --
@@ -497,9 +516,9 @@ Try {
         }
       }
 
-      # Edits drain through the service at ~8s apiece (measured 2026-08-21) and the export shows
-      # the PENDING state, so the run waits for every queued edit's DATABASE row: applied then
-      # means persisted, whatever restarts next. A reset settles when its row is gone.
+      # Edits drain through the service at ~8s apiece (measured 2026-08-21), so the run waits
+      # for every queued edit's DATABASE row: applied means persisted, whatever restarts next.
+      # A reset settles when its row is gone.
       If ($CliWritten.Count -gt 0) {
         $Deadline = [System.DateTime]::UtcNow.AddSeconds($SETTLE_DEADLINE_SECONDS)
         While ($True) {
@@ -530,14 +549,13 @@ Try {
         }
       }
     } Else {
-      # Prove it. Anything asked for that does not read back is a setting the
-      # product accepted and does not use, which is the failure this script
-      # exists to surface.
+      # Prove it: anything that does not read back was accepted and unused -- the failure this
+      # script exists to surface.
       ForEach ($Name In @($Setting.Keys)) {
         If ($Unchanged -contains $Name) {
           Continue
         }
-        If ($Current.ContainsKey($Name) -and $Current[$Name] -eq ([System.String]$Setting[$Name])) {
+        If ($Null -ne $Effective[$Name] -and [System.String]$Effective[$Name] -eq [System.String]$Setting[$Name]) {
           $Applied.Add($Name)
         } Else {
           $Ignored.Add($Name)

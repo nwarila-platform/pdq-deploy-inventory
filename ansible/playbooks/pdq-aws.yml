@@ -257,6 +257,7 @@
             alerts:
               auto_update_check_enabled: false
               show_webcast_alerts: false
+              release_channel: 'Beta'
             auto_download:
               enable_auto_download: false
               approval: 'Manual'
@@ -280,6 +281,9 @@
             interface:
               color_theme: 'Win11Dark'
               disable_splash_screen: true
+              show_dashboard_on_launch: false
+              show_missing_package_popup_during_export: false
+              include_dependency_packages_in_export: false
             logging:
               send_anonymous_exception_data: false
               record_error: false
@@ -294,6 +298,7 @@
               use_logging_configuration_file: false
               logging_configuration_file: 'E:\PDQ Deploy\audit-log.config'
             mail_server:
+              authentication_method: 'OAuth2'
               smtp_server: 'smtp.example.test'
               enable_ssl: true
               smtp_user: 'pdq-mailer@example.test'

@@ -254,13 +254,100 @@
           server:
             listen_addresses: [ "{{ aws_private_ip_address }}" ]
 
-          # Settings are named by the script's parameters, not the product's dotted spelling.
-          # An unlisted name is unmanaged, which is a different thing from one set to the
-          # product's default.
+          # EVERYTHING off the product default, deliberately: every severity, and every
+          # settable name, so a fresh install visibly differs on every console page. One
+          # exception: the audit log's custom-config LOADER stays at its default (off), because
+          # enabling it against a file that does not exist risks the product's own logging; its
+          # path is still set and visible. Settings are named by the script's parameters, not
+          # the product's dotted spelling.
+          event_log:
+            error: false
+            warning: false
+            information: false
+            debug: true
+
           settings:
-            PackageLibraryAutoDownloadArchiveCopiesToKeep: 6
-            DeploymentCleanupDays: 40
+            # Analytics
+            AnalyticsAlertFirstTimeAnalyticsDialog: false
+            AnalyticsCollectAnalyticsUsage: true
+            # Package library
+            PackageLibraryAutoDeployDefaultApprovalMode: 'Manual'
+            PackageLibraryAutoDeployDefaultDelayedApprovalTimeSpan: '3.00:00:00'
+            PackageLibraryAutoDeployDefaultIsEnabled: false
+            PackageLibraryAutoDownloadArchiveCopiesToKeep: 9
+            PackageLibraryAutoDownloadArchiveIsArchiving: true
+            # Database backup
+            DatabaseDatabaseBackupCompress: false
+            DatabaseDatabaseBackupIsEnabled: false
+            DatabaseDatabaseBackupKeep: 15
+            # Deployments
+            DeploymentCleanupDays: 45
+            DeploymentComputerTimeout: 120
+            DeploymentRunAs: 'LocalSystem'
+            DeploymentScanAfterDeployment: false
+            # Offline targets
+            DeploymentOfflineIsRetryEnabled: true
+            DeploymentOfflineRetryInterval: '02:30:00'
+            DeploymentOfflineRetryMaxTries: 24
+            DeploymentOfflineTryWol: true
+            DeploymentOfflineUsePing: true
+            # Logging and audit
+            LoggingSentryCanSendAnonymousExceptionData: false
+            LoggingAuditLogArchiveSchedule: 'Friday'
+            LoggingAuditLogCustomConfigPath: 'E:\PDQ Deploy\audit-log.config'
+            LoggingAuditLogDaysRecordsKept: 45
+            LoggingAuditLogNumArchivedFiles: 8
+            LoggingAuditLogVerboseFileDirectory: 'E:\PDQ Deploy\Logs'
+            LoggingAuditLogWriteVerboseFile: false
+            # Mail server
+            MailServerEnableSSL: true
+            MailServerHost: 'smtp.example.test'
+            MailServerSender: 'pdq-sender@example.test'
+            MailServerUser: 'pdq-mailer@example.test'
+            MailServerOAuth2ClientId: 'demo-oauth-client-id'
+            MailServerOAuth2TenantId: 'demo-oauth-tenant-id'
+            MailServerOAuth2RedirectUri: 'https://localhost/demo-redirect'
+            MailServerOAuth2Provider: 'Google'
+            MailServerOAuth2Sender: 'oauth-sender@example.test'
+            MailServerMSGraphAPIClientId: 'demo-graph-client-id'
+            MailServerMSGraphAPITenantId: 'demo-graph-tenant-id'
+            MailServerMSGraphAPICloudHostUrl: 'Azure US Government'
+            MailServerMSGraphAPISender: 'graph-sender@example.test'
+            # Performance
+            PerformanceBandwidthLimitPercent: 75
             PerformanceCopyMode: 'Pull'
+            PerformanceMaxDeploymentThreads: 16
+            PerformanceMaxServerThreads: 64
+            PerformanceCredentialBatchSize: 300
+            PerformanceIntegrationMessageTimeoutSeconds: 60
+            # Printing
+            PrintingFooterAlignment: 'Left'
+            PrintingFooterText: 'FOOTER-CHECK'
+            PrintingHeaderAlignment: 'Right'
+            PrintingHeaderText: 'HEADER-CHECK'
+            PrintingInColor: false
+            PrintingMarginBottom: 25
+            PrintingMarginLeft: 25
+            PrintingMarginRight: 25
+            PrintingMarginTop: 25
+            # Proxy
+            ProxyHostName: 'proxy.example.test'
+            ProxyPort: 8888
+            ProxyUserName: 'proxy-user'
+            ProxyUseSystemHost: false
+            # Repository
+            RepositoryEnableUnusedFilesWarning: false
+            RepositoryExclusions: '*.tmp;*.partial'
+            # Spiceworks
+            SpiceworksHostName: 'spiceworks.example.test'
+            SpiceworksIsEnabled: false
+            SpiceworksPort: 8443
+            SpiceworksSyncInterval: '06:00:00'
+            SpiceworksUserName: 'spice-user'
+            SpiceworksUseSSL: false
+            # Target service
+            TargetServiceRemoteDirectory: 'ADMIN$\PDQService'
+            TargetServiceSharePath: 'C$\PDQStage'
 
     #endregion --- [ Roles: PDQ Deploy ] ------------------------------------------------------ #
 

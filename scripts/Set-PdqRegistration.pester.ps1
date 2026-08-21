@@ -52,7 +52,7 @@ BeforeAll {
 
   # Registry door: the script reads exactly one key. Anything else is a
   # mistake this stub surfaces by refusing it.
-  Function global:Get-ItemProperty {
+  Function Get-ItemProperty {
     [CmdletBinding()]
     Param ([Parameter()] [System.String]$LiteralPath)
     If ($LiteralPath -ne 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy') {
@@ -62,7 +62,7 @@ BeforeAll {
   }
 
   # Command-line door: SystemInfo names the database, nothing else is asked.
-  Function global:C:\Program` Files` `(x86`)\Admin` Arsenal\PDQ` Deploy\PDQDeploy.exe {
+  New-Item -Force -Path 'function:C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe' -Value {
     $global:CliCalls += , @($args)
     $global:LASTEXITCODE = 0
     @('  Console Version : 20.1.8.0', '  Database : C:\fake\Database.db')
@@ -70,7 +70,7 @@ BeforeAll {
 
   # Sqlite door: SELECTs read the arrays; the write call applies each
   # statement so later reads observe it. Row shape is sqlite's own pipe join.
-  Function global:C:\Program` Files` `(x86`)\Admin` Arsenal\PDQ` Deploy\sqlite3.exe {
+  New-Item -Force -Path 'function:C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\sqlite3.exe' -Value {
     $Database, $Sql = $args
     $global:SqliteCalls += , @($Database, $Sql)
     $global:LASTEXITCODE = If ($global:FakeSqliteFails) { 1 } Else { 0 }
@@ -101,16 +101,6 @@ BeforeAll {
 }
 
 Describe 'Set-PdqRegistration' {
-  AfterAll {
-    # The stubs are global so a child SCRIPT resolves them; they must not outlive the container.
-    # The registry stub in particular THROWS on any path it does not expect, so a leak breaks
-    # whatever the session runs next -- the sibling spec once did exactly that to the build.
-    ForEach ($F in 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe',
-      'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\sqlite3.exe', 'Get-ItemProperty') {
-      Remove-Item -LiteralPath ('function:global:' + $F) -Force -ErrorAction 'SilentlyContinue'
-    }
-  }
-
   BeforeEach {
     $env:COMPUTERNAME = 'TESTBOX'
     $global:FakeLicenseBlob = New-FakeLicense -Id 'lic-0001' -Email 'someone@example.com'

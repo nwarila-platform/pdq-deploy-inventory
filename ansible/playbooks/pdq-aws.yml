@@ -313,6 +313,8 @@
               graph_cloud: 'Azure US Government'
               graph_sender: 'graph-sender@example.test'
             performance:
+              service_manager_tcp: 'Timeout'
+              service_manager_tcp_timeout_seconds: 21
               concurrent_targets_per_deployment: 16
               total_concurrent_targets: 64
               copy_mode: 'Pull'

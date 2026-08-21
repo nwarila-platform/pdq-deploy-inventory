@@ -423,6 +423,16 @@ Try {
           If ($LASTEXITCODE -ne 0) {
             Throw ('Database write failed for {0} with exit code {1}' -f $Name, $LASTEXITCODE)
           }
+        } ElseIf ($Desired -eq [System.String]::Empty) {
+          # The command line refuses -Set with an empty value, and blank IS how the product
+          # ships many of these. Its own way back to blank is -Reset, which deletes the
+          # override row so the compiled default shows through; the verify pass still proves
+          # the result reads back blank, so a compiled default that is NOT blank fails
+          # honestly instead of pretending.
+          $Null = & $CLI_PATH 'Settings' '-Name' $Name '-Reset' 2>&1
+          If ($LASTEXITCODE -ne 0) {
+            Throw ('Settings -Reset failed for {0} with exit code {1}' -f $Name, $LASTEXITCODE)
+          }
         } Else {
           $Null = & $CLI_PATH 'Settings' '-Name' $Name '-Set' $Desired 2>&1
           If ($LASTEXITCODE -ne 0) {

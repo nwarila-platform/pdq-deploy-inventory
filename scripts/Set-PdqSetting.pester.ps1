@@ -152,10 +152,18 @@ Describe 'Set-PdqSetting' {
           Return @('Database     : E:\PDQ Deploy\Database.db', 'Version      : 20.1.8.0')
         }
         'Settings' {
-          # -Name <n> -Set <v>; a name the product does not use is accepted and
-          # discarded, which is the whole reason the script verifies.
+          # -Name <n> -Set <v>, or -Name <n> -Reset, which deletes the override
+          # so the compiled default (blank, in this model) shows through. A name
+          # the product does not use is accepted and discarded either way, which
+          # is the whole reason the script verifies.
           $Name = $args[2]
-          If ($global:FakeIgnored -notcontains $Name) { $global:FakeSettings[$Name] = $args[4] }
+          If ($global:FakeIgnored -notcontains $Name) {
+            If ($args[3] -eq '-Reset') {
+              $global:FakeSettings[$Name] = ''
+            } Else {
+              $global:FakeSettings[$Name] = $args[4]
+            }
+          }
           $global:LASTEXITCODE = 0
         }
         Default { $global:LASTEXITCODE = 1 }
@@ -237,6 +245,19 @@ Describe 'Set-PdqSetting' {
       $Result.changed | Should -BeFalse
       $Result.unchanged | Should -Contain 'DeploymentSettings.CleanupDays'
       @($global:FakeCliCalls | Where-Object { $_ -like 'Settings*' }).Count | Should -Be 0
+    }
+
+    It 'restores a blank default by resetting, never by writing an empty value' {
+      # The command line refuses -Set with an empty value, so blank travels as
+      # -Reset -- measured 2026-08-21 after a converge died mid-campaign and the
+      # revert to blank was refused with 'Parameter Set requires a single value'.
+      $global:FakeSettings['AuditLogSettings.CustomConfigPath'] = 'left-behind'
+      $Result = & $script:ScriptPath -Setting @{ LoggingAuditLogCustomConfigPath = '' } |
+        ConvertFrom-Json
+      $Result.applied | Should -Be @('AuditLogSettings.CustomConfigPath')
+      $global:FakeSettings['AuditLogSettings.CustomConfigPath'] | Should -Be ''
+      ($global:FakeCliCalls -join "; ") | Should -Match ([regex]::Escape('-Reset'))
+      ($global:FakeCliCalls -join "; ") | Should -Not -Match ([regex]::Escape('-Set ;'))
     }
 
     It 'writes only the setting that differs, leaving the rest alone' {

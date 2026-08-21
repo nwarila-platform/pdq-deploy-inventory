@@ -87,9 +87,12 @@ BeforeAll {
       If ($Parts[0] -eq 'AutoDeployDefaultSettings') {
         # Rendered the way the product nests it: a view model above the section,
         # so the leaf's full trail is three deep and only its last two
-        # components match the command line's name.
+        # components match the command line's name. The section element carries a
+        # 'name' ATTRIBUTE exactly as the product writes it: that attribute is what
+        # PowerShell's XML adapter hands back in place of the tag when a walker asks
+        # for .Name, which once cost this script every setting nested here.
         $Lines.Add('  <PackageLibrarySettingsViewModel>')
-        $Lines.Add(('    <{0}>' -f $Parts[0]))
+        $Lines.Add(('    <{0} name="{0}ViewModel">' -f $Parts[0]))
         $Lines.Add(('      <{0} value="{1}" />' -f $Parts[1], $Value))
         $Lines.Add(('    </{0}>' -f $Parts[0]))
         $Lines.Add('  </PackageLibrarySettingsViewModel>')

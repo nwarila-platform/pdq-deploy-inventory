@@ -333,7 +333,13 @@ Try {
     }
 
     # Flatten the export to the names the command line uses: an element and its
-    # parent joined by a dot. Walked with an explicit stack because a script is
+    # parent joined by a dot. LocalName, never Name: several of the product's
+    # grouping elements carry a 'name' ATTRIBUTE, and PowerShell's XML adapter
+    # surfaces attributes as properties, so .Name hands back that attribute
+    # instead of the tag. Measured 2026-08-21 -- it renamed nine settings'
+    # parents to their view-model spelling, so each looked absent from the
+    # export and the script reported the product had discarded a write it had
+    # actually stored. Walked with an explicit stack because a script is
     # one process stage and carries no functions of its own to recurse with.
     # Read it whole and delete it before parsing, so the file exists for the
     # export plus one read and no longer. The read goes through the provider
@@ -350,7 +356,7 @@ Try {
     $Pending = [System.Collections.Stack]::new()
     ForEach ($Root In $Document.DocumentElement.ChildNodes) {
       If ($Root.NodeType -eq [System.Xml.XmlNodeType]::Element) {
-        $Pending.Push([PSCustomObject]@{ Node = $Root; Trail = @($Root.Name) })
+        $Pending.Push([PSCustomObject]@{ Node = $Root; Trail = @($Root.LocalName) })
       }
     }
     While ($Pending.Count -gt 0) {
@@ -360,7 +366,7 @@ Try {
         })
       If ($Children.Count -gt 0) {
         ForEach ($Child In $Children) {
-          $Pending.Push([PSCustomObject]@{ Node = $Child; Trail = ($Item.Trail + $Child.Name) })
+          $Pending.Push([PSCustomObject]@{ Node = $Child; Trail = ($Item.Trail + $Child.LocalName) })
         }
       } Else {
         $Value = If ($Item.Node.HasAttribute('value')) {

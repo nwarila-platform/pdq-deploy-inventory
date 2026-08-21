@@ -101,18 +101,25 @@ pdq_deploy_defaults:
   # blank on a host where someone configured them by hand rather than leaving a half-configured
   # integration in place.
   #
-  # RepositoryPath is absent because the role owns it: it derives the value from the share it
-  # publishes, so the folder, its permissions, its share name and the product's repository cannot
-  # disagree. InventoryScanProfileId is absent because it names an object inside PDQ Inventory,
-  # so there is no deterministic default to state.
-  #
-  # NINE more are absent because the product will not store them. Measured 2026-08-20: every
-  # member of AutoDeployDefaultSettings, AutoDownloadArchiveSettings and DatabaseBackupSettings --
-  # including its backup directory -- was accepted by the command line and then read back
-  # unchanged. They are real settings the export publishes, so the script still carries their
-  # names and a deployment that declares one fails loudly rather than silently doing nothing;
-  # they are simply not reachable from here, so they cannot be stated as a default.
+  # RepositoryPath is absent because the role owns it, deriving the value from the share it
+  # publishes so the folder, its permissions, its share name and the product's repository cannot
+  # disagree; the database backup directory is derived the same way, for the same reason. Both
+  # are UNC paths naming this machine, so neither can be stated here as one host's literal value.
+  # InventoryScanProfileId is absent because it names an object inside PDQ Inventory, so there is
+  # no deterministic default to state.
   settings:
+    # Package library
+    PackageLibraryAutoDeployDefaultApprovalMode: 'Delayed'
+    PackageLibraryAutoDeployDefaultDelayedApprovalTimeSpan: '7.00:00:00'
+    PackageLibraryAutoDeployDefaultIsEnabled: true
+    PackageLibraryAutoDownloadArchiveCopiesToKeep: 5
+    PackageLibraryAutoDownloadArchiveIsArchiving: false
+
+    # Database backup
+    DatabaseDatabaseBackupCompress: true
+    DatabaseDatabaseBackupIsEnabled: true
+    DatabaseDatabaseBackupKeep: 10
+
     # Deployments
     DeploymentCleanupDays: 30
     DeploymentComputerTimeout: 60

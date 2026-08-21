@@ -813,9 +813,9 @@
     # path for that reason. Derived from the same inputs that made the share, so the folder, its
     # permissions, its share name and the product's repository can never disagree; a caller
     # therefore does not declare RepositoryPath, and validate rejects it if they try. The database
-    # backup directory is NOT set the same way, though its default has the same host-specific
-    # shape: the product accepts a write to it and stores nothing (measured 2026-08-20), so it is
-    # left where the product puts it rather than pretended to be managed.
+    # backup directory is derived the same way and for the same reason: the product writes it as a
+    # UNC path naming this machine and this database drive, so it cannot sit in defaults as one
+    # host's literal value without aiming every other host at that one.
     #
     # Runs last because the product's command line needs the service up, which the regions
     # above guarantee. The referenced .ps1 is MATERIALIZED from scripts/ by
@@ -838,6 +838,9 @@
       vars:
         ansible_become_flags: 'logon_type=batch'
         ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
+        __backup_unc__: >-
+          \\{{ __pdq_deploy_computer_name__.value }}\{{ pdq_deploy_running.database.drive
+             }}$\{{ pdq_deploy_running.database.directory }}\Backups
         __repository_unc__: >-
           \\{{ __pdq_deploy_computer_name__.value
              }}\{{ pdq_deploy_running.repository.share_name }}
@@ -848,7 +851,8 @@
         parameters:
           Setting: >-
             {{ pdq_deploy_running.settings
-               | combine({ 'RepositoryPath': __repository_unc__ }) }}
+               | combine({ 'RepositoryPath': __repository_unc__,
+                           'DatabaseDatabaseBackupBackupDirectory': __backup_unc__ }) }}
         remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqSetting.ps1') }}"
 

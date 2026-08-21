@@ -14,13 +14,8 @@
 
         The export is a FILE only, read whole and deleted at once; it carries no secrets.
 
-        Org scripts are a single straightforward process stage: [ Initialization ], [ Main ]
-        (read -> act -> verify -> ONE result object), [ Output ].
-
-        Shipped by the org three-file convention: developed under scripts/ with its sibling
-        Set-PdqSetting.pester.ps1 spec, while the pdq_deploy role carries
-        files/Set-PdqSetting.ps1.stub, which the build resolves by dropping this file into the
-        role.
+        One process stage (read -> act -> verify -> one result); shipped by the org three-file
+        convention (the scripts/ pair plus the role's .stub).
 
     .PARAMETER DebugLevel
         Three-digit control string configuring independent debugging functions, one digit each.
@@ -270,24 +265,15 @@ New-Variable -Force -Name:'SETTLE_POLL_MILLISECONDS' -Option:('Private', 'ReadOn
 #region ------ [ Main ] ---------------------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Main'
 
-# The caller declares preferences as the console shows them: a map of PAGES, each holding that
-# page's settings. The names below are owned by other tasks -- the per-user alerts and interface
-# theme/splash pages, the logging page's record_* switches, the performance page's
-# service_manager_tcp pair. They are set aside here by EXACT name: everything a page holds that is
-# not listed flattens to a page.setting name and must match the table, so a misspelled routed key
-# fails as an unknown setting instead of silently reverting to its default.
+# Names other tasks own -- the per-user alerts/interface pages, the logging record_* switches, the
+# performance service_manager_tcp pair -- set aside by EXACT name so a misspelled routed key fails
+# as an unknown setting instead of silently reverting to its default.
 New-Variable -Force -Name:'ROUTED_NAMES' -Option:('Private', 'ReadOnly') -Value:(
   [System.Collections.Generic.HashSet[System.String]]@(
-    'alerts.auto_update_check_enabled',
-    'alerts.show_webcast_alerts',
-    'alerts.release_channel',
-    'interface.color_theme',
-    'interface.disable_splash_screen',
-    'logging.record_error',
-    'logging.record_warning',
-    'logging.record_informational',
-    'logging.record_debug',
-    'performance.service_manager_tcp',
+    'alerts.auto_update_check_enabled', 'alerts.show_webcast_alerts', 'alerts.release_channel',
+    'interface.color_theme', 'interface.disable_splash_screen',
+    'logging.record_error', 'logging.record_warning', 'logging.record_informational',
+    'logging.record_debug', 'performance.service_manager_tcp',
     'performance.service_manager_tcp_timeout_seconds'
   )
 )
@@ -447,9 +433,8 @@ Try {
 
     $PersistedNow = @{}
     If ($Unexported.Count -gt 0) {
-      # -csv, not the default list mode: a value may hold a comma or a newline (a printing
-      # header), which pipe-delimited line parsing would split and mangle. CSV quotes such a
-      # value, and ConvertFrom-Csv reads it whole once the native lines are rejoined.
+      # -csv so a value holding a comma or newline (a printing header) survives: list mode would
+      # split it; CSV quotes it and ConvertFrom-Csv reads it whole once the native lines rejoin.
       $Rows = @(& $SQLITE_PATH -csv $DatabasePath 'SELECT Name, Value FROM Settings;' 2>&1) -join "`n"
       If ($LASTEXITCODE -ne 0) {
         Throw ('Reading the settings table failed with exit code {0}' -f $LASTEXITCODE)

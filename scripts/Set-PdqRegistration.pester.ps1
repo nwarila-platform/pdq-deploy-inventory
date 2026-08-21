@@ -101,6 +101,16 @@ BeforeAll {
 }
 
 Describe 'Set-PdqRegistration' {
+  AfterAll {
+    # The stubs are global so a child SCRIPT resolves them; they must not outlive the container.
+    # The registry stub in particular THROWS on any path it does not expect, so a leak breaks
+    # whatever the session runs next -- the sibling spec once did exactly that to the build.
+    ForEach ($F in 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe',
+      'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\sqlite3.exe', 'Get-ItemProperty') {
+      Remove-Item -LiteralPath ('function:global:' + $F) -Force -ErrorAction 'SilentlyContinue'
+    }
+  }
+
   BeforeEach {
     $env:COMPUTERNAME = 'TESTBOX'
     $global:FakeLicenseBlob = New-FakeLicense -Id 'lic-0001' -Email 'someone@example.com'

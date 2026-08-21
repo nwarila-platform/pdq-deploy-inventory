@@ -42,7 +42,7 @@ BeforeAll {
     Remove-Variable -Name 'Ansible' -Scope 'Global' -Force -ErrorAction 'SilentlyContinue'
   }
 
-  Function Assert-HiveLoaded {
+  Function global:Assert-HiveLoaded {
     Param ([System.String]$At)
     # HKCU is the caller's own always-mounted hive; only the transient mount is gated.
     If ($At -notlike 'HKCU:*' -and -not $global:FakeHiveLoaded) { Throw 'hive is not loaded' }
@@ -98,13 +98,17 @@ BeforeAll {
   }
 }
 
-AfterAll {
-  ForEach ($F in 'C:\Windows\System32\reg.exe', 'Test-Path', 'Get-ItemProperty', 'New-Item', 'New-ItemProperty') {
-    Remove-Item -LiteralPath ('function:global:' + $F) -Force -ErrorAction 'SilentlyContinue'
-  }
-}
-
 Describe 'Set-PdqConsoleDefault' {
+  AfterAll {
+    # The stubs are global so a child SCRIPT resolves them; they must not outlive the container,
+    # or the next thing in this session to call Test-Path meets a stub whose helper is gone --
+    # exactly how this spec once broke the shared build session while passing its own tests.
+    ForEach ($F in 'C:\Windows\System32\reg.exe', 'Test-Path', 'Get-ItemProperty', 'New-Item',
+      'New-ItemProperty', 'Assert-HiveLoaded') {
+      Remove-Item -LiteralPath ('function:global:' + $F) -Force -ErrorAction 'SilentlyContinue'
+    }
+  }
+
   BeforeEach {
     $global:FakeHive = @{}
     $global:FakeHiveLoaded = $False

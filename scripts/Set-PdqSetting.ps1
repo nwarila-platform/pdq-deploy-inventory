@@ -8,14 +8,11 @@
 
     .DESCRIPTION
         PDQ's command line accepts ANY setting name -- a dead row still reports success -- so
-        an exit code proves nothing. Three legs close that gap, each proven by a measured
-        failure: the SETTINGS table kills typos before anything runs, the settle poll outwaits
-        the service's asynchronous drain so a restart cannot eat queued writes, and the
-        product's own export is the verify oracle -- what does not read back is reported as
-        ignored and fails the run.
+        an exit code proves nothing. Three proven legs close the gap: the SETTINGS table kills
+        typos before anything runs, the settle poll outwaits the service's asynchronous drain,
+        and the product's export is the verify oracle -- what does not read back fails the run.
 
-        The product exports only to a FILE, read whole and deleted at once; it carries user
-        names and no secret element of any kind.
+        The export is a FILE only, read whole and deleted at once; it carries no secrets.
 
         Org scripts are a single straightforward process stage: [ Initialization ], [ Main ]
         (read -> act -> verify -> ONE result object), [ Output ].
@@ -44,13 +41,13 @@
         the run. Absent means unmanaged; values keep the caller's types (measured 2026-08-20).
 
     .PARAMETER DatabaseDrive
-        The drive letter the database lives on; anchors the derived backup and log locations.
+        Drive letter the database lives on; anchors the derived backup and log locations.
 
     .PARAMETER DatabaseDirectory
-        The database folder on that drive; the derived locations sit beside it.
+        Database folder on that drive; the derived locations sit beside it.
 
     .PARAMETER RepositoryShareName
-        The share this machine publishes; the repository path is composed from it.
+        Share this machine publishes; the repository path is composed from it.
 
     .EXAMPLE
         .\Set-PdqSetting.ps1 -Preference @{ deployments = @{ cleanup_days = 45 } } -DatabaseDrive 'E' -DatabaseDirectory 'PDQ Deploy' -RepositoryShareName 'AppRepo$'
@@ -91,13 +88,13 @@ Param (
 #region ------ [ Initialization ] ------------------------------------------------------------ #
 Write-Debug -Message:'Entering Stage: Initialization'
 
-# Initialize STATIC log level names, indexed by LogLevel digit position.
+# Log level names, by LogLevel digit position.
 New-Variable -Force -Name:'LOG_LEVELS' -Option:('Private', 'ReadOnly') -Value:(
   [System.String[]]@('Verbose', 'Debug', 'Information', 'Warning', 'Error', 'Fatal')
 )
 
-# The product's command line, its sqlite tool, and where its export is staged. Fixed, not
-# offered: the installer ignores every documented relocation switch (measured 2026-08-18).
+# The product's tools and export staging. Fixed: the installer ignores every documented
+# relocation switch (measured 2026-08-18).
 New-Variable -Force -Name:'CLI_PATH' -Option:('Private', 'ReadOnly') -Value:(
   [System.String]'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
 )
@@ -200,7 +197,7 @@ New-Variable -Force -Name:'SETTINGS' -Option:('Private', 'ReadOnly') -Value:(
   )
 )
 
-# Initialize the custom stream preferences; the built-in ones already exist.
+# Custom stream preferences; built-ins already exist.
 New-Variable -Verbose:$False -Force -Name:'ErrorPreference' -Value:(
   [System.Management.Automation.ActionPreference]::Stop
 )
@@ -215,8 +212,7 @@ For ($L = 0; $L -lt 6; $L++) {
   )
 }
 
-# Configure the debug levels: first digit ErrorActionPreference, second digit
-# Set-PSDebug, third digit Set-StrictMode.
+# Debug digits: ErrorActionPreference, Set-PSDebug, Set-StrictMode.
 $ErrorActionPreference = [System.Management.Automation.ActionPreference][System.Int32]::Parse($DebugLevel.Substring(0, 1))
 Switch ($DebugLevel.Substring(1, 1)) {
   '0' { Set-PSDebug -Off }
@@ -231,12 +227,9 @@ If ($DebugLevel.Substring(2, 1) -eq '0') {
   Set-StrictMode -Version:([System.String]$DebugLevel.Substring(2, 1))
 }
 
-# Universal trap used to help with debugging efforts. The original template's
-# Wait-Debugger/Exit are interactive-host machinery; under the Ansible
-# transport the trap logs and rethrows (Break) so the task fails honestly.
+# Universal trap: log diagnostics, rethrow so the task fails honestly. Wrapped so a partial
+# error record can never replace the original failure with a StrictMode property error.
 Trap {
-  # Diagnostics are wrapped so a partially-populated error record can never
-  # replace the original failure with a StrictMode property error.
   Try {
     If ($PSItem.Exception.PSObject.Properties.Name -contains 'ErrorRecord') {
       Write-Debug -Message:(
@@ -257,8 +250,7 @@ Trap {
   Break
 }
 
-# Under win_powershell the transport provides $Ansible; standalone (a dev
-# shell or a Pester spec) it does not, so the script creates a faithful stub.
+# Standalone (a dev shell or spec) has no transport-provided $Ansible; stub it faithfully.
 $StandaloneRun = $Null -eq (Get-Variable -Name:'Ansible' -ValueOnly -ErrorAction:'SilentlyContinue')
 If ($StandaloneRun) {
   $Ansible = [PSCustomObject]@{
@@ -269,9 +261,8 @@ If ($StandaloneRun) {
   }
 }
 
-# How long a queued edit may take to persist before the run fails, and how often to look. Sized
-# from the measured ~8-seconds-per-edit drain against the largest realistic queue; the spec's
-# stalled fake exercises the timeout, so standalone runs keep it short.
+# Settle window and poll cadence, sized from the measured ~8s-per-edit drain; standalone runs
+# keep them short for the spec's stalled fake.
 New-Variable -Force -Name:'SETTLE_DEADLINE_SECONDS' -Option:('Private', 'ReadOnly') -Value:(
   [System.Int32]$(If ($StandaloneRun) { 3 } Else { 600 })
 )
@@ -375,6 +366,7 @@ $Applied = [System.Collections.Generic.List[System.String]]::new()
 $Unchanged = [System.Collections.Generic.List[System.String]]::new()
 $Ignored = [System.Collections.Generic.List[System.String]]::new()
 $CliWritten = @{}
+$OpenConsole = [System.Collections.Generic.List[System.String]]::new()
 $DatabasePath = [System.String]::Empty
 
 Try {
@@ -405,10 +397,9 @@ Try {
       Throw ('ExportSettings failed with exit code {0}' -f $LASTEXITCODE)
     }
 
-    # Flatten the export to element.parent dotted names. LocalName, never Name: some grouping
-    # elements carry a 'name' ATTRIBUTE the adapter surfaces in place of the tag, which once hid
-    # nine stored settings (measured 2026-08-21). Explicit stack -- no functions to recurse
-    # with; read whole, deleted at once.
+    # Flatten to element.parent dotted names. LocalName, never Name: grouping elements can
+    # carry a 'name' ATTRIBUTE the adapter surfaces in place of the tag, which once hid nine
+    # stored settings (2026-08-21). Explicit stack; read whole, deleted at once.
     $Current = @{}
     $Document = [System.Xml.XmlDocument]::new()
     $Document.LoadXml((Get-Content -LiteralPath:$EXPORT_PATH -Raw))
@@ -434,8 +425,7 @@ Try {
         } Else {
           $Item.Node.InnerText
         }
-        # Indexed under both spellings: some sections nest under a view model, and a caller
-        # should not have to know which.
+        # Both spellings: some sections nest under a view model; a caller should not care.
         $Trail = [System.String[]]$Item.Trail
         $Current[($Trail -join '.')] = $Value
         If ($Trail.Count -ge 2) {
@@ -501,9 +491,8 @@ Try {
             Throw ('Database write failed for {0} with exit code {1}' -f $Name, $LASTEXITCODE)
           }
         } ElseIf ($Desired -eq [System.String]::Empty) {
-          # The command line refuses -Set with an empty value; the product's own way back to
-          # blank is -Reset, which drops the override row so the compiled default shows
-          # through. The verify pass still proves the result reads back blank.
+          # -Set refuses empty values; the product's way back to blank is -Reset, dropping
+          # the override row. Verify still proves the result reads back blank.
           $Null = & $CLI_PATH 'Settings' '-Name' $WriteName '-Reset' 2>&1
           If ($LASTEXITCODE -ne 0) {
             Throw ('Settings -Reset failed for {0} with exit code {1}' -f $Name, $LASTEXITCODE)
@@ -550,6 +539,16 @@ Try {
           Start-Sleep -Milliseconds $SETTLE_POLL_MILLISECONDS
         }
       }
+
+      # An open console's next save writes its stale page model back over anything applied
+      # here (measured 2026-08-21), so writes report who has a console open.
+      If ($ToWrite.Count -gt 0) {
+        ForEach ($Row In @(& $SQLITE_PATH $DatabasePath "SELECT UserName FROM ConsoleUserSessions WHERE Console <> '';" 2>&1)) {
+          If ($LASTEXITCODE -eq 0 -and $Row) {
+            $OpenConsole.Add([System.String]$Row)
+          }
+        }
+      }
     } Else {
       # Prove it: anything that does not read back was accepted and unused -- the failure this
       # script exists to surface.
@@ -578,9 +577,16 @@ $Result = [PSCustomObject]@{
   ignored    = [System.String[]]$Ignored
   msg        = If ($Ignored.Count -gt 0) {
     'The product accepted but did not apply: {0}' -f ($Ignored -join ', ')
+  } ElseIf ($OpenConsole.Count -gt 0) {
+    '{0} applied, {1} already correct; a console is open for {2}, whose next save may overwrite them' -f @(
+      $Applied.Count
+      $Unchanged.Count
+      (($OpenConsole | Sort-Object -Unique) -join ', ')
+    )
   } Else {
     '{0} applied, {1} already correct' -f $Applied.Count, $Unchanged.Count
   }
+  open_consoles = [System.String[]]@($OpenConsole | Sort-Object -Unique)
   requested  = [System.Int32]$Setting.Count
   unchanged  = [System.String[]]$Unchanged
 }

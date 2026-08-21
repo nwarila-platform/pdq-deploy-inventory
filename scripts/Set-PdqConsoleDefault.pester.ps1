@@ -43,7 +43,9 @@ BeforeAll {
   }
 
   Function Assert-HiveLoaded {
-    If (-not $global:FakeHiveLoaded) { Throw 'hive is not loaded' }
+    Param ([System.String]$At)
+    # HKCU is the caller's own always-mounted hive; only the transient mount is gated.
+    If ($At -notlike 'HKCU:*' -and -not $global:FakeHiveLoaded) { Throw 'hive is not loaded' }
   }
 
   # reg.exe: load flips the gate open, unload flips it shut. The load can be
@@ -62,14 +64,14 @@ BeforeAll {
   Function global:Test-Path {
     [CmdletBinding()]
     Param ([Parameter()] [System.String]$LiteralPath)
-    Assert-HiveLoaded
+    Assert-HiveLoaded -At:$LiteralPath
     $global:FakeHive.Contains($LiteralPath)
   }
 
   Function global:Get-ItemProperty {
     [CmdletBinding()]
     Param ([Parameter()] [System.String]$LiteralPath)
-    Assert-HiveLoaded
+    Assert-HiveLoaded -At:$LiteralPath
     If (-not $global:FakeHive.Contains($LiteralPath)) { Return $Null }
     [PSCustomObject]$global:FakeHive[$LiteralPath]
   }
@@ -77,7 +79,7 @@ BeforeAll {
   Function global:New-Item {
     [CmdletBinding()]
     Param ([Parameter()] [System.String]$Path, [Switch]$Force)
-    Assert-HiveLoaded
+    Assert-HiveLoaded -At:$Path
     If (-not $global:FakeHive.Contains($Path)) { $global:FakeHive[$Path] = @{} }
   }
 
@@ -90,7 +92,7 @@ BeforeAll {
       [Parameter()] [System.String]$PropertyType,
       [Switch]$Force
     )
-    Assert-HiveLoaded
+    Assert-HiveLoaded -At:$LiteralPath
     $global:WriteCalls += 1
     If (-not $global:FakeWriteIgnored) { $global:FakeHive[$LiteralPath][$Name] = $Value }
   }
@@ -122,6 +124,15 @@ Describe 'Set-PdqConsoleDefault' {
     $global:FakeHive[$script:Checker]['Show Webcast Alerts'] | Should -Be 0
     $global:FakeHiveLoaded | Should -BeFalse
     @($global:RegCalls)[-1][0] | Should -Be 'unload'
+  }
+
+  It 'stamps the connection account only where the product has never written' {
+    $Own = 'HKCU:\Software\Admin Arsenal\PDQ Deploy Console\Settings\Startup'
+    $global:FakeHive[$Own] = @{ 'Disable Splash Screen' = 0 }
+    $Null = & $script:ScriptPath -DisableSplashScreen:$True -AutoUpdateCheckEnabled:$False -ShowWebcastAlerts:$False
+    # the saved 0 is somebody's choice and stays; the never-written checker values arrive
+    $global:FakeHive[$Own]['Disable Splash Screen'] | Should -Be 0
+    $global:FakeHive['HKCU:\Software\Admin Arsenal\PDQ Deploy\AutoUpdateChecker']['Auto Check Enabled'] | Should -Be 0
   }
 
   It 'writes the theme only when one was asked for' {

@@ -7,38 +7,29 @@
         Applies a set of PDQ settings in one pass and proves each one took.
 
     .DESCRIPTION
-        PDQ keeps its settings behind a command line that writes them one at a time, and a
-        key-value store that accepts ANY name whether the product reads it or not. Setting a name
-        the product does not read reports success, inserts a row, and changes nothing -- measured
-        2026-08-20 with RepositorySettings.Path, which the product reads from a system variable
-        instead. A caller that trusts the exit code cannot tell the difference.
+        PDQ keeps its settings behind a command line that writes them one at a time into a
+        key-value store that accepts ANY name: a name the product does not read reports success,
+        inserts a row, and changes nothing, so an exit code proves nothing.
 
-        This script closes that gap by treating the product's own export as the only account of
-        what is configured. It exports once to learn the current values, writes only the settings
-        that differ, exports again, and verifies every requested setting now reads back as asked.
-        A setting that did not take is reported as ignored and fails the run rather than being
-        counted as applied.
+        The product's own export is therefore the only account trusted here: export once to
+        learn the current values, write only what differs, export again, and verify every
+        requested setting reads back as asked. One that did not take is reported as ignored and
+        fails the run rather than being counted as applied.
 
-        Doing it here rather than task-by-task also collapses one round trip per setting into two
-        exports and N writes, which matters when a deployment declares dozens.
 
         The product can only export to a FILE -- there is no stdout or in-memory form -- so each
         export is read into memory and deleted immediately, leaving it on disk for the write plus
         one read. Nothing secret is in it: the export carries user names for mail, proxy and
         integrations, and no password, token or secret element of any kind.
 
-        WHAT IS SETTABLE, and how, is the SETTINGS table below rather than a parameter apiece.
-        The table is the whole contract: which names exist, what type each takes, which values an
-        enumerated one allows, and which of them lives in the product's database instead of on
-        its command line. Declaring the surface as data rather than as sixty-odd parameter
-        attributes keeps the file readable in one pass and small enough for the transport to log,
-        and the caller's experience is unchanged -- it passes the same map of names to values
-        either way.
+        WHAT IS SETTABLE is the SETTINGS table below.
+        The table is the whole contract: which names exist, what type each takes, which values
+        an enumerated one allows, and which live in the product's database rather than behind
+        its command line. Data, not sixty-odd parameters: readable in one pass and small enough
+        for the transport to log.
 
-        Only the families the product's SERVICE reads are offered. The console-side pages --
-        alerts, interface, printing, log verbosity, target filters -- live in a per-user registry
-        hive that no converge can reach, so a name for them here would be a promise the product
-        does not keep.
+        The tree may carry pages this script does not own -- the per-user alerts and interface
+        pages, the event-log switches -- and it sets those aside for the tasks that do.
 
         Org scripts are a single straightforward process stage in the org script template's
         architecture: one [ Script ] region carrying [ Initialization ] (strict mode, transport
@@ -62,20 +53,25 @@
         Debug, Information, Warning, Error, Fatal. Each digit is an ActionPreference
         (0 SilentlyContinue, 1 Stop, 2 Continue, 3 Inquire, 4 Ignore, 5 Suspend).
 
-    .PARAMETER Setting
-        The settings to apply, as a map of NAME to desired value, where every name is one of the
-        Param entries in the SETTINGS table. A name absent from the map is not managed -- which
-        is a different thing from one set to the product's default -- so a deployment states only
-        what it means to own. A name the table does not carry is a typo and fails the run: it
-        would otherwise be a silent no-op that looks like success.
+    .PARAMETER Preference
+        The preference tree, organised as the console's Preferences window is: a map of pages,
+        each holding that page's settings under the labels the page shows. Pages and names the
+        script does not own (per-user pages, the record_* event-log switches) are set aside for
+        the tasks that do; a name the table does not carry fails the run -- it would otherwise
+        be a silent no-op that looks like success. Absent means unmanaged; values keep the types
+        the caller supplied (win_powershell hands the tree over intact, measured 2026-08-20).
 
-        Values keep the types the caller supplied. Ansible's win_powershell passes this map
-        through as a Hashtable with numbers, strings and booleans intact (measured 2026-08-20),
-        so a setting typed Int32 in the table is checked against an actual integer rather than a
-        re-parsed string.
+    .PARAMETER DatabaseDrive
+        The drive letter the database lives on; anchors the derived backup and log locations.
+
+    .PARAMETER DatabaseDirectory
+        The database folder on that drive; the derived locations sit beside it.
+
+    .PARAMETER RepositoryShareName
+        The share this machine publishes; the repository path is composed from it.
 
     .EXAMPLE
-        .\Set-PdqSetting.ps1 -Setting @{ DeploymentCleanupDays = 45; PerformanceCopyMode = 'Pull' }
+        .\Set-PdqSetting.ps1 -Preference @{ deployments = @{ cleanup_days = 45 } } -DatabaseDrive 'E' -DatabaseDirectory 'PDQ Deploy' -RepositoryShareName 'AppRepo$'
 
     .OUTPUTS
         One object carrying applied, unchanged, ignored, changed and msg.
@@ -93,7 +89,19 @@ Param (
   [System.String] $LogLevel = '002223',
 
   [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
-  [System.Collections.IDictionary] $Setting
+  [System.Collections.IDictionary] $Preference,
+
+  [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
+  [ValidatePattern('^[A-Za-z]$')]
+  [System.String] $DatabaseDrive,
+
+  [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
+  [ValidateNotNullOrEmpty()]
+  [System.String] $DatabaseDirectory,
+
+  [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
+  [ValidateNotNullOrEmpty()]
+  [System.String] $RepositoryShareName
 )
 
 #region ------ [ Script ] -------------------------------------------------------------------- #
@@ -131,85 +139,85 @@ New-Variable -Force -Name:'EXPORT_PATH' -Option:('Private', 'ReadOnly') -Value:(
 # passing quietly.
 New-Variable -Force -Name:'SETTINGS' -Option:('Private', 'ReadOnly') -Value:(
   [System.Collections.Hashtable[]]@(
-    @{ Param = 'PackageLibraryAutoDeployDefaultApprovalMode' ; Name = 'AutoDeployDefaultSettings.ApprovalMode' ; Type = 'String' }
-    @{ Param = 'PackageLibraryAutoDeployDefaultDelayedApprovalTimeSpan'; Name = 'AutoDeployDefaultSettings.DelayedApprovalTimeSpan' ; Type = 'String' }   # inferred
-    @{ Param = 'PackageLibraryAutoDeployDefaultIsEnabled' ; Name = 'AutoDeployDefaultSettings.IsEnabled' ; Type = 'Boolean' }   # inferred
-    @{ Param = 'PackageLibraryAutoDownloadArchiveCopiesToKeep' ; Name = 'AutoDownloadArchiveSettings.CopiesToKeep' ; Type = 'Int32' }
-    @{ Param = 'PackageLibraryAutoDownloadArchiveIsArchiving' ; Name = 'AutoDownloadArchiveSettings.IsArchiving' ; Type = 'Boolean' }   # inferred
-    @{ Param = 'DatabaseDatabaseBackupBackupDirectory' ; Name = 'DatabaseBackupSettings.BackupDirectory' ; Type = 'String' }
-    @{ Param = 'DatabaseDatabaseBackupCompress' ; Name = 'DatabaseBackupSettings.Compress' ; Type = 'Boolean' }   # inferred
-    @{ Param = 'DatabaseDatabaseBackupIsEnabled' ; Name = 'DatabaseBackupSettings.IsEnabled' ; Type = 'Boolean' }   # inferred
-    @{ Param = 'DatabaseDatabaseBackupKeep' ; Name = 'DatabaseBackupSettings.Keep' ; Type = 'Int32' }
-    @{ Param = 'DeploymentCleanupDays' ; Name = 'DeploymentSettings.CleanupDays' ; Type = 'Int32' }
-    @{ Param = 'DeploymentComputerTimeout' ; Name = 'DeploymentSettings.ComputerTimeout' ; Type = 'Int32' }
-    @{ Param = 'DeploymentInventoryScanProfileId' ; Name = 'DeploymentSettings.InventoryScanProfileId' ; Type = 'String' }   # inferred
-    @{ Param = 'DeploymentRunAs' ; Name = 'DeploymentSettings.RunAs' ; Type = 'String' }   # inferred
-    @{ Param = 'DeploymentScanAfterDeployment' ; Name = 'DeploymentSettings.ScanAfterDeployment' ; Type = 'Boolean' }   # inferred
-    @{ Param = 'DeploymentOfflineRetryMaxTries' ; Name = 'OfflineSettings.RetryMaxTries' ; Type = 'Int32' }
-    @{ Param = 'DeploymentOfflineUsePing' ; Name = 'OfflineSettings.UsePing' ; Type = 'Boolean' }   # inferred
-    @{ Param = 'DeploymentOfflineTryWol' ; Name = 'OfflineSettings.TryWol' ; Type = 'Boolean' }   # inferred
-    @{ Param = 'DeploymentOfflineIsRetryEnabled' ; Name = 'OfflineSettings.IsRetryEnabled' ; Type = 'Boolean' }   # inferred
-    @{ Param = 'DeploymentOfflineRetryInterval' ; Name = 'OfflineSettings.RetryInterval' ; Type = 'String' }   # inferred
-    @{ Param = 'LoggingSentryCanSendAnonymousExceptionData' ; Name = 'SentrySettings.CanSendAnonymousExceptionData' ; Type = 'Boolean' }   # inferred
-    @{ Param = 'LoggingAuditLogMinDaysRecordsKept' ; Name = 'AuditLogSettings.MinDaysRecordsKept' ; Type = 'Int32' }   # inferred
-    @{ Param = 'LoggingAuditLogMaxDaysRecordsKept' ; Name = 'AuditLogSettings.MaxDaysRecordsKept' ; Type = 'Int32' }   # inferred
-    @{ Param = 'LoggingAuditLogMinNumArchivedFiles' ; Name = 'AuditLogSettings.MinNumArchivedFiles' ; Type = 'Int32' }   # inferred
-    @{ Param = 'LoggingAuditLogMaxNumArchivedFiles' ; Name = 'AuditLogSettings.MaxNumArchivedFiles' ; Type = 'Int32' }   # inferred
-    @{ Param = 'LoggingAuditLogVerboseFileName' ; Name = 'AuditLogSettings.VerboseFileName' ; Type = 'String' }   # inferred
-    @{ Param = 'LoggingAuditLogDaysRecordsKept' ; Name = 'AuditLogSettings.DaysRecordsKept' ; Type = 'Int32' }
-    @{ Param = 'LoggingAuditLogWriteVerboseFile' ; Name = 'AuditLogSettings.WriteVerboseFile' ; Type = 'Boolean' }   # inferred
-    @{ Param = 'LoggingAuditLogLoadCustomConfig' ; Name = 'AuditLogSettings.LoadCustomConfig' ; Type = 'Boolean' }   # inferred
-    @{ Param = 'LoggingAuditLogVerboseFileDirectory' ; Name = 'AuditLogSettings.VerboseFileDirectory' ; Type = 'String' }   # inferred
-    @{ Param = 'LoggingAuditLogCustomConfigPath' ; Name = 'AuditLogSettings.CustomConfigPath' ; Type = 'String' }   # inferred
-    @{ Param = 'LoggingAuditLogNumArchivedFiles' ; Name = 'AuditLogSettings.NumArchivedFiles' ; Type = 'Int32' }   # inferred
-    @{ Param = 'LoggingAuditLogArchiveSchedule' ; Name = 'AuditLogSettings.ArchiveSchedule' ; Type = 'String' }   # inferred
-    @{ Param = 'MailServerEnableSSL' ; Name = 'MailServerSettings.EnableSSL' ; Type = 'Boolean' }   # inferred
-    @{ Param = 'MailServerHost' ; Name = 'MailServerSettings.Host' ; Type = 'String' }
-    @{ Param = 'MailServerSender' ; Name = 'MailServerSettings.Sender' ; Type = 'String' }   # inferred
-    @{ Param = 'MailServerUser' ; Name = 'MailServerSettings.User' ; Type = 'String' }   # inferred
-    @{ Param = 'MailServerOAuth2ClientId' ; Name = 'MailServerSettings.OAuth2ClientId' ; Type = 'String' }   # inferred
-    @{ Param = 'MailServerOAuth2TenantId' ; Name = 'MailServerSettings.OAuth2TenantId' ; Type = 'String' }   # inferred
-    @{ Param = 'MailServerOAuth2RedirectUri' ; Name = 'MailServerSettings.OAuth2RedirectUri' ; Type = 'String' }   # inferred
-    @{ Param = 'MailServerOAuth2Provider' ; Name = 'MailServerSettings.OAuth2Provider' ; Type = 'String' }   # inferred
-    @{ Param = 'MailServerOAuth2Sender' ; Name = 'MailServerSettings.OAuth2Sender' ; Type = 'String' }   # inferred
-    @{ Param = 'MailServerMSGraphAPIClientId' ; Name = 'MailServerSettings.MSGraphAPIClientId' ; Type = 'String' }   # inferred
-    @{ Param = 'MailServerMSGraphAPITenantId' ; Name = 'MailServerSettings.MSGraphAPITenantId' ; Type = 'String' }   # inferred
-    @{ Param = 'MailServerMSGraphAPICloudHostUrl' ; Name = 'MailServerSettings.MSGraphAPICloudHostUrl' ; Type = 'String' }   # inferred
-    @{ Param = 'MailServerMSGraphAPISender' ; Name = 'MailServerSettings.MSGraphAPISender' ; Type = 'String' }   # inferred
-    @{ Param = 'PerformanceBandwidthLimitPercent' ; Name = 'PerformanceSettings.BandwidthLimitPercent' ; Type = 'Int32' }   # inferred
-    @{ Param = 'PerformanceCopyMode' ; Name = 'PerformanceSettings.CopyMode' ; Type = 'String'; Allowed = @('Push', 'Pull') }
-    @{ Param = 'PerformanceMaxDeploymentThreads' ; Name = 'PerformanceSettings.MaxDeploymentThreads' ; Type = 'Int32' }
-    @{ Param = 'PerformanceMaxServerThreads' ; Name = 'PerformanceSettings.MaxServerThreads' ; Type = 'Int32' }   # inferred
-    @{ Param = 'PerformanceCredentialBatchSize' ; Name = 'PerformanceSettings.CredentialBatchSize' ; Type = 'Int32' }   # inferred
-    @{ Param = 'PerformanceIntegrationMessageTimeoutSeconds' ; Name = 'PerformanceSettings.IntegrationMessageTimeoutSeconds'; Type = 'Int32' }   # inferred
+    @{ Param = 'auto_download.approval' ; Name = 'AutoDeployDefaultSettings.ApprovalMode' ; Type = 'String' }
+    @{ Param = 'auto_download.automatic_approval_delay'; Name = 'AutoDeployDefaultSettings.DelayedApprovalTimeSpan' ; Type = 'String' }   # inferred
+    @{ Param = 'auto_download.enable_auto_download' ; Name = 'AutoDeployDefaultSettings.IsEnabled' ; Type = 'Boolean' }   # inferred
+    @{ Param = 'auto_download.copies_to_keep' ; Name = 'AutoDownloadArchiveSettings.CopiesToKeep' ; Type = 'Int32' }
+    @{ Param = 'auto_download.save_copies_of_previous_versions' ; Name = 'AutoDownloadArchiveSettings.IsArchiving' ; Type = 'Boolean' }   # inferred
+    @{ Param = 'database.backup_location' ; Name = 'DatabaseBackupSettings.BackupDirectory' ; Type = 'String' }
+    @{ Param = 'database.compress_backups' ; Name = 'DatabaseBackupSettings.Compress' ; Type = 'Boolean' }   # inferred
+    @{ Param = 'database.enable_automatic_backups' ; Name = 'DatabaseBackupSettings.IsEnabled' ; Type = 'Boolean' }   # inferred
+    @{ Param = 'database.backups_to_keep' ; Name = 'DatabaseBackupSettings.Keep' ; Type = 'Int32' }
+    @{ Param = 'deployments.cleanup_days' ; Name = 'DeploymentSettings.CleanupDays' ; Type = 'Int32' }
+    @{ Param = 'deployments.timeout_minutes' ; Name = 'DeploymentSettings.ComputerTimeout' ; Type = 'Int32' }
+    @{ Param = 'deployments.inventory_scan_profile_id' ; Name = 'DeploymentSettings.InventoryScanProfileId' ; Type = 'String' }   # inferred
+    @{ Param = 'deployments.run_packages_as' ; Name = 'DeploymentSettings.RunAs' ; Type = 'String' }   # inferred
+    @{ Param = 'deployments.scan_after_deployment' ; Name = 'DeploymentSettings.ScanAfterDeployment' ; Type = 'Boolean' }   # inferred
+    @{ Param = 'deployments.allowed_retries' ; Name = 'OfflineSettings.RetryMaxTries' ; Type = 'Int32' }
+    @{ Param = 'deployments.ping_before_deployment' ; Name = 'OfflineSettings.UsePing' ; Type = 'Boolean' }   # inferred
+    @{ Param = 'deployments.wake_on_lan' ; Name = 'OfflineSettings.TryWol' ; Type = 'Boolean' }   # inferred
+    @{ Param = 'deployments.retry_queue_enabled' ; Name = 'OfflineSettings.IsRetryEnabled' ; Type = 'Boolean' }   # inferred
+    @{ Param = 'deployments.retry_interval' ; Name = 'OfflineSettings.RetryInterval' ; Type = 'String' }   # inferred
+    @{ Param = 'logging.send_anonymous_exception_data' ; Name = 'SentrySettings.CanSendAnonymousExceptionData' ; Type = 'Boolean' }   # inferred
+    @{ Param = 'logging.audit_keep_days_minimum' ; Name = 'AuditLogSettings.MinDaysRecordsKept' ; Type = 'Int32' }   # inferred
+    @{ Param = 'logging.audit_keep_days_maximum' ; Name = 'AuditLogSettings.MaxDaysRecordsKept' ; Type = 'Int32' }   # inferred
+    @{ Param = 'logging.archived_logs_minimum' ; Name = 'AuditLogSettings.MinNumArchivedFiles' ; Type = 'Int32' }   # inferred
+    @{ Param = 'logging.archived_logs_maximum' ; Name = 'AuditLogSettings.MaxNumArchivedFiles' ; Type = 'Int32' }   # inferred
+    @{ Param = 'logging.verbose_log_file_name' ; Name = 'AuditLogSettings.VerboseFileName' ; Type = 'String' }   # inferred
+    @{ Param = 'logging.audit_keep_days' ; Name = 'AuditLogSettings.DaysRecordsKept' ; Type = 'Int32' }
+    @{ Param = 'logging.verbose_log_to_file' ; Name = 'AuditLogSettings.WriteVerboseFile' ; Type = 'Boolean' }   # inferred
+    @{ Param = 'logging.use_logging_configuration_file' ; Name = 'AuditLogSettings.LoadCustomConfig' ; Type = 'Boolean' }   # inferred
+    @{ Param = 'logging.verbose_log_directory' ; Name = 'AuditLogSettings.VerboseFileDirectory' ; Type = 'String' }   # inferred
+    @{ Param = 'logging.logging_configuration_file' ; Name = 'AuditLogSettings.CustomConfigPath' ; Type = 'String' }   # inferred
+    @{ Param = 'logging.archived_logs_to_keep' ; Name = 'AuditLogSettings.NumArchivedFiles' ; Type = 'Int32' }   # inferred
+    @{ Param = 'logging.archive_log_every' ; Name = 'AuditLogSettings.ArchiveSchedule' ; Type = 'String' }   # inferred
+    @{ Param = 'mail_server.enable_ssl' ; Name = 'MailServerSettings.EnableSSL' ; Type = 'Boolean' }   # inferred
+    @{ Param = 'mail_server.smtp_server' ; Name = 'MailServerSettings.Host' ; Type = 'String' }
+    @{ Param = 'mail_server.sender_address' ; Name = 'MailServerSettings.Sender' ; Type = 'String' }   # inferred
+    @{ Param = 'mail_server.smtp_user' ; Name = 'MailServerSettings.User' ; Type = 'String' }   # inferred
+    @{ Param = 'mail_server.oauth2_client_id' ; Name = 'MailServerSettings.OAuth2ClientId' ; Type = 'String' }   # inferred
+    @{ Param = 'mail_server.oauth2_tenant_id' ; Name = 'MailServerSettings.OAuth2TenantId' ; Type = 'String' }   # inferred
+    @{ Param = 'mail_server.oauth2_redirect_uri' ; Name = 'MailServerSettings.OAuth2RedirectUri' ; Type = 'String' }   # inferred
+    @{ Param = 'mail_server.oauth2_provider' ; Name = 'MailServerSettings.OAuth2Provider' ; Type = 'String' }   # inferred
+    @{ Param = 'mail_server.oauth2_sender' ; Name = 'MailServerSettings.OAuth2Sender' ; Type = 'String' }   # inferred
+    @{ Param = 'mail_server.graph_client_id' ; Name = 'MailServerSettings.MSGraphAPIClientId' ; Type = 'String' }   # inferred
+    @{ Param = 'mail_server.graph_tenant_id' ; Name = 'MailServerSettings.MSGraphAPITenantId' ; Type = 'String' }   # inferred
+    @{ Param = 'mail_server.graph_cloud' ; Name = 'MailServerSettings.MSGraphAPICloudHostUrl' ; Type = 'String' }   # inferred
+    @{ Param = 'mail_server.graph_sender' ; Name = 'MailServerSettings.MSGraphAPISender' ; Type = 'String' }   # inferred
+    @{ Param = 'performance.bandwidth_limit_percent' ; Name = 'PerformanceSettings.BandwidthLimitPercent' ; Type = 'Int32' }   # inferred
+    @{ Param = 'performance.copy_mode' ; Name = 'PerformanceSettings.CopyMode' ; Type = 'String'; Allowed = @('Push', 'Pull') }
+    @{ Param = 'performance.concurrent_targets_per_deployment' ; Name = 'PerformanceSettings.MaxDeploymentThreads' ; Type = 'Int32' }
+    @{ Param = 'performance.total_concurrent_targets' ; Name = 'PerformanceSettings.MaxServerThreads' ; Type = 'Int32' }   # inferred
+    @{ Param = 'performance.credential_batch_size' ; Name = 'PerformanceSettings.CredentialBatchSize' ; Type = 'Int32' }   # inferred
+    @{ Param = 'performance.integration_message_timeout_seconds' ; Name = 'PerformanceSettings.IntegrationMessageTimeoutSeconds'; Type = 'Int32' }   # inferred
     # Printing stores under ProductPrintingSettings.* while the export publishes
     # PrintingSettings.* -- the Store field carries the difference (measured 2026-08-21).
-    @{ Param = 'PrintingFooterAlignment'; Name = 'PrintingSettings.FooterAlignment'; Type = 'String'; Store = 'ProductPrintingSettings.FooterAlignment' }
-    @{ Param = 'PrintingFooterText'; Name = 'PrintingSettings.FooterText'; Type = 'String'; Store = 'ProductPrintingSettings.FooterText' }
-    @{ Param = 'PrintingHeaderAlignment'; Name = 'PrintingSettings.HeaderAlignment'; Type = 'String'; Store = 'ProductPrintingSettings.HeaderAlignment' }
-    @{ Param = 'PrintingHeaderText'; Name = 'PrintingSettings.HeaderText'; Type = 'String'; Store = 'ProductPrintingSettings.HeaderText' }
-    @{ Param = 'PrintingInColor'; Name = 'PrintingSettings.IsInColor'; Type = 'Boolean'; Store = 'ProductPrintingSettings.IsInColor' }
-    @{ Param = 'PrintingMarginBottom'; Name = 'PrintingSettings.MarginBottom'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginBottom' }
-    @{ Param = 'PrintingMarginLeft'; Name = 'PrintingSettings.MarginLeft'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginLeft' }
-    @{ Param = 'PrintingMarginRight'; Name = 'PrintingSettings.MarginRight'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginRight' }
-    @{ Param = 'PrintingMarginTop'; Name = 'PrintingSettings.MarginTop'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginTop' }
-    @{ Param = 'ProxyHostName' ; Name = 'ProxySettings.HostName' ; Type = 'String' }   # inferred
-    @{ Param = 'ProxyPort' ; Name = 'ProxySettings.Port' ; Type = 'Int32' }
-    @{ Param = 'ProxyUserName' ; Name = 'ProxySettings.UserName' ; Type = 'String' }   # inferred
-    @{ Param = 'ProxyUseSystemHost' ; Name = 'ProxySettings.UseSystemHost' ; Type = 'Boolean' }   # inferred
-    @{ Param = 'RepositoryEnableUnusedFilesWarning' ; Name = 'RepositorySettings.EnableUnusedFilesWarning' ; Type = 'Boolean' }
-    @{ Param = 'RepositoryExclusions' ; Name = 'RepositorySettings.Exclusions' ; Type = 'String' }   # inferred
-    @{ Param = 'RepositoryPath' ; Name = 'RepositorySettings.Path' ; Type = 'String'; Variable = 'Repository' }   # inferred
-    @{ Param = 'SpiceworksHostName' ; Name = 'SpiceworksSettings.HostName' ; Type = 'String' }   # inferred
-    @{ Param = 'SpiceworksIsEnabled' ; Name = 'SpiceworksSettings.IsEnabled' ; Type = 'Boolean' }   # inferred
-    @{ Param = 'SpiceworksPort' ; Name = 'SpiceworksSettings.Port' ; Type = 'Int32' }
-    @{ Param = 'SpiceworksSyncInterval' ; Name = 'SpiceworksSettings.SyncInterval' ; Type = 'String' }   # inferred
-    @{ Param = 'SpiceworksUserName' ; Name = 'SpiceworksSettings.UserName' ; Type = 'String' }   # inferred
-    @{ Param = 'SpiceworksUseSSL' ; Name = 'SpiceworksSettings.UseSSL' ; Type = 'Boolean' }   # inferred
-    @{ Param = 'TargetServiceRemoteDirectory' ; Name = 'TargetServiceSettings.RemoteDirectory' ; Type = 'String' }
-    @{ Param = 'TargetServiceSharePath' ; Name = 'TargetServiceSettings.SharePath' ; Type = 'String' }   # inferred
-    @{ Param = 'AnalyticsCollectAnalyticsUsage' ; Name = 'AnalyticsSettings.CollectAnalyticsUsage' ; Type = 'Boolean' }
-    @{ Param = 'AnalyticsAlertFirstTimeAnalyticsDialog' ; Name = 'AnalyticsSettings.AlertFirstTimeAnalyticsDialog' ; Type = 'Boolean' }
+    @{ Param = 'printing.footer_alignment'; Name = 'PrintingSettings.FooterAlignment'; Type = 'String'; Store = 'ProductPrintingSettings.FooterAlignment' }
+    @{ Param = 'printing.footer_text'; Name = 'PrintingSettings.FooterText'; Type = 'String'; Store = 'ProductPrintingSettings.FooterText' }
+    @{ Param = 'printing.header_alignment'; Name = 'PrintingSettings.HeaderAlignment'; Type = 'String'; Store = 'ProductPrintingSettings.HeaderAlignment' }
+    @{ Param = 'printing.header_text'; Name = 'PrintingSettings.HeaderText'; Type = 'String'; Store = 'ProductPrintingSettings.HeaderText' }
+    @{ Param = 'printing.in_color'; Name = 'PrintingSettings.IsInColor'; Type = 'Boolean'; Store = 'ProductPrintingSettings.IsInColor' }
+    @{ Param = 'printing.margin_bottom'; Name = 'PrintingSettings.MarginBottom'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginBottom' }
+    @{ Param = 'printing.margin_left'; Name = 'PrintingSettings.MarginLeft'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginLeft' }
+    @{ Param = 'printing.margin_right'; Name = 'PrintingSettings.MarginRight'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginRight' }
+    @{ Param = 'printing.margin_top'; Name = 'PrintingSettings.MarginTop'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginTop' }
+    @{ Param = 'proxy_server.host_name' ; Name = 'ProxySettings.HostName' ; Type = 'String' }   # inferred
+    @{ Param = 'proxy_server.port' ; Name = 'ProxySettings.Port' ; Type = 'Int32' }
+    @{ Param = 'proxy_server.username' ; Name = 'ProxySettings.UserName' ; Type = 'String' }   # inferred
+    @{ Param = 'proxy_server.use_system_proxy' ; Name = 'ProxySettings.UseSystemHost' ; Type = 'Boolean' }   # inferred
+    @{ Param = 'repository.show_unused_files_warning' ; Name = 'RepositorySettings.EnableUnusedFilesWarning' ; Type = 'Boolean' }
+    @{ Param = 'repository.cleanup_exclusions' ; Name = 'RepositorySettings.Exclusions' ; Type = 'String' }   # inferred
+    @{ Param = 'repository.path' ; Name = 'RepositorySettings.Path' ; Type = 'String'; Variable = 'Repository' }   # inferred
+    @{ Param = 'spiceworks.host_name' ; Name = 'SpiceworksSettings.HostName' ; Type = 'String' }   # inferred
+    @{ Param = 'spiceworks.auto_sync_enabled' ; Name = 'SpiceworksSettings.IsEnabled' ; Type = 'Boolean' }   # inferred
+    @{ Param = 'spiceworks.port' ; Name = 'SpiceworksSettings.Port' ; Type = 'Int32' }
+    @{ Param = 'spiceworks.sync_interval' ; Name = 'SpiceworksSettings.SyncInterval' ; Type = 'String' }   # inferred
+    @{ Param = 'spiceworks.email' ; Name = 'SpiceworksSettings.UserName' ; Type = 'String' }   # inferred
+    @{ Param = 'spiceworks.use_ssl' ; Name = 'SpiceworksSettings.UseSSL' ; Type = 'Boolean' }   # inferred
+    @{ Param = 'target_service.unc_path' ; Name = 'TargetServiceSettings.RemoteDirectory' ; Type = 'String' }
+    @{ Param = 'target_service.local_path_of_shared_directory' ; Name = 'TargetServiceSettings.SharePath' ; Type = 'String' }   # inferred
+    @{ Param = 'usage_data.collect_usage_data' ; Name = 'AnalyticsSettings.CollectAnalyticsUsage' ; Type = 'Boolean' }
+    @{ Param = 'usage_data.alert_first_time_analytics_dialog' ; Name = 'AnalyticsSettings.AlertFirstTimeAnalyticsDialog' ; Type = 'Boolean' }
   )
 )
 
@@ -290,16 +298,51 @@ Write-Debug -Message:'Entering Stage: Main'
 # Validate and translate in one pass over what the caller actually asked for. Every name is
 # checked against the table before anything is read or written, so a typo fails here rather than
 # becoming a row the product stores and never reads.
+# The caller declares preferences the way the console shows them: a map of PAGES, each holding
+# that page's settings. This is where the role's routing lives, in plain sight: the alerts and
+# interface pages are per-user and belong to the profile seeding, the four record_* switches on
+# the logging page are machine registry values another task writes -- so all of those are set
+# aside here -- and everything else flattens to the table's page.setting names.
+$Flat = @{}
+ForEach ($PageName In @($PSBoundParameters['Preference'].Keys)) {
+  If ($PageName -in @('alerts', 'interface')) {
+    Continue
+  }
+  $Page = $PSBoundParameters['Preference'][$PageName]
+  If ($Page -is [System.Collections.IDictionary]) {
+    ForEach ($Leaf In @($Page.Keys)) {
+      If ($PageName -eq 'logging' -and $Leaf -like 'record_*') {
+        Continue
+      }
+      $Flat[('{0}.{1}' -f $PageName, $Leaf)] = $Page[$Leaf]
+    }
+  } Else {
+    $Flat[$PageName] = $Page
+  }
+}
+
+# Three values are the role's to place, not the caller's to guess. The repository is the share
+# this machine publishes, so its path is composed from this machine's own name; the backup and
+# verbose-log locations default to sitting beside the database on its dedicated drive, because
+# both grow the way the database does, and a caller may still name somewhere else.
+$Flat['repository.path'] = '\\{0}\{1}' -f $env:COMPUTERNAME, $RepositoryShareName
+If ([System.String]::IsNullOrEmpty([System.String]$Flat['database.backup_location'])) {
+  $Flat['database.backup_location'] = '{0}:\{1}\Backups' -f $DatabaseDrive, $DatabaseDirectory
+}
+If ([System.String]::IsNullOrEmpty([System.String]$Flat['logging.verbose_log_directory'])) {
+  $Flat['logging.verbose_log_directory'] = '{0}:\{1}\Logs' -f $DatabaseDrive, $DatabaseDirectory
+}
+
 $Setting = @{}
 $DatabaseVariable = @{}
 $StoreName = @{}
-ForEach ($Given In @($PSBoundParameters['Setting'].Keys)) {
+ForEach ($Given In @($Flat.Keys)) {
   $Known = @($SETTINGS | Where-Object -FilterScript { $PSItem.Param -eq $Given })
   If ($Known.Count -ne 1) {
     Throw ('{0} is not a setting this script can apply; see the SETTINGS table' -f $Given)
   }
   $Entry = $Known[0]
-  $Value = $PSBoundParameters['Setting'][$Given]
+  $Value = $Flat[$Given]
 
   If ($Null -eq $Value) {
     # Declared without a value is declared without being managed, which the Ansible side spells

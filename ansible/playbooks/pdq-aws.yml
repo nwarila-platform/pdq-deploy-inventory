@@ -233,14 +233,6 @@
           repository:
             drive: 'F'
 
-          # New console users start with the operator's measured preferences: no splash, no
-          # update nagging, the dark theme. Existing profiles keep whatever they saved.
-          console_default:
-            disable_splash_screen: true
-            auto_update_check: false
-            show_webcast_alerts: false
-            color_theme: 'Win11Dark'
-
           # OFF for now. Console users and the roles they would be granted are not modelled by
           # this deployment yet, and enabling access control before there are roles to grant
           # leaves a console nobody is authorised to use. Revisit once console users are managed.
@@ -254,100 +246,107 @@
           server:
             listen_addresses: [ "{{ aws_private_ip_address }}" ]
 
-          # EVERYTHING off the product default, deliberately: every severity, and every
-          # settable name, so a fresh install visibly differs on every console page. One
-          # exception: the audit log's custom-config LOADER stays at its default (off), because
-          # enabling it against a file that does not exist risks the product's own logging; its
-          # path is still set and visible. Settings are named by the script's parameters, not
-          # the product's dotted spelling.
-          event_log:
-            error: false
-            warning: false
-            information: false
-            debug: true
-
-          settings:
-            # Analytics
-            AnalyticsAlertFirstTimeAnalyticsDialog: false
-            AnalyticsCollectAnalyticsUsage: true
-            # Package library
-            PackageLibraryAutoDeployDefaultApprovalMode: 'Manual'
-            PackageLibraryAutoDeployDefaultDelayedApprovalTimeSpan: '3.00:00:00'
-            PackageLibraryAutoDeployDefaultIsEnabled: false
-            PackageLibraryAutoDownloadArchiveCopiesToKeep: 9
-            PackageLibraryAutoDownloadArchiveIsArchiving: true
-            # Database backup
-            DatabaseDatabaseBackupCompress: false
-            DatabaseDatabaseBackupIsEnabled: false
-            DatabaseDatabaseBackupKeep: 15
-            # Deployments
-            DeploymentCleanupDays: 45
-            DeploymentComputerTimeout: 120
-            DeploymentRunAs: 'LocalSystem'
-            DeploymentScanAfterDeployment: false
-            # Offline targets
-            DeploymentOfflineIsRetryEnabled: true
-            DeploymentOfflineRetryInterval: '02:30:00'
-            DeploymentOfflineRetryMaxTries: 24
-            DeploymentOfflineTryWol: true
-            DeploymentOfflineUsePing: true
-            # Logging and audit
-            LoggingSentryCanSendAnonymousExceptionData: false
-            LoggingAuditLogArchiveSchedule: 'Friday'
-            LoggingAuditLogCustomConfigPath: 'E:\PDQ Deploy\audit-log.config'
-            LoggingAuditLogDaysRecordsKept: 45
-            LoggingAuditLogNumArchivedFiles: 8
-            LoggingAuditLogVerboseFileDirectory: 'E:\PDQ Deploy\Logs'
-            LoggingAuditLogWriteVerboseFile: false
-            # Mail server
-            MailServerEnableSSL: true
-            MailServerHost: 'smtp.example.test'
-            MailServerSender: 'pdq-sender@example.test'
-            MailServerUser: 'pdq-mailer@example.test'
-            MailServerOAuth2ClientId: 'demo-oauth-client-id'
-            MailServerOAuth2TenantId: 'demo-oauth-tenant-id'
-            MailServerOAuth2RedirectUri: 'https://localhost/demo-redirect'
-            MailServerOAuth2Provider: 'Google'
-            MailServerOAuth2Sender: 'oauth-sender@example.test'
-            MailServerMSGraphAPIClientId: 'demo-graph-client-id'
-            MailServerMSGraphAPITenantId: 'demo-graph-tenant-id'
-            MailServerMSGraphAPICloudHostUrl: 'Azure US Government'
-            MailServerMSGraphAPISender: 'graph-sender@example.test'
-            # Performance
-            PerformanceBandwidthLimitPercent: 75
-            PerformanceCopyMode: 'Pull'
-            PerformanceMaxDeploymentThreads: 16
-            PerformanceMaxServerThreads: 64
-            PerformanceCredentialBatchSize: 300
-            PerformanceIntegrationMessageTimeoutSeconds: 60
-            # Printing
-            PrintingFooterAlignment: 'Left'
-            PrintingFooterText: 'FOOTER-CHECK'
-            PrintingHeaderAlignment: 'Right'
-            PrintingHeaderText: 'HEADER-CHECK'
-            PrintingInColor: false
-            PrintingMarginBottom: 25
-            PrintingMarginLeft: 25
-            PrintingMarginRight: 25
-            PrintingMarginTop: 25
-            # Proxy
-            ProxyHostName: 'proxy.example.test'
-            ProxyPort: 8888
-            ProxyUserName: 'proxy-user'
-            ProxyUseSystemHost: false
-            # Repository
-            RepositoryEnableUnusedFilesWarning: false
-            RepositoryExclusions: '*.tmp;*.partial'
-            # Spiceworks
-            SpiceworksHostName: 'spiceworks.example.test'
-            SpiceworksIsEnabled: false
-            SpiceworksPort: 8443
-            SpiceworksSyncInterval: '06:00:00'
-            SpiceworksUserName: 'spice-user'
-            SpiceworksUseSSL: false
-            # Target service
-            TargetServiceRemoteDirectory: 'ADMIN$\PDQService'
-            TargetServiceSharePath: 'C$\PDQStage'
+          # EVERYTHING off the product default, deliberately, organised exactly as the
+          # console's Preferences window is -- a map of pages, each key the label the page
+          # shows -- so an eyes-on inspection can walk the window top to bottom against this
+          # block. Two deliberate exceptions: the audit log's custom-config LOADER stays off
+          # (enabling it against a file that does not exist risks the product's own logging;
+          # its path is still set and visible), and the console port stays at its default
+          # because the security group and every client console depend on it.
+          preferences:
+            alerts:
+              auto_update_check_enabled: false
+              show_webcast_alerts: false
+            auto_download:
+              enable_auto_download: false
+              approval: 'Manual'
+              automatic_approval_delay: '3.00:00:00'
+              save_copies_of_previous_versions: true
+              copies_to_keep: 9
+            database:
+              enable_automatic_backups: false
+              backups_to_keep: 15
+              compress_backups: false
+            deployments:
+              run_packages_as: 'LocalSystem'
+              timeout_minutes: 120
+              cleanup_days: 45
+              scan_after_deployment: false
+              ping_before_deployment: true
+              wake_on_lan: true
+              retry_queue_enabled: true
+              allowed_retries: 24
+              retry_interval: '02:30:00'
+            interface:
+              color_theme: 'Win11Dark'
+              disable_splash_screen: true
+            logging:
+              send_anonymous_exception_data: false
+              record_error: false
+              record_warning: false
+              record_informational: false
+              record_debug: true
+              audit_keep_days: 45
+              verbose_log_to_file: false
+              verbose_log_directory: 'E:\PDQ Deploy\Logs'
+              archive_log_every: 'Friday'
+              archived_logs_to_keep: 8
+              use_logging_configuration_file: false
+              logging_configuration_file: 'E:\PDQ Deploy\audit-log.config'
+            mail_server:
+              smtp_server: 'smtp.example.test'
+              enable_ssl: true
+              smtp_user: 'pdq-mailer@example.test'
+              sender_address: 'pdq-sender@example.test'
+              oauth2_client_id: 'demo-oauth-client-id'
+              oauth2_tenant_id: 'demo-oauth-tenant-id'
+              oauth2_redirect_uri: 'https://localhost/demo-redirect'
+              oauth2_provider: 'Google'
+              oauth2_sender: 'oauth-sender@example.test'
+              graph_client_id: 'demo-graph-client-id'
+              graph_tenant_id: 'demo-graph-tenant-id'
+              graph_cloud: 'Azure US Government'
+              graph_sender: 'graph-sender@example.test'
+            performance:
+              concurrent_targets_per_deployment: 16
+              total_concurrent_targets: 64
+              copy_mode: 'Pull'
+              bandwidth_limit_percent: 75
+              credential_batch_size: 300
+              integration_message_timeout_seconds: 60
+            printing:
+              header_text: 'HEADER-CHECK'
+              header_alignment: 'Right'
+              footer_text: 'FOOTER-CHECK'
+              footer_alignment: 'Left'
+              margin_left: 25
+              margin_right: 25
+              margin_top: 25
+              margin_bottom: 25
+              in_color: false
+            proxy_server:
+              use_system_proxy: false
+              host_name: 'proxy.example.test'
+              port: 8888
+              username: 'proxy-user'
+            repository:
+              show_unused_files_warning: false
+              cleanup_exclusions: '*.tmp;*.partial'
+            spiceworks:
+              host_name: 'spiceworks.example.test'
+              port: 8443
+              use_ssl: false
+              email: 'spice-user'
+              auto_sync_enabled: false
+              sync_interval: '06:00:00'
+            target_service:
+              unc_path: >-
+                ADMIN$\PDQService
+              local_path_of_shared_directory: >-
+                C$\PDQStage
+            usage_data:
+              collect_usage_data: true
+              alert_first_time_analytics_dialog: false
 
     #endregion --- [ Roles: PDQ Deploy ] ------------------------------------------------------ #
 

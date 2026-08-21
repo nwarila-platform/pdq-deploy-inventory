@@ -781,56 +781,21 @@
     #endregion --- [ Process: Apply Any Pending Restart ] ------------------------------------- #
 
     #region ------ [ Process: Apply The Product Settings ] ------------------------------------ #
-    # The product answers its own command line only for the account its service runs as: an
-    # administrator and even SYSTEM are refused, because authorisation is a list of console
-    # users and a fresh install has none. Measured 2026-08-18. So the settings are applied AS
-    # the background service user, which needs no seeding because the product already trusts
-    # it. The credential crosses as a become secret rather than on a command line, which the
-    # vendor warns is visible in process listings.
+    # The whole preference tree crosses as ONE parameter, shaped exactly as the console's
+    # Preferences window is, and the script owns the routing and the arithmetic: it sets aside
+    # the pages other tasks write (the per-user alerts and interface pages, the event-log
+    # switches), composes the repository path from this machine's own name and the share the role
+    # publishes, and places the backup and verbose-log locations beside the database unless the
+    # caller named somewhere else. What the product accepts and drops is still caught by the
+    # script's export-verify pass, and censoring is still off because every value here is
+    # playbook-tracked.
     #
-    # logon_type=batch is not decoration: become defaults to an INTERACTIVE logon, and this
-    # role denies the service account exactly that (STIG). A batch logon is the one a scheduled
-    # task uses, is granted through Administrators, and leaves the two deny rights intact.
-    #
-    # A script rather than a loop of command lines, because writing a setting is the easy half.
-    # The product ACCEPTS any name and reports success whether or not it uses it -- measured
-    # 2026-08-20, RepositorySettings.Path inserts a row nothing reads -- so a converge that
-    # trusts an exit code reports changes that never happened. The script exports the product's
-    # own account of its configuration, writes only what differs, exports again, and proves each
-    # name read back as asked; anything that did not is reported and fails the task. It also
-    # knows the one setting whose home is the database rather than the command line, and which
-    # names exist at all -- a typo is refused rather than stored as a row nothing reads.
-    # Uncensored
-    # on purpose: every name and value it handles comes from the playbook, which is tracked in
-    # git, and censoring cost the one thing a failing setting needs -- its name.
-    #
-    # The repository is not left to the caller. The regions above create that folder, lock its
-    # permissions and publish it as a share; this is where the product is finally told to USE it,
-    # and until it was, every one of those regions built something the product ignored -- it went
-    # on using its own default under the system drive (measured 2026-08-20). The value is the
-    # SHARE, not the local folder: targets in pull mode fetch package files over the network, so a
-    # local path would name something they cannot reach, and the product's own default is a UNC
-    # path for that reason. Derived from the same inputs that made the share, so the folder, its
-    # permissions, its share name and the product's repository can never disagree; a caller
-    # therefore does not declare RepositoryPath, and validate rejects it if they try. The database
-    # backup directory is also derived, but as a LOCAL path beside the database: backups are
-    # written by the service on this machine, and the one share this role publishes is read-only
-    # by design, so a backup aimed at any share is a backup that fails. Derived rather than
-    # defaulted because the drive letter is this host's choice, not a universal value.
-    #
-    # Runs last because the product's command line needs the service up, which the regions
-    # above guarantee. The referenced .ps1 is MATERIALIZED from scripts/ by
-    # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqSetting.ps1.stub);
-    # run it before this role.
-
-    - name: 'PROCESS | Read The Name The Repository Share Is Published Under'
-      register: '__pdq_deploy_computer_name__'
-
-      ansible.windows.win_reg_stat:
-        name: 'ComputerName'
-        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName'
-
-    # ----------------------------------------------------------------------------------------- #
+    # The product answers its own command line only for the account its service runs as -- an
+    # administrator and even SYSTEM are refused (measured 2026-08-18) -- so this runs AS the
+    # background service user, whose batch logon the STIG deny rights deliberately leave open.
+    # Runs last because the command line needs the service up, which the regions above guarantee.
+    # The referenced .ps1 is MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh
+    # (the role tracks only files/Set-PdqSetting.ps1.stub); run it before this role.
 
     - name: 'PROCESS | Apply The Product Settings'
       become: true
@@ -839,21 +804,15 @@
       vars:
         ansible_become_flags: 'logon_type=batch'
         ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
-        __backup_dir__: >-
-          {{ pdq_deploy_running.database.drive }}:\{{ pdq_deploy_running.database.directory
-             }}\Backups
-        __repository_unc__: >-
-          \\{{ __pdq_deploy_computer_name__.value
-             }}\{{ pdq_deploy_running.repository.share_name }}
 
       ansible.windows.win_powershell:
         depth: 3
         error_action: 'stop'
         parameters:
-          Setting: >-
-            {{ pdq_deploy_running.settings
-               | combine({ 'RepositoryPath': __repository_unc__,
-                           'DatabaseDatabaseBackupBackupDirectory': __backup_dir__ }) }}
+          Preference: "{{ pdq_deploy_running.preferences }}"
+          DatabaseDrive: "{{ pdq_deploy_running.database.drive }}"
+          DatabaseDirectory: "{{ pdq_deploy_running.database.directory }}"
+          RepositoryShareName: "{{ pdq_deploy_running.repository.share_name }}"
         remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqSetting.ps1') }}"
 
@@ -869,10 +828,10 @@
 
     - name: 'PROCESS | Choose The Event Log Severities'
       loop:
-        - { name: 'Error Enabled', value: "{{ pdq_deploy_running.event_log.error }}" }
-        - { name: 'Warning Enabled', value: "{{ pdq_deploy_running.event_log.warning }}" }
-        - { name: 'Info Enabled', value: "{{ pdq_deploy_running.event_log.information }}" }
-        - { name: 'Debug Enabled', value: "{{ pdq_deploy_running.event_log.debug }}" }
+        - { name: 'Error Enabled', value: "{{ pdq_deploy_running.preferences.logging.record_error }}" }
+        - { name: 'Warning Enabled', value: "{{ pdq_deploy_running.preferences.logging.record_warning }}" }
+        - { name: 'Info Enabled', value: "{{ pdq_deploy_running.preferences.logging.record_informational }}" }
+        - { name: 'Debug Enabled', value: "{{ pdq_deploy_running.preferences.logging.record_debug }}" }
       loop_control:
         label: "{{ item.name }} = {{ item.value }}"
       notify: 'pdq-deploy-restart-required'
@@ -901,10 +860,10 @@
         depth: 2
         error_action: 'stop'
         parameters:
-          AutoUpdateCheckEnabled: "{{ pdq_deploy_running.console_default.auto_update_check }}"
-          ColorTheme: "{{ pdq_deploy_running.console_default.color_theme | default('', true) }}"
-          DisableSplashScreen: "{{ pdq_deploy_running.console_default.disable_splash_screen }}"
-          ShowWebcastAlerts: "{{ pdq_deploy_running.console_default.show_webcast_alerts }}"
+          AutoUpdateCheckEnabled: "{{ pdq_deploy_running.preferences.alerts.auto_update_check_enabled }}"
+          ColorTheme: "{{ pdq_deploy_running.preferences.interface.color_theme | default('', true) }}"
+          DisableSplashScreen: "{{ pdq_deploy_running.preferences.interface.disable_splash_screen }}"
+          ShowWebcastAlerts: "{{ pdq_deploy_running.preferences.alerts.show_webcast_alerts }}"
         remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqConsoleDefault.ps1') }}"
 

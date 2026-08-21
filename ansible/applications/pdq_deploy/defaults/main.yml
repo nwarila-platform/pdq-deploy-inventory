@@ -101,6 +101,10 @@ pdq_deploy_defaults:
   # blank on a host where someone configured them by hand rather than leaving a half-configured
   # integration in place.
   #
+  # Five audit-log names the export publishes are absent because they are read-only: the
+  # min/max pairs are the BOUNDS of the console's two spinners, and the verbose file name is the
+  # fixed label beside the browsable directory. Each was measured accepted-and-not-stored
+  # (2026-08-21); the script still carries them, so declaring one fails loudly.
   # RepositoryPath is absent because the role owns it, deriving the value from the share it
   # publishes so the folder, its permissions, its share name and the product's repository cannot
   # disagree; the database backup directory is derived the same way, for the same reason. Both
@@ -135,11 +139,6 @@ pdq_deploy_defaults:
 
     # Logging and audit
     LoggingSentryCanSendAnonymousExceptionData: true
-    LoggingAuditLogMinDaysRecordsKept: 5
-    LoggingAuditLogMaxDaysRecordsKept: 90
-    LoggingAuditLogMinNumArchivedFiles: 0
-    LoggingAuditLogMaxNumArchivedFiles: 50
-    LoggingAuditLogVerboseFileName: 'PDQDeployAuditLog.log'
     LoggingAuditLogDaysRecordsKept: 30
     LoggingAuditLogWriteVerboseFile: true
     LoggingAuditLogLoadCustomConfig: false

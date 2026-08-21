@@ -171,6 +171,17 @@ pdq_deploy_defaults:
     PerformanceCredentialBatchSize: 200
     PerformanceIntegrationMessageTimeoutSeconds: 30
 
+    # Printing
+    PrintingFooterAlignment: 'Center'
+    PrintingFooterText: ''
+    PrintingHeaderAlignment: 'Center'
+    PrintingHeaderText: ''
+    PrintingInColor: true
+    PrintingMarginBottom: 20
+    PrintingMarginLeft: 20
+    PrintingMarginRight: 20
+    PrintingMarginTop: 20
+
     # Proxy
     ProxyHostName: ''
     ProxyPort: 8080
@@ -196,6 +207,28 @@ pdq_deploy_defaults:
     # Analytics
     AnalyticsCollectAnalyticsUsage: false
     AnalyticsAlertFirstTimeAnalyticsDialog: true
+
+  # Which severities the product records to the Windows Application event log. Its OWN default
+  # is everything but Debug -- the values live under HKLM ...\Admin Arsenal\Logging\PDQ Deploy,
+  # a key the product only creates once a console saves the page (measured 2026-08-21), so the
+  # role writes all four and the machine no longer depends on whether anyone ever opened the
+  # console. Debug stays off: the vendor's page marks it for support-directed troubleshooting.
+  event_log:
+    error: true
+    warning: true
+    information: true
+    debug: false
+
+  # The console preferences every NEW user profile starts from, seeded into the Default profile
+  # hive -- the only per-user surface a converge can reach, because profiles that do not exist
+  # yet are built from it. Existing profiles are never touched: a preference a user has saved is
+  # that user's. Values are the product's own first-run behaviour; the theme is null because the
+  # product's unset default is the console's own first-run pick, and null leaves it that way.
+  console_default:
+    disable_splash_screen: false
+    auto_update_check: true
+    show_webcast_alerts: true
+    color_theme: null
 
   #region ------ [ Installer layout ] -------------------------------------------------------- #
 

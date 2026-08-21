@@ -156,7 +156,9 @@ Describe 'Set-PdqSetting' {
           # so the compiled default (blank, in this model) shows through. A name
           # the product does not use is accepted and discarded either way, which
           # is the whole reason the script verifies.
-          $Name = $args[2]
+          # The real product stores a few families under a 'Product' prefix and
+          # publishes them in the export without it; the fake mirrors that.
+          $Name = $args[2] -replace '^ProductPrintingSettings\.', 'PrintingSettings.'
           If ($global:FakeIgnored -notcontains $Name) {
             If ($args[3] -eq '-Reset') {
               $global:FakeSettings[$Name] = ''
@@ -245,6 +247,17 @@ Describe 'Set-PdqSetting' {
       $Result.changed | Should -BeFalse
       $Result.unchanged | Should -Contain 'DeploymentSettings.CleanupDays'
       @($global:FakeCliCalls | Where-Object { $_ -like 'Settings*' }).Count | Should -Be 0
+    }
+
+    It 'writes through the storage spelling when it differs from the export name' {
+      # Printing stores as ProductPrintingSettings.* while the export says
+      # PrintingSettings.*; the row's Store field carries the stored name and
+      # the export name stays the oracle the verify pass reads.
+      $global:FakeSettings['PrintingSettings.MarginTop'] = '20'
+      $Result = & $script:ScriptPath -Setting @{ PrintingMarginTop = 21 } | ConvertFrom-Json
+      $Result.applied | Should -Be @('PrintingSettings.MarginTop')
+      ($global:FakeCliCalls -join '; ') | Should -Match 'ProductPrintingSettings\.MarginTop -Set 21'
+      $global:FakeSettings['PrintingSettings.MarginTop'] | Should -Be '21'
     }
 
     It 'restores a blank default by resetting, never by writing an empty value' {

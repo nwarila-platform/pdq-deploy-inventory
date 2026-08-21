@@ -54,6 +54,13 @@
       - pdq_deploy_running.arp.display_name | default('') | length > 0
       - pdq_deploy_running.service_name | default('') | length > 0
       - pdq_deploy_running.rbac_enabled is boolean
+      - pdq_deploy_running.event_log.error is boolean
+      - pdq_deploy_running.event_log.warning is boolean
+      - pdq_deploy_running.event_log.information is boolean
+      - pdq_deploy_running.event_log.debug is boolean
+      - pdq_deploy_running.console_default.disable_splash_screen is boolean
+      - pdq_deploy_running.console_default.auto_update_check is boolean
+      - pdq_deploy_running.console_default.show_webcast_alerts is boolean
       - pdq_deploy_running.server.port | int > 0
       - pdq_deploy_running.server.port | int < 65536
       - pdq_deploy_running.server.listen_addresses is none

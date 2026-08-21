@@ -571,11 +571,11 @@ Try {
 }
 
 $Result = [PSCustomObject]@{
-  applied    = [System.String[]]$Applied
-  changed    = [System.Boolean]($Applied.Count -gt 0)
-  check_mode = [System.Boolean]$Ansible.CheckMode
-  ignored    = [System.String[]]$Ignored
-  msg        = If ($Ignored.Count -gt 0) {
+  applied       = [System.String[]]$Applied
+  changed       = [System.Boolean]($Applied.Count -gt 0)
+  check_mode    = [System.Boolean]$Ansible.CheckMode
+  ignored       = [System.String[]]$Ignored
+  msg           = If ($Ignored.Count -gt 0) {
     'The product accepted but did not apply: {0}' -f ($Ignored -join ', ')
   } ElseIf ($OpenConsole.Count -gt 0) {
     '{0} applied, {1} already correct; a console is open for {2}, whose next save may overwrite them' -f @(
@@ -587,8 +587,8 @@ $Result = [PSCustomObject]@{
     '{0} applied, {1} already correct' -f $Applied.Count, $Unchanged.Count
   }
   open_consoles = [System.String[]]@($OpenConsole | Sort-Object -Unique)
-  requested  = [System.Int32]$Setting.Count
-  unchanged  = [System.String[]]$Unchanged
+  requested     = [System.Int32]$Setting.Count
+  unchanged     = [System.String[]]$Unchanged
 }
 
 #endregion --- [ Main ] ---------------------------------------------------------------------- #

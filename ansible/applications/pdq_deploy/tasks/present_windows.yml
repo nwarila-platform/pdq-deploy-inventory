@@ -780,7 +780,7 @@
 
     #endregion --- [ Process: Apply Any Pending Restart ] ------------------------------------- #
 
-    #region ------ [ Process: Apply The Declared Product Settings ] --------------------------- #
+    #region ------ [ Process: Apply The Product Settings ] ------------------------------------ #
     # The product answers its own command line only for the account its service runs as: an
     # administrator and even SYSTEM are refused, because authorisation is a list of console
     # users and a fresh install has none. Measured 2026-08-18. So the settings are applied AS
@@ -804,29 +804,55 @@
     # on purpose: every name and value it handles comes from the playbook, which is tracked in
     # git, and censoring cost the one thing a failing setting needs -- its name.
     #
+    # The repository is not left to the caller. The regions above create that folder, lock its
+    # permissions and publish it as a share; this is where the product is finally told to USE it,
+    # and until it was, every one of those regions built something the product ignored -- it went
+    # on using its own default under the system drive (measured 2026-08-20). The value is the
+    # SHARE, not the local folder: targets in pull mode fetch package files over the network, so a
+    # local path would name something they cannot reach, and the product's own default is a UNC
+    # path for that reason. Derived from the same inputs that made the share, so the folder, its
+    # permissions, its share name and the product's repository can never disagree; a caller
+    # therefore does not declare RepositoryPath, and validate rejects it if they try. The database
+    # backup directory is NOT set the same way, though its default has the same host-specific
+    # shape: the product accepts a write to it and stores nothing (measured 2026-08-20), so it is
+    # left where the product puts it rather than pretended to be managed.
+    #
     # Runs last because the product's command line needs the service up, which the regions
     # above guarantee. The referenced .ps1 is MATERIALIZED from scripts/ by
     # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqSetting.ps1.stub);
     # run it before this role.
 
-    - name: 'PROCESS | Apply The Declared Product Settings'
+    - name: 'PROCESS | Read The Name The Repository Share Is Published Under'
+      register: '__pdq_deploy_computer_name__'
+
+      ansible.windows.win_reg_stat:
+        name: 'ComputerName'
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Apply The Product Settings'
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_deploy_running.service_account.name }}"
       vars:
         ansible_become_flags: 'logon_type=batch'
         ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
-      when: pdq_deploy_running.settings | length > 0
+        __repository_unc__: >-
+          \\{{ __pdq_deploy_computer_name__.value
+             }}\{{ pdq_deploy_running.repository.share_name }}
 
       ansible.windows.win_powershell:
         depth: 3
         error_action: 'stop'
         parameters:
-          Setting: "{{ pdq_deploy_running.settings }}"
+          Setting: >-
+            {{ pdq_deploy_running.settings
+               | combine({ 'RepositoryPath': __repository_unc__ }) }}
         remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqSetting.ps1') }}"
 
-    #endregion --- [ Process: Apply The Declared Product Settings ] --------------------------- #
+    #endregion --- [ Process: Apply The Product Settings ] ------------------------------------ #
 
 #endregion --- [ Process: Install PDQ Deploy on Windows ] ------------------------------------- #
 

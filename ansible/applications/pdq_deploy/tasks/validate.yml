@@ -61,6 +61,7 @@
       - pdq_deploy_running.cli_path | default('') is match('^[A-Za-z]:\\\\')
       - pdq_deploy_running.service_path | default('') is match('^[A-Za-z]:\\\\')
       - pdq_deploy_running.settings is mapping
+      - "'RepositoryPath' not in pdq_deploy_running.settings"
       - pdq_deploy_running.settings | dict2items | selectattr('value', 'mapping')
         | list | length == 0
       - pdq_deploy_running.settings | dict2items | selectattr('value', 'sequence')

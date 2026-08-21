@@ -36,11 +36,9 @@
         product tree, which is where secret material such as a licence key
         lives.
 
-        An MSI product also reports product_id, the ProductCode extracted from
-        its uninstall string, which is what a caller needs to remove it through
-        ansible.windows.win_package. No derived uninstall command is published:
-        the module owns the uninstall, and the raw UninstallString is already
-        part of the returned registration.
+        An MSI product also reports product_id, the ProductCode -- taken from the uninstall
+        SUBKEY NAME per Windows Installer's own contract, never reverse-parsed from a mutable
+        uninstall string -- which win_package needs to remove it; empty for a non-MSI product.
 
         The uninstall roots are not a parameter. Where Windows registers
         installed software is a property of Windows, not a caller's choice, and
@@ -83,15 +81,7 @@
     .OUTPUTS
         System.String
     #>
-[CmdletBinding(
-  ConfirmImpact = 'None',
-  DefaultParameterSetName = 'default',
-  HelpUri = '',
-  PositionalBinding = $False,
-  RemotingCapability = 'PowerShell',
-  SupportsPaging = $False,
-  SupportsShouldProcess = $False
-)]
+[CmdletBinding(SupportsShouldProcess)]
 Param (
   [Parameter(
     DontShow = $False,
@@ -133,7 +123,7 @@ Param (
     ValueFromPipeline = $False,
     ValueFromPipelineByPropertyName = $False
   )]
-  [ValidateNotNullOrEmpty()]
+  [ValidatePattern('^\d+\.\d+\.\d+\.\d+$')]
   [System.String]
   $Version
 )
@@ -252,8 +242,8 @@ $Entries = @(
       Continue
     }
 
-    ForEach ($Key In (Get-ChildItem -LiteralPath:$Root -ErrorAction:'SilentlyContinue')) {
-      $Registration = Get-ItemProperty -LiteralPath:$Key.PSPath -ErrorAction:'SilentlyContinue'
+    ForEach ($Key In (Get-ChildItem -LiteralPath:$Root)) {
+      $Registration = Get-ItemProperty -LiteralPath:$Key.PSPath
       If ($Null -eq $Registration) {
         Continue
       }
@@ -276,14 +266,13 @@ $Entries = @(
       #
       # No derived uninstall COMMAND is published. The module owns the uninstall, and the raw
       # UninstallString is already in the registration below for anything that wants it.
+      # The ProductCode is the uninstall SUBKEY NAME -- Windows Installer's own contract -- not a
+      # value reverse-parsed from an uninstall string a tampered registration could redirect.
+      # Empty for a non-MSI product, whose key name is not a GUID.
       $ProductId = [System.String]::Empty
-      $UninstallString = [System.String]::Empty
-      $UninstallStringProperty = $Registration.PSObject.Properties['UninstallString']
-      If ($Null -ne $UninstallStringProperty) {
-        $UninstallString = [System.String]$UninstallStringProperty.Value
-      }
-      If ($UninstallString -match '(?i)msiexec.*?(\{[0-9A-F-]{36}\})') {
-        $ProductId = $Matches[1]
+      $Guid = [System.Guid]::Empty
+      If ([System.Guid]::TryParse($Key.PSChildName, [Ref]$Guid)) {
+        $ProductId = $Key.PSChildName
       }
 
       # The whole registration, so one read answers publisher, install date, estimated size and
@@ -315,7 +304,7 @@ If ($Ambiguous) {
   $Message = (
     'Found {0} registrations named {1} ({2}). Two registrations of one product cannot both own ' +
     'the install, and choosing one would be a guess.'
-  ) -f $Entries.Count, $DisplayName, (($Entries | ForEach-Object { $_.DisplayVersion }) -join ', ')
+  ) -f $Entries.Count, $DisplayName, (($Entries | ForEach-Object { If ($_.PSObject.Properties['DisplayVersion']) { $_.DisplayVersion } Else { '?' } }) -join ', ')
 } Else {
   $Message = 'Found {0} registration(s) named {1}.' -f $Entries.Count, $DisplayName
 }
@@ -352,6 +341,7 @@ $Result = [PSCustomObject]@{
   check_mode        = $Ansible.CheckMode
   count             = $Entries.Count
   entries           = $Entries
+  product_ids       = @($Entries | ForEach-Object { $_.product_id } | Where-Object { $_ })
   installed_version = $InstalledVersion
   msg               = $Message
 }

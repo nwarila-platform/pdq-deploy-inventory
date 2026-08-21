@@ -859,6 +859,57 @@
 
     #endregion --- [ Process: Apply The Product Settings ] ------------------------------------ #
 
+    #region ------ [ Process: Choose The Event Log Severities ] ------------------------------- #
+    # Which severities reach the Windows Application event log. The product keeps these under its
+    # own Logging key and only creates that key when a console saves the preferences page
+    # (measured 2026-08-21) -- so without this, what a server records depends on whether anyone
+    # ever opened a console on it. All four are written, so the state is the playbook's whatever
+    # the console did or did not do. One action -- choose the severities -- split over a loop
+    # because each severity is its own value under the key.
+
+    - name: 'PROCESS | Choose The Event Log Severities'
+      loop:
+        - { name: 'Error Enabled', value: "{{ pdq_deploy_running.event_log.error }}" }
+        - { name: 'Warning Enabled', value: "{{ pdq_deploy_running.event_log.warning }}" }
+        - { name: 'Info Enabled', value: "{{ pdq_deploy_running.event_log.information }}" }
+        - { name: 'Debug Enabled', value: "{{ pdq_deploy_running.event_log.debug }}" }
+      loop_control:
+        label: "{{ item.name }} = {{ item.value }}"
+      notify: 'pdq-deploy-restart-required'
+
+      ansible.windows.win_regedit:
+        data: "{{ item.value | int }}"
+        delete_key: true
+        name: "{{ item.name }}"
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\Logging\PDQ Deploy'
+        state: 'present'
+        type: 'dword'
+
+    #endregion --- [ Process: Choose The Event Log Severities ] ------------------------------- #
+
+    #region ------ [ Process: Seed The Console Defaults For New Users ] ----------------------- #
+    # A few console preferences are per-user: the product writes them to the signed-in user's own
+    # hive and nowhere else (measured 2026-08-21 against a console flipping every page). Profiles
+    # that do not exist yet are built from the Default profile, so seeding that one hive gives
+    # every FUTURE console user the deployment's starting point; existing profiles are
+    # deliberately left alone. The referenced .ps1 is MATERIALIZED from scripts/ by
+    # scripts/materialize-role-scripts.sh (the role tracks only
+    # files/Set-PdqConsoleDefault.ps1.stub); run it before this role.
+
+    - name: 'PROCESS | Seed The Console Defaults For New Users'
+      ansible.windows.win_powershell:
+        depth: 2
+        error_action: 'stop'
+        parameters:
+          AutoUpdateCheckEnabled: "{{ pdq_deploy_running.console_default.auto_update_check }}"
+          ColorTheme: "{{ pdq_deploy_running.console_default.color_theme | default('', true) }}"
+          DisableSplashScreen: "{{ pdq_deploy_running.console_default.disable_splash_screen }}"
+          ShowWebcastAlerts: "{{ pdq_deploy_running.console_default.show_webcast_alerts }}"
+        remote_src: false
+        script: "{{ lookup('ansible.builtin.file', 'Set-PdqConsoleDefault.ps1') }}"
+
+    #endregion --- [ Process: Seed The Console Defaults For New Users ] ------------------------ #
+
     #region ------ [ Process: Record The Product Registration ] ------------------------------- #
     # A licensed server still greets the first console with a registration popup asking for an
     # email address, and stores the answer as three database rows. This records them ahead of any

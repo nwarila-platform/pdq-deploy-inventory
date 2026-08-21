@@ -233,6 +233,14 @@
           repository:
             drive: 'F'
 
+          # New console users start with the operator's measured preferences: no splash, no
+          # update nagging, the dark theme. Existing profiles keep whatever they saved.
+          console_default:
+            disable_splash_screen: true
+            auto_update_check: false
+            show_webcast_alerts: false
+            color_theme: 'Win11Dark'
+
           # OFF for now. Console users and the roles they would be granted are not modelled by
           # this deployment yet, and enabling access control before there are roles to grant
           # leaves a console nobody is authorised to use. Revisit once console users are managed.
@@ -250,6 +258,7 @@
           # An unlisted name is unmanaged, which is a different thing from one set to the
           # product's default.
           settings:
+            PackageLibraryAutoDownloadArchiveCopiesToKeep: 6
             DeploymentCleanupDays: 40
             PerformanceCopyMode: 'Pull'
 

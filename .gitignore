@@ -72,6 +72,7 @@
 !/ansible/applications/pdq_deploy/files/Set-RepositoryAcl.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqSetting.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqRegistration.ps1.stub
+!/ansible/applications/pdq_deploy/files/Set-PdqConsoleDefault.ps1.stub
 !/ansible/applications/pdq_deploy/handlers/
 !/ansible/applications/pdq_deploy/handlers/main.yml
 !/ansible/applications/pdq_deploy/meta/main.yml
@@ -123,6 +124,8 @@
 !/scripts/Set-PdqSetting.ps1
 !/scripts/Set-PdqRegistration.ps1
 !/scripts/Set-PdqRegistration.pester.ps1
+!/scripts/Set-PdqConsoleDefault.ps1
+!/scripts/Set-PdqConsoleDefault.pester.ps1
 !/scripts/compose-and-run.sh
 !/scripts/materialize-role-scripts.sh
 

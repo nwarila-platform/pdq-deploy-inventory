@@ -522,6 +522,9 @@
         error_action: 'stop'
         parameters:
           Path: "{{ __repository_dir__ }}"
+          # SYSTEM and Administrators full, Users read-and-execute so privileged operators
+          # can navigate but never alter packages the product runs as SYSTEM; inheritance off.
+          Sddl: 'D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'
         remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Set-RepositoryAcl.ps1') }}"
 

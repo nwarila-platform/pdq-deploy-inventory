@@ -13,8 +13,8 @@
         no native module does that, which is what routes this to the role's first-class script
         convention.
 
-        The descriptor is handled as its SDDL string from end to end. The desired form is a
-        constant: protected (no inheritance from the volume root), SYSTEM and Administrators at
+        The descriptor is handled as its SDDL string from end to end. The desired form is
+        supplied by the caller: protected (no inheritance from the volume root), SYSTEM and Administrators at
         full control, Users at modify, everything inheriting to children. Windows normalises an
         applied descriptor -- P comes back as PAI -- so the constant is the NORMALISED form, read
         back from a host after application, and a converged directory therefore compares equal
@@ -50,14 +50,20 @@
     .PARAMETER Path
         The directory whose DACL is enforced.
 
+    .PARAMETER Sddl
+        The desired DACL as its NORMALISED SDDL string -- the form Windows reads back after
+        applying, so a converged directory compares equal. The role owns the model per folder;
+        the repository is SYSTEM and Administrators full, Users read-and-execute, inheritance
+        severed. Only the DACL section is ever read or written; owner, group and audit are left.
+
     .EXAMPLE
-        .\Set-RepositoryAcl.ps1 -Path 'F:\PDQ Repository'
+        .\Set-RepositoryAcl.ps1 -Path 'F:\PDQ Repository' -Sddl 'D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'
 
     .OUTPUTS
         One object carrying changed, check_mode, path, before, after and msg.
 #>
 
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess)]
 [OutputType([System.Void])]
 Param (
   [Parameter(
@@ -91,7 +97,18 @@ Param (
   )]
   [ValidateNotNullOrEmpty()]
   [System.String]
-  $Path
+  $Path,
+
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [ValidatePattern('^D:P')]
+  [System.String]
+  $Sddl
 )
 
 #region ------ [ Script ] -------------------------------------------------------------------- #
@@ -103,12 +120,6 @@ Write-Debug -Message:'Entering Stage: Initialization'
 New-Variable -Force -Name:'LOG_LEVELS' -Option:('Private', 'ReadOnly') -Value:(
   [System.String[]]@('Verbose', 'Debug', 'Information', 'Warning', 'Error', 'Fatal')
 )
-
-New-Variable -Force -Name:'EXPORT_PATH' -Option:('Private', 'ReadOnly') -Value:(
-  [System.String]'C:\Windows\Temp\pdq-settings-export.xml'
-)
-
-
 
 
 # Initialize the custom stream preferences; the built-in ones already exist.
@@ -181,14 +192,6 @@ If ($StandaloneRun) {
 }
 
 
-# The enforced DACL, as the NORMALISED SDDL Windows itself emits after application (measured on
-# Windows Server 2025, 2026-08-20: 'D:P...' is stored and read back as 'D:PAI...', and the PAI
-# form is byte-stable across further round trips). Protected from volume-root inheritance;
-# SYSTEM and Administrators full control; Users modify (0x1301bf); every entry inherits to
-# children (OICI). Well-known SIDs, so the string is identical on every host.
-New-Variable -Force -Name:'DESIRED_SDDL' -Option:('Private', 'ReadOnly') -Value:(
-  [System.String]'D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;BU)'
-)
 
 #endregion --- [ Initialization ] ------------------------------------------------------------ #
 
@@ -198,21 +201,26 @@ Write-Debug -Message:'Entering Stage: Main'
 # The descriptor travels as a string: read the DACL section, compare to the constant, and only
 # touch the directory when they differ. Everything platform-bound goes through Get-Acl/Set-Acl,
 # which is also what lets the spec exercise this file on a build host with no NTFS.
+# No change is the default: a throw in the read below must not inherit the transport's true.
+$Ansible.Changed = $False
 $Before = (Get-Acl -LiteralPath:$Path).GetSecurityDescriptorSddlForm('Access')
 $Changed = $False
 $After = $Before
 
-If ($Before -cne $DESIRED_SDDL) {
+If ($Before -cne $Sddl) {
   $Changed = $True
   If (-not $Ansible.CheckMode) {
     $Descriptor = Get-Acl -LiteralPath:$Path
-    $Descriptor.SetSecurityDescriptorSddlForm($DESIRED_SDDL)
+    # 'Access' on BOTH read and write: the one-argument overload means AccessControlSections.All,
+    # which stamps a DACL-only string over the owner, group and AUDIT sections and would clear an
+    # existing SACL. Only the DACL is this script's business.
+    $Descriptor.SetSecurityDescriptorSddlForm($Sddl, [System.Security.AccessControl.AccessControlSections]::Access)
     Set-Acl -LiteralPath:$Path -AclObject:$Descriptor
     # Prove the write took. A descriptor the platform silently adjusted into some OTHER shape
     # would otherwise report changed on every converge -- the exact defect this script replaces.
     $After = (Get-Acl -LiteralPath:$Path).GetSecurityDescriptorSddlForm('Access')
-    If ($After -cne $DESIRED_SDDL) {
-      Throw ('The DACL on {0} read back as {1} after applying {2}' -f $Path, $After, $DESIRED_SDDL)
+    If ($After -cne $Sddl) {
+      Throw ('The DACL on {0} read back as {1} after applying {2}' -f $Path, $After, $Sddl)
     }
   }
 }
@@ -222,7 +230,9 @@ $Result = [PSCustomObject]@{
   before     = [System.String]$Before
   changed    = [System.Boolean]$Changed
   check_mode = [System.Boolean]$Ansible.CheckMode
-  msg        = If ($Changed) {
+  msg        = If ($Changed -and $Ansible.CheckMode) {
+    'DACL would be enforced on {0}' -f $Path
+  } ElseIf ($Changed) {
     'DACL enforced on {0}' -f $Path
   } Else {
     'DACL already exact on {0}' -f $Path

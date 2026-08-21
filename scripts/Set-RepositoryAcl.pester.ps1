@@ -28,7 +28,7 @@ $ErrorActionPreference = 'Stop'
 
 BeforeAll {
   $script:ScriptPath = Join-Path -Path $PSScriptRoot -ChildPath 'Set-RepositoryAcl.ps1'
-  $script:Desired = 'D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;BU)'
+  $script:Desired = 'D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'
   $script:Drifted = 'D:PAI(A;OICI;FA;;;WD)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;BU)'
 
   # Inline $Ansible stand-in (org contract: pairs are self-contained, no
@@ -71,8 +71,9 @@ BeforeAll {
       $global:FakeSddl
     }
     $Descriptor | Add-Member -MemberType ScriptMethod -Name 'SetSecurityDescriptorSddlForm' -Value {
-      Param ([System.String]$Sddl)
+      Param ([System.String]$Sddl, [System.Object]$Section)
       $this.PendingSddl = $Sddl
+      $global:FakeSetSection = [System.String]$Section
     }
     Return $Descriptor
   }
@@ -111,7 +112,7 @@ Describe 'Set-RepositoryAcl' {
   Context 'convergence decisions' {
 
     It 'reports no change when the DACL is already exact, and never writes' {
-      $Result = & $script:ScriptPath -Path 'F:\PDQ Repository' | ConvertFrom-Json
+      $Result = & $script:ScriptPath -Path 'F:\PDQ Repository' -Sddl $script:Desired | ConvertFrom-Json
 
       $Result.changed | Should -BeFalse
       $Result.before | Should -Be $script:Desired
@@ -122,7 +123,7 @@ Describe 'Set-RepositoryAcl' {
     It 'replaces a drifted DACL wholesale and verifies the readback' {
       $global:FakeSddl = $script:Drifted
 
-      $Result = & $script:ScriptPath -Path 'F:\PDQ Repository' | ConvertFrom-Json
+      $Result = & $script:ScriptPath -Path 'F:\PDQ Repository' -Sddl $script:Desired | ConvertFrom-Json
 
       $Result.changed | Should -BeTrue
       $Result.before | Should -Be $script:Drifted
@@ -135,13 +136,13 @@ Describe 'Set-RepositoryAcl' {
       $global:FakeSddl = $script:Drifted
       $global:FakeWriteIgnored = $True
 
-      { & $script:ScriptPath -Path 'F:\PDQ Repository' } | Should -Throw
+      { & $script:ScriptPath -Path 'F:\PDQ Repository' -Sddl $script:Desired } | Should -Throw
     }
 
     It 'fails loudly on a missing directory' {
       $global:FakeMissing = $True
 
-      { & $script:ScriptPath -Path 'F:\Absent' } | Should -Throw
+      { & $script:ScriptPath -Path 'F:\Absent' -Sddl $script:Desired } | Should -Throw
     }
   }
 
@@ -150,18 +151,24 @@ Describe 'Set-RepositoryAcl' {
     It 'sets Changed=$False explicitly on an already-exact directory' {
       $Context = New-AnsibleContext
 
-      & $script:ScriptPath -Path 'F:\PDQ Repository' | Out-Null
+      & $script:ScriptPath -Path 'F:\PDQ Repository' -Sddl $script:Desired | Out-Null
 
       $Context.Changed | Should -BeFalse
       $Context.Failed | Should -BeFalse
       $Context.Result.msg | Should -Match 'already exact'
     }
 
+  It 'writes only the DACL section, never touching the audit descriptor' {
+    $global:FakeSddl = $script:Drifted
+    & $script:ScriptPath -Path 'F:\PDQ Repository' -Sddl $script:Desired | Out-Null
+    $global:FakeSetSection | Should -Be 'Access'
+  }
+
     It 'reports the would-be change in check mode without writing' {
       $global:FakeSddl = $script:Drifted
       $Context = New-AnsibleContext -CheckMode
 
-      & $script:ScriptPath -Path 'F:\PDQ Repository' | Out-Null
+      & $script:ScriptPath -Path 'F:\PDQ Repository' -Sddl $script:Desired | Out-Null
 
       $Context.Changed | Should -BeTrue
       $Context.Result.check_mode | Should -BeTrue

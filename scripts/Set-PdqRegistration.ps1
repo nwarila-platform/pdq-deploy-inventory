@@ -299,9 +299,8 @@ If ($Changed -and -not $Ansible.CheckMode) {
   If ($NeedUser) {
     $Statements.Add(("INSERT INTO LicensedUser VALUES('{0}','{1}');" -f $Esc['u'], $Esc['uid']))
   }
-  $Statements.Add((
-    "INSERT OR REPLACE INTO Registration VALUES('{0}','{1}','{2}','{3}','Server','Registered',0);" -f @(
-      $Esc['lic'], $Esc['uid'], $Esc['mid'], $Esc['email'])))
+  $Reg = "INSERT OR REPLACE INTO Registration VALUES('{0}','{1}','{2}','{3}','Server','Registered',0);"
+  $Statements.Add(($Reg -f $Esc['lic'], $Esc['uid'], $Esc['mid'], $Esc['email']))
   $Statements.Add('COMMIT;')
   $Null = & $SQLITE_PATH $DatabasePath ($Statements -join ' ') 2>&1
   If ($LASTEXITCODE -ne 0) {
@@ -313,7 +312,7 @@ If ($Changed -and -not $Ansible.CheckMode) {
   $ReadBack = [System.String]::Empty
   ForEach ($Row In @(& $SQLITE_PATH $DatabasePath 'PRAGMA busy_timeout = 5000; SELECT * FROM Registration;' 2>&1)) {
     $C = ([System.String]$Row).Split('|')
-  If ($C.Count -ge 3 -and $C[0] -eq $LicenseId -and $C[1] -eq $UserId -and $C[2] -eq $MachineId) {
+    If ($C.Count -ge 3 -and $C[0] -eq $LicenseId -and $C[1] -eq $UserId -and $C[2] -eq $MachineId) {
       $ReadBack = [System.String]$Row
     }
   }

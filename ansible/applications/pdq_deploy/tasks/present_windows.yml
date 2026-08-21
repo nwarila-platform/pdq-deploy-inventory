@@ -813,9 +813,10 @@
     # path for that reason. Derived from the same inputs that made the share, so the folder, its
     # permissions, its share name and the product's repository can never disagree; a caller
     # therefore does not declare RepositoryPath, and validate rejects it if they try. The database
-    # backup directory is derived the same way and for the same reason: the product writes it as a
-    # UNC path naming this machine and this database drive, so it cannot sit in defaults as one
-    # host's literal value without aiming every other host at that one.
+    # backup directory is also derived, but as a LOCAL path beside the database: backups are
+    # written by the service on this machine, and the one share this role publishes is read-only
+    # by design, so a backup aimed at any share is a backup that fails. Derived rather than
+    # defaulted because the drive letter is this host's choice, not a universal value.
     #
     # Runs last because the product's command line needs the service up, which the regions
     # above guarantee. The referenced .ps1 is MATERIALIZED from scripts/ by
@@ -838,9 +839,9 @@
       vars:
         ansible_become_flags: 'logon_type=batch'
         ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
-        __backup_unc__: >-
-          \\{{ __pdq_deploy_computer_name__.value }}\{{ pdq_deploy_running.database.drive
-             }}$\{{ pdq_deploy_running.database.directory }}\Backups
+        __backup_dir__: >-
+          {{ pdq_deploy_running.database.drive }}:\{{ pdq_deploy_running.database.directory
+             }}\Backups
         __repository_unc__: >-
           \\{{ __pdq_deploy_computer_name__.value
              }}\{{ pdq_deploy_running.repository.share_name }}
@@ -852,11 +853,33 @@
           Setting: >-
             {{ pdq_deploy_running.settings
                | combine({ 'RepositoryPath': __repository_unc__,
-                           'DatabaseDatabaseBackupBackupDirectory': __backup_unc__ }) }}
+                           'DatabaseDatabaseBackupBackupDirectory': __backup_dir__ }) }}
         remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqSetting.ps1') }}"
 
     #endregion --- [ Process: Apply The Product Settings ] ------------------------------------ #
+
+    #region ------ [ Process: Record The Product Registration ] ------------------------------- #
+    # A licensed server still greets the first console with a registration popup asking for an
+    # email address, and stores the answer as three database rows. This records them ahead of any
+    # console, from the address the playbook declares -- which the script proves EQUALS the one
+    # inside the licence blob, so the input cannot drift from what the vendor issued. Runs after
+    # the settings region for the same reason that region runs last: the database this writes is
+    # only guaranteed once the service has started. No become: the row write is a file write and
+    # the one command-line call is SystemInfo, a local read needing no console authorisation. The
+    # referenced .ps1 is MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the
+    # role tracks only files/Set-PdqRegistration.ps1.stub); run it before this role.
+
+    - name: 'PROCESS | Record The Product Registration'
+      ansible.windows.win_powershell:
+        depth: 2
+        error_action: 'stop'
+        parameters:
+          Email: "{{ pdq_deploy_running.license.email }}"
+        remote_src: false
+        script: "{{ lookup('ansible.builtin.file', 'Set-PdqRegistration.ps1') }}"
+
+    #endregion --- [ Process: Record The Product Registration ] ------------------------------- #
 
 #endregion --- [ Process: Install PDQ Deploy on Windows ] ------------------------------------- #
 

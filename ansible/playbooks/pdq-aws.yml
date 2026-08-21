@@ -217,6 +217,10 @@
             bucket: "{{ aws_account_id }}-ansible"
             object: 'applications/pdq/pdq-deploy-license.lic'
             sha256: '4fc848aabff6ff6ecb1c09c9017d40da306bd3c9dd2d075b9082e03608dce58c'
+            # The address the licence was issued to. Mandatory: the role registers it with the
+            # product (killing the first-console popup) and fails if it differs from the E-Mail
+            # attribute inside the licence blob itself.
+            email: 'nicholas.warila@gmail.com'
 
           # The database grows without bound, so it goes on the volume provisioned for it rather
           # than the system disk. Only the letter belongs here: which disk this host dedicates to

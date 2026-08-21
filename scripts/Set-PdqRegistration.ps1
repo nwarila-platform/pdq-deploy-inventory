@@ -53,7 +53,7 @@
         One object carrying changed, check_mode, registered and msg.
 #>
 
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess)]
 [OutputType([System.Void])]
 Param (
   [Parameter(

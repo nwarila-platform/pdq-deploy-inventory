@@ -98,8 +98,9 @@ pdq_deploy_defaults:
   # database on its dedicated drive; declaring a path overrides that. Not offered at all:
   # repository.path (derived from the share the role publishes, so folder, share and product
   # cannot disagree); the five read-only audit-log names (spinner bounds and a fixed label --
-  # FIND-18); the deployments page's Inventory scan profile (it names an object inside PDQ
-  # Inventory); and the alerts page's release channel (per-user, storage not yet measured).
+  # FIND-18, dropped from the script's table entirely so declaring one fails as an unknown name);
+  # the deployments page's Inventory scan profile (it names an object inside PDQ
+  # Inventory).
   preferences:
     alerts:
       auto_update_check_enabled: true

@@ -56,7 +56,7 @@
         One object carrying applied, unchanged, ignored, requested, changed, check_mode and msg.
 #>
 
-[CmdletBinding()]
+[CmdletBinding(SupportsShouldProcess)]
 [OutputType([System.Void])]
 Param (
   [Parameter(DontShow = $False, Mandatory = $False, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
@@ -132,15 +132,10 @@ New-Variable -Force -Name:'SETTINGS' -Option:('Private', 'ReadOnly') -Value:(
     @{ Param = 'deployments.retry_interval'; Name = 'OfflineSettings.RetryInterval'; Type = 'String' }
     @{ Param = 'logging.send_anonymous_exception_data'; Name = 'SentrySettings.CanSendAnonymousExceptionData'; Type = 'Boolean' }
     @{ Param = 'logging.audit_keep_days'; Name = 'AuditLogSettings.DaysRecordsKept'; Type = 'Int32' }
-    @{ Param = 'logging.audit_keep_days_minimum'; Name = 'AuditLogSettings.MinDaysRecordsKept'; Type = 'Int32' }
-    @{ Param = 'logging.audit_keep_days_maximum'; Name = 'AuditLogSettings.MaxDaysRecordsKept'; Type = 'Int32' }
     @{ Param = 'logging.verbose_log_to_file'; Name = 'AuditLogSettings.WriteVerboseFile'; Type = 'Boolean' }
     @{ Param = 'logging.verbose_log_directory'; Name = 'AuditLogSettings.VerboseFileDirectory'; Type = 'String' }
-    @{ Param = 'logging.verbose_log_file_name'; Name = 'AuditLogSettings.VerboseFileName'; Type = 'String' }
     @{ Param = 'logging.archive_log_every'; Name = 'AuditLogSettings.ArchiveSchedule'; Type = 'String' }
     @{ Param = 'logging.archived_logs_to_keep'; Name = 'AuditLogSettings.NumArchivedFiles'; Type = 'Int32' }
-    @{ Param = 'logging.archived_logs_minimum'; Name = 'AuditLogSettings.MinNumArchivedFiles'; Type = 'Int32' }
-    @{ Param = 'logging.archived_logs_maximum'; Name = 'AuditLogSettings.MaxNumArchivedFiles'; Type = 'Int32' }
     @{ Param = 'logging.use_logging_configuration_file'; Name = 'AuditLogSettings.LoadCustomConfig'; Type = 'Boolean' }
     @{ Param = 'logging.logging_configuration_file'; Name = 'AuditLogSettings.CustomConfigPath'; Type = 'String' }
     @{ Param = 'interface.show_dashboard_on_launch'; Name = 'InterfaceSettings.ShowDashboardOnLaunch'; Type = 'Boolean' ; Unexported = $True }

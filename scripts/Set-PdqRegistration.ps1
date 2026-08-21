@@ -31,18 +31,6 @@
         scripts/ with the sibling Set-PdqRegistration.pester.ps1 spec; the role tracks only
         files/Set-PdqRegistration.ps1.stub, resolved by the build.
 
-    .PARAMETER DebugLevel
-        Three-digit control string configuring independent debugging functions, one digit each.
-        First digit: ErrorActionPreference (0 SilentlyContinue, 1 Stop, 2 Continue, 3 Inquire,
-        4 Ignore, 5 Suspend). Second digit: Set-PSDebug (0 off, 1 trace 1, 2 trace 2,
-        3 trace 1 + step, 4 trace 2 + step). Third digit: Set-StrictMode (0 off, 1-3 that
-        version). Default '103': stop on error, no tracing, strict mode 3.
-
-    .PARAMETER LogLevel
-        Six-digit control string setting the preference for each stream, in the order Verbose,
-        Debug, Information, Warning, Error, Fatal. Each digit is an ActionPreference
-        (0 SilentlyContinue, 1 Stop, 2 Continue, 3 Inquire, 4 Ignore, 5 Suspend).
-
     .PARAMETER Email
         The registration address. Must equal the E-Mail attribute inside the installed licence.
 
@@ -56,28 +44,6 @@
 [CmdletBinding(SupportsShouldProcess)]
 [OutputType([System.Void])]
 Param (
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [ValidatePattern('^[0-5][0-4][0-3]$')]
-  [System.String]
-  $DebugLevel = '103',
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [ValidatePattern('^[0-5]{6}$')]
-  [System.String]
-  $LogLevel = '002223',
-
   [Parameter(
     DontShow = $False,
     Mandatory = $True,
@@ -95,11 +61,6 @@ Param (
 #region ------ [ Initialization ] ------------------------------------------------------------ #
 Write-Debug -Message:'Entering Stage: Initialization'
 
-# Initialize STATIC log level names, indexed by LogLevel digit position.
-New-Variable -Force -Name:'LOG_LEVELS' -Option:('Private', 'ReadOnly') -Value:(
-  [System.String[]]@('Verbose', 'Debug', 'Information', 'Warning', 'Error', 'Fatal')
-)
-
 # The product's command line, its sqlite tool, and the registry key its licence lives under.
 # Fixed, not offered: the installer ignores every documented relocation switch (measured
 # 2026-08-18), so a path parameter would advertise a choice that does not exist.
@@ -113,36 +74,9 @@ New-Variable -Force -Name:'LICENSE_KEY' -Option:('Private', 'ReadOnly') -Value:(
   [System.String]'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy'
 )
 
-# Initialize the custom stream preferences; the built-in ones already exist.
-New-Variable -Verbose:$False -Force -Name:'ErrorPreference' -Value:(
-  [System.Management.Automation.ActionPreference]::Stop
-)
-New-Variable -Verbose:$False -Force -Name:'FatalPreference' -Value:(
-  [System.Management.Automation.ActionPreference]::Stop
-)
-
-# Configure log levels based on the LogLevel parameter.
-For ($L = 0; $L -lt 6; $L++) {
-  Set-Variable -Verbose:$False -Force -Name:('{0}Preference' -f $LOG_LEVELS[$L]) -Value:(
-    [System.Int32]::Parse([System.String]$LogLevel[$L]) -as [System.Management.Automation.ActionPreference]
-  )
-}
-
-# Configure the debug levels: first digit ErrorActionPreference, second digit
-# Set-PSDebug, third digit Set-StrictMode.
-$ErrorActionPreference = [System.Management.Automation.ActionPreference][System.Int32]::Parse($DebugLevel.Substring(0, 1))
-Switch ($DebugLevel.Substring(1, 1)) {
-  '0' { Set-PSDebug -Off }
-  '1' { Set-PSDebug -Trace:1 }
-  '2' { Set-PSDebug -Trace:2 }
-  '3' { Set-PSDebug -Trace:1 -Step }
-  '4' { Set-PSDebug -Trace:2 -Step }
-}
-If ($DebugLevel.Substring(2, 1) -eq '0') {
-  Set-StrictMode -Off
-} Else {
-  Set-StrictMode -Version:([System.String]$DebugLevel.Substring(2, 1))
-}
+# Strict mode on, stop on error -- matching the module's error_action: stop.
+Set-StrictMode -Version:3
+$ErrorActionPreference = [System.Management.Automation.ActionPreference]::Stop
 
 # Universal trap used to help with debugging efforts. The original template's
 # Wait-Debugger/Exit are interactive-host machinery; under the Ansible

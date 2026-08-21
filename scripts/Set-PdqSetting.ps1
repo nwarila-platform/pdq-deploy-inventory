@@ -8,22 +8,19 @@
 
     .DESCRIPTION
         PDQ's command line accepts ANY setting name: a name the product never reads still
-        reports success and inserts a row, so an exit code proves nothing.
+        reports success and inserts a row, so an exit code proves nothing. Three legs close that
+        gap, each proven necessary by a distinct measured failure. The SETTINGS table below is
+        the whole contract -- which names exist, their types and legal values, and where each
+        one lives -- so a typo dies before anything runs. The settle poll waits for the service
+        to persist every queued write, because edits drain asynchronously and an early restart
+        eats the tail. And the product's own export is the verify oracle: export once to learn
+        the current values, write what differs, wait, export again -- a setting that does not
+        read back is reported as ignored and fails the run, which is the only defence against a
+        row nothing reads.
 
-        The product's own export is the only account trusted here: export, write what differs,
-        wait for the service to persist the queue, export again, verify. A setting that did not
-        take is reported as ignored and fails the run.
-
-
-        The product can only export to a FILE -- there is no stdout or in-memory form -- so each
-        export is read into memory and deleted immediately, leaving it on disk for the write plus
-        one read. Nothing secret is in it: the export carries user names for mail, proxy and
-        integrations, and no password, token or secret element of any kind.
-
-        WHAT IS SETTABLE is the SETTINGS table below.
-        The table is the whole contract; data rather than sixty-odd parameters keeps the file
-        readable in one pass and small enough for the transport to log.
-
+        The product can only export to a FILE -- no stdout or in-memory form -- so each export
+        is read whole and deleted at once. Nothing secret is in it: user names for mail, proxy
+        and integrations, and no password, token or secret element of any kind.
 
         Org scripts are a single straightforward process stage in the org script template's
         architecture: one [ Script ] region carrying [ Initialization ] (strict mode, transport
@@ -68,7 +65,7 @@
         .\Set-PdqSetting.ps1 -Preference @{ deployments = @{ cleanup_days = 45 } } -DatabaseDrive 'E' -DatabaseDirectory 'PDQ Deploy' -RepositoryShareName 'AppRepo$'
 
     .OUTPUTS
-        One object carrying applied, unchanged, ignored, changed and msg.
+        One object carrying applied, unchanged, ignored, requested, changed, check_mode and msg.
 #>
 
 [CmdletBinding()]
@@ -126,85 +123,85 @@ New-Variable -Force -Name:'EXPORT_PATH' -Option:('Private', 'ReadOnly') -Value:(
 # Every name was proven by a live write-and-read-back campaign, 2026-08-21.
 New-Variable -Force -Name:'SETTINGS' -Option:('Private', 'ReadOnly') -Value:(
   [System.Collections.Hashtable[]]@(
-    @{ Param = 'auto_download.approval' ; Name = 'AutoDeployDefaultSettings.ApprovalMode' ; Type = 'String' }
-    @{ Param = 'auto_download.automatic_approval_delay'; Name = 'AutoDeployDefaultSettings.DelayedApprovalTimeSpan' ; Type = 'String' }
-    @{ Param = 'auto_download.enable_auto_download' ; Name = 'AutoDeployDefaultSettings.IsEnabled' ; Type = 'Boolean' }
-    @{ Param = 'auto_download.copies_to_keep' ; Name = 'AutoDownloadArchiveSettings.CopiesToKeep' ; Type = 'Int32' }
-    @{ Param = 'auto_download.save_copies_of_previous_versions' ; Name = 'AutoDownloadArchiveSettings.IsArchiving' ; Type = 'Boolean' }
-    @{ Param = 'database.backup_location' ; Name = 'DatabaseBackupSettings.BackupDirectory' ; Type = 'String' }
-    @{ Param = 'database.compress_backups' ; Name = 'DatabaseBackupSettings.Compress' ; Type = 'Boolean' }
-    @{ Param = 'database.enable_automatic_backups' ; Name = 'DatabaseBackupSettings.IsEnabled' ; Type = 'Boolean' }
-    @{ Param = 'database.backups_to_keep' ; Name = 'DatabaseBackupSettings.Keep' ; Type = 'Int32' }
-    @{ Param = 'deployments.cleanup_days' ; Name = 'DeploymentSettings.CleanupDays' ; Type = 'Int32' }
-    @{ Param = 'deployments.timeout_minutes' ; Name = 'DeploymentSettings.ComputerTimeout' ; Type = 'Int32' }
-    @{ Param = 'deployments.inventory_scan_profile_id' ; Name = 'DeploymentSettings.InventoryScanProfileId' ; Type = 'String' }
-    @{ Param = 'deployments.run_packages_as' ; Name = 'DeploymentSettings.RunAs' ; Type = 'String' }
-    @{ Param = 'deployments.scan_after_deployment' ; Name = 'DeploymentSettings.ScanAfterDeployment' ; Type = 'Boolean' }
-    @{ Param = 'deployments.allowed_retries' ; Name = 'OfflineSettings.RetryMaxTries' ; Type = 'Int32' }
-    @{ Param = 'deployments.ping_before_deployment' ; Name = 'OfflineSettings.UsePing' ; Type = 'Boolean' }
-    @{ Param = 'deployments.wake_on_lan' ; Name = 'OfflineSettings.TryWol' ; Type = 'Boolean' }
-    @{ Param = 'deployments.retry_queue_enabled' ; Name = 'OfflineSettings.IsRetryEnabled' ; Type = 'Boolean' }
-    @{ Param = 'deployments.retry_interval' ; Name = 'OfflineSettings.RetryInterval' ; Type = 'String' }
-    @{ Param = 'logging.send_anonymous_exception_data' ; Name = 'SentrySettings.CanSendAnonymousExceptionData' ; Type = 'Boolean' }
-    @{ Param = 'logging.audit_keep_days_minimum' ; Name = 'AuditLogSettings.MinDaysRecordsKept' ; Type = 'Int32' }
-    @{ Param = 'logging.audit_keep_days_maximum' ; Name = 'AuditLogSettings.MaxDaysRecordsKept' ; Type = 'Int32' }
-    @{ Param = 'logging.archived_logs_minimum' ; Name = 'AuditLogSettings.MinNumArchivedFiles' ; Type = 'Int32' }
-    @{ Param = 'logging.archived_logs_maximum' ; Name = 'AuditLogSettings.MaxNumArchivedFiles' ; Type = 'Int32' }
-    @{ Param = 'logging.verbose_log_file_name' ; Name = 'AuditLogSettings.VerboseFileName' ; Type = 'String' }
-    @{ Param = 'logging.audit_keep_days' ; Name = 'AuditLogSettings.DaysRecordsKept' ; Type = 'Int32' }
-    @{ Param = 'logging.verbose_log_to_file' ; Name = 'AuditLogSettings.WriteVerboseFile' ; Type = 'Boolean' }
-    @{ Param = 'logging.use_logging_configuration_file' ; Name = 'AuditLogSettings.LoadCustomConfig' ; Type = 'Boolean' }
-    @{ Param = 'logging.verbose_log_directory' ; Name = 'AuditLogSettings.VerboseFileDirectory' ; Type = 'String' }
-    @{ Param = 'logging.logging_configuration_file' ; Name = 'AuditLogSettings.CustomConfigPath' ; Type = 'String' }
-    @{ Param = 'logging.archived_logs_to_keep' ; Name = 'AuditLogSettings.NumArchivedFiles' ; Type = 'Int32' }
-    @{ Param = 'logging.archive_log_every' ; Name = 'AuditLogSettings.ArchiveSchedule' ; Type = 'String' }
-    @{ Param = 'mail_server.enable_ssl' ; Name = 'MailServerSettings.EnableSSL' ; Type = 'Boolean' }
-    @{ Param = 'mail_server.smtp_server' ; Name = 'MailServerSettings.Host' ; Type = 'String' }
-    @{ Param = 'mail_server.sender_address' ; Name = 'MailServerSettings.Sender' ; Type = 'String' }
-    @{ Param = 'mail_server.smtp_user' ; Name = 'MailServerSettings.User' ; Type = 'String' }
-    @{ Param = 'mail_server.oauth2_client_id' ; Name = 'MailServerSettings.OAuth2ClientId' ; Type = 'String' }
-    @{ Param = 'mail_server.oauth2_tenant_id' ; Name = 'MailServerSettings.OAuth2TenantId' ; Type = 'String' }
-    @{ Param = 'mail_server.oauth2_redirect_uri' ; Name = 'MailServerSettings.OAuth2RedirectUri' ; Type = 'String' }
-    @{ Param = 'mail_server.oauth2_provider' ; Name = 'MailServerSettings.OAuth2Provider' ; Type = 'String' }
-    @{ Param = 'mail_server.oauth2_sender' ; Name = 'MailServerSettings.OAuth2Sender' ; Type = 'String' }
-    @{ Param = 'mail_server.graph_client_id' ; Name = 'MailServerSettings.MSGraphAPIClientId' ; Type = 'String' }
-    @{ Param = 'mail_server.graph_tenant_id' ; Name = 'MailServerSettings.MSGraphAPITenantId' ; Type = 'String' }
-    @{ Param = 'mail_server.graph_cloud' ; Name = 'MailServerSettings.MSGraphAPICloudHostUrl' ; Type = 'String' }
-    @{ Param = 'mail_server.graph_sender' ; Name = 'MailServerSettings.MSGraphAPISender' ; Type = 'String' }
-    @{ Param = 'performance.bandwidth_limit_percent' ; Name = 'PerformanceSettings.BandwidthLimitPercent' ; Type = 'Int32' }
-    @{ Param = 'performance.copy_mode' ; Name = 'PerformanceSettings.CopyMode' ; Type = 'String'; Allowed = @('Push', 'Pull') }
-    @{ Param = 'performance.concurrent_targets_per_deployment' ; Name = 'PerformanceSettings.MaxDeploymentThreads' ; Type = 'Int32' }
-    @{ Param = 'performance.total_concurrent_targets' ; Name = 'PerformanceSettings.MaxServerThreads' ; Type = 'Int32' }
-    @{ Param = 'performance.credential_batch_size' ; Name = 'PerformanceSettings.CredentialBatchSize' ; Type = 'Int32' }
-    @{ Param = 'performance.integration_message_timeout_seconds' ; Name = 'PerformanceSettings.IntegrationMessageTimeoutSeconds'; Type = 'Int32' }
+    @{ Param = 'auto_download.approval'; Name = 'AutoDeployDefaultSettings.ApprovalMode'; Type = 'String' }
+    @{ Param = 'auto_download.automatic_approval_delay'; Name = 'AutoDeployDefaultSettings.DelayedApprovalTimeSpan'; Type = 'String' }
+    @{ Param = 'auto_download.enable_auto_download'; Name = 'AutoDeployDefaultSettings.IsEnabled'; Type = 'Boolean' }
+    @{ Param = 'auto_download.copies_to_keep'; Name = 'AutoDownloadArchiveSettings.CopiesToKeep'; Type = 'Int32' }
+    @{ Param = 'auto_download.save_copies_of_previous_versions'; Name = 'AutoDownloadArchiveSettings.IsArchiving'; Type = 'Boolean' }
+    @{ Param = 'database.backup_location'; Name = 'DatabaseBackupSettings.BackupDirectory'; Type = 'String' }
+    @{ Param = 'database.compress_backups'; Name = 'DatabaseBackupSettings.Compress'; Type = 'Boolean' }
+    @{ Param = 'database.enable_automatic_backups'; Name = 'DatabaseBackupSettings.IsEnabled'; Type = 'Boolean' }
+    @{ Param = 'database.backups_to_keep'; Name = 'DatabaseBackupSettings.Keep'; Type = 'Int32' }
+    @{ Param = 'deployments.cleanup_days'; Name = 'DeploymentSettings.CleanupDays'; Type = 'Int32' }
+    @{ Param = 'deployments.timeout_minutes'; Name = 'DeploymentSettings.ComputerTimeout'; Type = 'Int32' }
+    @{ Param = 'deployments.inventory_scan_profile_id'; Name = 'DeploymentSettings.InventoryScanProfileId'; Type = 'String' }
+    @{ Param = 'deployments.run_packages_as'; Name = 'DeploymentSettings.RunAs'; Type = 'String' }
+    @{ Param = 'deployments.scan_after_deployment'; Name = 'DeploymentSettings.ScanAfterDeployment'; Type = 'Boolean' }
+    @{ Param = 'deployments.allowed_retries'; Name = 'OfflineSettings.RetryMaxTries'; Type = 'Int32' }
+    @{ Param = 'deployments.ping_before_deployment'; Name = 'OfflineSettings.UsePing'; Type = 'Boolean' }
+    @{ Param = 'deployments.wake_on_lan'; Name = 'OfflineSettings.TryWol'; Type = 'Boolean' }
+    @{ Param = 'deployments.retry_queue_enabled'; Name = 'OfflineSettings.IsRetryEnabled'; Type = 'Boolean' }
+    @{ Param = 'deployments.retry_interval'; Name = 'OfflineSettings.RetryInterval'; Type = 'String' }
+    @{ Param = 'logging.send_anonymous_exception_data'; Name = 'SentrySettings.CanSendAnonymousExceptionData'; Type = 'Boolean' }
+    @{ Param = 'logging.audit_keep_days'; Name = 'AuditLogSettings.DaysRecordsKept'; Type = 'Int32' }
+    @{ Param = 'logging.audit_keep_days_minimum'; Name = 'AuditLogSettings.MinDaysRecordsKept'; Type = 'Int32' }
+    @{ Param = 'logging.audit_keep_days_maximum'; Name = 'AuditLogSettings.MaxDaysRecordsKept'; Type = 'Int32' }
+    @{ Param = 'logging.verbose_log_to_file'; Name = 'AuditLogSettings.WriteVerboseFile'; Type = 'Boolean' }
+    @{ Param = 'logging.verbose_log_directory'; Name = 'AuditLogSettings.VerboseFileDirectory'; Type = 'String' }
+    @{ Param = 'logging.verbose_log_file_name'; Name = 'AuditLogSettings.VerboseFileName'; Type = 'String' }
+    @{ Param = 'logging.archive_log_every'; Name = 'AuditLogSettings.ArchiveSchedule'; Type = 'String' }
+    @{ Param = 'logging.archived_logs_to_keep'; Name = 'AuditLogSettings.NumArchivedFiles'; Type = 'Int32' }
+    @{ Param = 'logging.archived_logs_minimum'; Name = 'AuditLogSettings.MinNumArchivedFiles'; Type = 'Int32' }
+    @{ Param = 'logging.archived_logs_maximum'; Name = 'AuditLogSettings.MaxNumArchivedFiles'; Type = 'Int32' }
+    @{ Param = 'logging.use_logging_configuration_file'; Name = 'AuditLogSettings.LoadCustomConfig'; Type = 'Boolean' }
+    @{ Param = 'logging.logging_configuration_file'; Name = 'AuditLogSettings.CustomConfigPath'; Type = 'String' }
+    @{ Param = 'mail_server.enable_ssl'; Name = 'MailServerSettings.EnableSSL'; Type = 'Boolean' }
+    @{ Param = 'mail_server.smtp_server'; Name = 'MailServerSettings.Host'; Type = 'String' }
+    @{ Param = 'mail_server.sender_address'; Name = 'MailServerSettings.Sender'; Type = 'String' }
+    @{ Param = 'mail_server.smtp_user'; Name = 'MailServerSettings.User'; Type = 'String' }
+    @{ Param = 'mail_server.oauth2_client_id'; Name = 'MailServerSettings.OAuth2ClientId'; Type = 'String' }
+    @{ Param = 'mail_server.oauth2_tenant_id'; Name = 'MailServerSettings.OAuth2TenantId'; Type = 'String' }
+    @{ Param = 'mail_server.oauth2_redirect_uri'; Name = 'MailServerSettings.OAuth2RedirectUri'; Type = 'String' }
+    @{ Param = 'mail_server.oauth2_provider'; Name = 'MailServerSettings.OAuth2Provider'; Type = 'String' }
+    @{ Param = 'mail_server.oauth2_sender'; Name = 'MailServerSettings.OAuth2Sender'; Type = 'String' }
+    @{ Param = 'mail_server.graph_client_id'; Name = 'MailServerSettings.MSGraphAPIClientId'; Type = 'String' }
+    @{ Param = 'mail_server.graph_tenant_id'; Name = 'MailServerSettings.MSGraphAPITenantId'; Type = 'String' }
+    @{ Param = 'mail_server.graph_cloud'; Name = 'MailServerSettings.MSGraphAPICloudHostUrl'; Type = 'String' }
+    @{ Param = 'mail_server.graph_sender'; Name = 'MailServerSettings.MSGraphAPISender'; Type = 'String' }
+    @{ Param = 'performance.bandwidth_limit_percent'; Name = 'PerformanceSettings.BandwidthLimitPercent'; Type = 'Int32' }
+    @{ Param = 'performance.copy_mode'; Name = 'PerformanceSettings.CopyMode'; Type = 'String'; ; Allowed = @('Push', 'Pull') }
+    @{ Param = 'performance.concurrent_targets_per_deployment'; Name = 'PerformanceSettings.MaxDeploymentThreads'; Type = 'Int32' }
+    @{ Param = 'performance.total_concurrent_targets'; Name = 'PerformanceSettings.MaxServerThreads'; Type = 'Int32' }
+    @{ Param = 'performance.credential_batch_size'; Name = 'PerformanceSettings.CredentialBatchSize'; Type = 'Int32' }
+    @{ Param = 'performance.integration_message_timeout_seconds'; Name = 'PerformanceSettings.IntegrationMessageTimeoutSeconds'; Type = 'Int32' }
     # Printing stores under ProductPrintingSettings.* while the export publishes
     # PrintingSettings.* -- the Store field carries the difference (measured 2026-08-21).
-    @{ Param = 'printing.footer_alignment'; Name = 'PrintingSettings.FooterAlignment'; Type = 'String'; Store = 'ProductPrintingSettings.FooterAlignment' }
-    @{ Param = 'printing.footer_text'; Name = 'PrintingSettings.FooterText'; Type = 'String'; Store = 'ProductPrintingSettings.FooterText' }
-    @{ Param = 'printing.header_alignment'; Name = 'PrintingSettings.HeaderAlignment'; Type = 'String'; Store = 'ProductPrintingSettings.HeaderAlignment' }
-    @{ Param = 'printing.header_text'; Name = 'PrintingSettings.HeaderText'; Type = 'String'; Store = 'ProductPrintingSettings.HeaderText' }
-    @{ Param = 'printing.in_color'; Name = 'PrintingSettings.IsInColor'; Type = 'Boolean'; Store = 'ProductPrintingSettings.IsInColor' }
-    @{ Param = 'printing.margin_bottom'; Name = 'PrintingSettings.MarginBottom'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginBottom' }
-    @{ Param = 'printing.margin_left'; Name = 'PrintingSettings.MarginLeft'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginLeft' }
-    @{ Param = 'printing.margin_right'; Name = 'PrintingSettings.MarginRight'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginRight' }
-    @{ Param = 'printing.margin_top'; Name = 'PrintingSettings.MarginTop'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginTop' }
-    @{ Param = 'proxy_server.host_name' ; Name = 'ProxySettings.HostName' ; Type = 'String' }
-    @{ Param = 'proxy_server.port' ; Name = 'ProxySettings.Port' ; Type = 'Int32' }
-    @{ Param = 'proxy_server.username' ; Name = 'ProxySettings.UserName' ; Type = 'String' }
-    @{ Param = 'proxy_server.use_system_proxy' ; Name = 'ProxySettings.UseSystemHost' ; Type = 'Boolean' }
-    @{ Param = 'repository.show_unused_files_warning' ; Name = 'RepositorySettings.EnableUnusedFilesWarning' ; Type = 'Boolean' }
-    @{ Param = 'repository.cleanup_exclusions' ; Name = 'RepositorySettings.Exclusions' ; Type = 'String' }
-    @{ Param = 'repository.path' ; Name = 'RepositorySettings.Path' ; Type = 'String'; Variable = 'Repository' }
-    @{ Param = 'spiceworks.host_name' ; Name = 'SpiceworksSettings.HostName' ; Type = 'String' }
-    @{ Param = 'spiceworks.auto_sync_enabled' ; Name = 'SpiceworksSettings.IsEnabled' ; Type = 'Boolean' }
-    @{ Param = 'spiceworks.port' ; Name = 'SpiceworksSettings.Port' ; Type = 'Int32' }
-    @{ Param = 'spiceworks.sync_interval' ; Name = 'SpiceworksSettings.SyncInterval' ; Type = 'String' }
-    @{ Param = 'spiceworks.email' ; Name = 'SpiceworksSettings.UserName' ; Type = 'String' }
-    @{ Param = 'spiceworks.use_ssl' ; Name = 'SpiceworksSettings.UseSSL' ; Type = 'Boolean' }
-    @{ Param = 'target_service.unc_path' ; Name = 'TargetServiceSettings.RemoteDirectory' ; Type = 'String' }
-    @{ Param = 'target_service.local_path_of_shared_directory' ; Name = 'TargetServiceSettings.SharePath' ; Type = 'String' }
-    @{ Param = 'usage_data.collect_usage_data' ; Name = 'AnalyticsSettings.CollectAnalyticsUsage' ; Type = 'Boolean' }
-    @{ Param = 'usage_data.alert_first_time_analytics_dialog' ; Name = 'AnalyticsSettings.AlertFirstTimeAnalyticsDialog' ; Type = 'Boolean' }
+    @{ Param = 'printing.footer_alignment'; Name = 'PrintingSettings.FooterAlignment'; Type = 'String'; ; Store = 'ProductPrintingSettings.FooterAlignment' }
+    @{ Param = 'printing.footer_text'; Name = 'PrintingSettings.FooterText'; Type = 'String'; ; Store = 'ProductPrintingSettings.FooterText' }
+    @{ Param = 'printing.header_alignment'; Name = 'PrintingSettings.HeaderAlignment'; Type = 'String'; ; Store = 'ProductPrintingSettings.HeaderAlignment' }
+    @{ Param = 'printing.header_text'; Name = 'PrintingSettings.HeaderText'; Type = 'String'; ; Store = 'ProductPrintingSettings.HeaderText' }
+    @{ Param = 'printing.in_color'; Name = 'PrintingSettings.IsInColor'; Type = 'Boolean'; ; Store = 'ProductPrintingSettings.IsInColor' }
+    @{ Param = 'printing.margin_bottom'; Name = 'PrintingSettings.MarginBottom'; Type = 'Int32'; ; Store = 'ProductPrintingSettings.MarginBottom' }
+    @{ Param = 'printing.margin_left'; Name = 'PrintingSettings.MarginLeft'; Type = 'Int32'; ; Store = 'ProductPrintingSettings.MarginLeft' }
+    @{ Param = 'printing.margin_right'; Name = 'PrintingSettings.MarginRight'; Type = 'Int32'; ; Store = 'ProductPrintingSettings.MarginRight' }
+    @{ Param = 'printing.margin_top'; Name = 'PrintingSettings.MarginTop'; Type = 'Int32'; ; Store = 'ProductPrintingSettings.MarginTop' }
+    @{ Param = 'proxy_server.host_name'; Name = 'ProxySettings.HostName'; Type = 'String' }
+    @{ Param = 'proxy_server.port'; Name = 'ProxySettings.Port'; Type = 'Int32' }
+    @{ Param = 'proxy_server.username'; Name = 'ProxySettings.UserName'; Type = 'String' }
+    @{ Param = 'proxy_server.use_system_proxy'; Name = 'ProxySettings.UseSystemHost'; Type = 'Boolean' }
+    @{ Param = 'repository.show_unused_files_warning'; Name = 'RepositorySettings.EnableUnusedFilesWarning'; Type = 'Boolean' }
+    @{ Param = 'repository.cleanup_exclusions'; Name = 'RepositorySettings.Exclusions'; Type = 'String' }
+    @{ Param = 'repository.path'; Name = 'RepositorySettings.Path'; Type = 'String'; ; Variable = 'Repository' }
+    @{ Param = 'spiceworks.host_name'; Name = 'SpiceworksSettings.HostName'; Type = 'String' }
+    @{ Param = 'spiceworks.auto_sync_enabled'; Name = 'SpiceworksSettings.IsEnabled'; Type = 'Boolean' }
+    @{ Param = 'spiceworks.port'; Name = 'SpiceworksSettings.Port'; Type = 'Int32' }
+    @{ Param = 'spiceworks.sync_interval'; Name = 'SpiceworksSettings.SyncInterval'; Type = 'String' }
+    @{ Param = 'spiceworks.email'; Name = 'SpiceworksSettings.UserName'; Type = 'String' }
+    @{ Param = 'spiceworks.use_ssl'; Name = 'SpiceworksSettings.UseSSL'; Type = 'Boolean' }
+    @{ Param = 'target_service.unc_path'; Name = 'TargetServiceSettings.RemoteDirectory'; Type = 'String' }
+    @{ Param = 'target_service.local_path_of_shared_directory'; Name = 'TargetServiceSettings.SharePath'; Type = 'String' }
+    @{ Param = 'usage_data.collect_usage_data'; Name = 'AnalyticsSettings.CollectAnalyticsUsage'; Type = 'Boolean' }
+    @{ Param = 'usage_data.alert_first_time_analytics_dialog'; Name = 'AnalyticsSettings.AlertFirstTimeAnalyticsDialog'; Type = 'Boolean' }
   )
 )
 
@@ -277,14 +274,21 @@ If ($StandaloneRun) {
   }
 }
 
+# How long a queued edit may take to persist before the run fails, and how often to look. Sized
+# from the measured ~8-seconds-per-edit drain against the largest realistic queue; the spec's
+# stalled fake exercises the timeout, so standalone runs keep it short.
+New-Variable -Force -Name:'SETTLE_DEADLINE_SECONDS' -Option:('Private', 'ReadOnly') -Value:(
+  [System.Int32]$(If ($StandaloneRun) { 3 } Else { 600 })
+)
+New-Variable -Force -Name:'SETTLE_POLL_MILLISECONDS' -Option:('Private', 'ReadOnly') -Value:(
+  [System.Int32]$(If ($StandaloneRun) { 50 } Else { 5000 })
+)
+
 #endregion --- [ Initialization ] ------------------------------------------------------------ #
 
 #region ------ [ Main ] ---------------------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Main'
 
-# Validate and translate in one pass over what the caller actually asked for. Every name is
-# checked against the table before anything is read or written, so a typo fails here rather than
-# becoming a row the product stores and never reads.
 # The caller declares preferences the way the console shows them: a map of PAGES, each holding
 # that page's settings. This is where the role's routing lives, in plain sight: the alerts and
 # interface pages are per-user and belong to the profile seeding, the four record_* switches on
@@ -320,6 +324,9 @@ If ([System.String]::IsNullOrEmpty([System.String]$Flat['logging.verbose_log_dir
   $Flat['logging.verbose_log_directory'] = '{0}:\{1}\Logs' -f $DatabaseDrive, $DatabaseDirectory
 }
 
+# Validate and translate in one pass over what the caller asked for. Every name is checked
+# against the table before anything is read or written, so a typo fails here rather than
+# becoming a row the product stores and never reads.
 $Setting = @{}
 $DatabaseVariable = @{}
 $StoreName = @{}
@@ -358,11 +365,13 @@ ForEach ($Given In @($Flat.Keys)) {
   }
 }
 
-$DatabasePath = [System.String]::Empty
+# The run's working state: the three verdict lists the result reports, the queued command-line
+# writes the settle poll waits on, and the database path both write mechanisms share.
 $Applied = [System.Collections.Generic.List[System.String]]::new()
-$CliWritten = @{}
 $Unchanged = [System.Collections.Generic.List[System.String]]::new()
 $Ignored = [System.Collections.Generic.List[System.String]]::new()
+$CliWritten = @{}
+$DatabasePath = [System.String]::Empty
 
 Try {
   # Two passes over the same reading code: once to decide what to write, once to
@@ -420,41 +429,48 @@ Try {
     }
 
     If ($Pass -eq 0) {
-      # Write only what differs. A name the export does not carry is still
-      # attempted: it may be one the product stores without publishing, and the
-      # second pass is what decides whether it counted.
+      # Decide first, in one pass over the caller's names: a value the export already shows is
+            # recorded as unchanged, everything else queues for the write. A name the export does not
+      # carry still queues -- it may be one the product stores without publishing, and the
+      # verify pass is what decides whether it counted.
+      $ToWrite = [System.Collections.Generic.List[System.String]]::new()
       ForEach ($Name In @($Setting.Keys)) {
-        $Desired = [System.String]$Setting[$Name]
-        If ($Current.ContainsKey($Name) -and $Current[$Name] -eq $Desired) {
+        If ($Current.ContainsKey($Name) -and $Current[$Name] -eq [System.String]$Setting[$Name]) {
           $Unchanged.Add($Name)
-          Continue
+        } Else {
+          $ToWrite.Add($Name)
         }
-        If ($Ansible.CheckMode) {
-          $Applied.Add($Name)
-          Continue
+      }
+      If ($Ansible.CheckMode) {
+        $Applied.AddRange($ToWrite)
+        Break
+      }
+      If ($ToWrite.Count -gt 0) {
+        # Where the database lives is a deployment choice, so it is asked for rather than
+        # assumed: the product reports its own path and cannot be wrong about it. Resolved once,
+        # here, because both the system-variable write and the settle poll below read it.
+        $Info = & $CLI_PATH 'SystemInfo' 2>&1
+        If ($LASTEXITCODE -ne 0) {
+          Throw ('SystemInfo failed with exit code {0}' -f $LASTEXITCODE)
         }
+        $DatabasePath = (
+          @($Info | Where-Object -FilterScript { $PSItem -match '^\s*Database\s*:' }) |
+            Select-Object -First 1
+        ) -replace '^\s*Database\s*:\s*', ''
+        If (-not $DatabasePath) {
+          Throw 'SystemInfo did not report a database path'
+        }
+      }
+
+      ForEach ($Name In $ToWrite) {
+        $Desired = [System.String]$Setting[$Name]
         # A few families store under a different spelling than the export publishes --
         # ProductPrintingSettings against the export's PrintingSettings was the measured case,
-        # 2026-08-21 -- and the command line only answers to the STORED name. The export is
-        # still the oracle the verify pass reads, so the export spelling stays the row's Name
-        # and the stored one travels only in the write.
+        # 2026-08-21 -- and the command line only answers to the STORED name. The export stays
+        # the verify oracle, so the export spelling stays the row's Name and the stored one
+        # travels only in the write.
         $WriteName = If ($StoreName.ContainsKey($Name)) { $StoreName[$Name] } Else { $Name }
         If ($DatabaseVariable.ContainsKey($Name)) {
-          # Where the database lives is a deployment choice, so it is asked for rather than
-          # assumed: the product reports its own path and cannot be wrong about it.
-          If (-not $DatabasePath) {
-            $Info = & $CLI_PATH 'SystemInfo' 2>&1
-            If ($LASTEXITCODE -ne 0) {
-              Throw ('SystemInfo failed with exit code {0}' -f $LASTEXITCODE)
-            }
-            $DatabasePath = (
-              @($Info | Where-Object -FilterScript { $PSItem -match '^\s*Database\s*:' }) |
-                Select-Object -First 1
-            ) -replace '^\s*Database\s*:\s*', ''
-            If (-not $DatabasePath) {
-              Throw 'SystemInfo did not report a database path'
-            }
-          }
           $Statement = "UPDATE SystemVariables SET Value = '{0}', Modified = datetime('now') WHERE Name = '{1}';" -f @(
             $Desired.Replace("'", "''")
             $DatabaseVariable[$Name].Replace("'", "''")
@@ -464,15 +480,14 @@ Try {
             Throw ('Database write failed for {0} with exit code {1}' -f $Name, $LASTEXITCODE)
           }
         } ElseIf ($Desired -eq [System.String]::Empty) {
-          # The command line refuses -Set with an empty value, and blank IS how the product
-          # ships many of these. Its own way back to blank is -Reset, which deletes the
-          # override row so the compiled default shows through; the verify pass still proves
-          # the result reads back blank, so a compiled default that is NOT blank fails
-          # honestly instead of pretending.
+          # The command line refuses -Set with an empty value; the product's own way back to
+          # blank is -Reset, which drops the override row so the compiled default shows
+          # through. The verify pass still proves the result reads back blank.
           $Null = & $CLI_PATH 'Settings' '-Name' $WriteName '-Reset' 2>&1
           If ($LASTEXITCODE -ne 0) {
             Throw ('Settings -Reset failed for {0} with exit code {1}' -f $Name, $LASTEXITCODE)
           }
+          $CliWritten[$WriteName] = [System.String]::Empty
         } Else {
           $Null = & $CLI_PATH 'Settings' '-Name' $WriteName '-Set' $Desired 2>&1
           If ($LASTEXITCODE -ne 0) {
@@ -481,30 +496,12 @@ Try {
           $CliWritten[$WriteName] = $Desired
         }
       }
-      If ($Ansible.CheckMode) {
-        Break
-      }
 
-      # The command line QUEUES an edit with the background service, which drains at ~8s per
-      # edit (measured 2026-08-21), the undrained tail lost to the next restart -- the product's
-      # own included. The export shows the PENDING state, so the run waits for every queued
-      # edit's DATABASE row: applied then means persisted. A reset settles when its row is gone;
-      # a settled host writes nothing and never waits.
+      # Edits drain through the service at ~8s apiece (measured 2026-08-21) and the export shows
+      # the PENDING state, so the run waits for every queued edit's DATABASE row: applied then
+      # means persisted, whatever restarts next. A reset settles when its row is gone.
       If ($CliWritten.Count -gt 0) {
-        If (-not $DatabasePath) {
-          $Info = & $CLI_PATH 'SystemInfo' 2>&1
-          If ($LASTEXITCODE -ne 0) {
-            Throw ('SystemInfo failed with exit code {0}' -f $LASTEXITCODE)
-          }
-          $DatabasePath = (
-            @($Info | Where-Object -FilterScript { $PSItem -match '^\s*Database\s*:' }) |
-              Select-Object -First 1
-          ) -replace '^\s*Database\s*:\s*', ''
-          If (-not $DatabasePath) {
-            Throw 'SystemInfo did not report a database path'
-          }
-        }
-        $Deadline = [System.DateTime]::UtcNow.AddSeconds([System.Int32]$(If ($StandaloneRun) { 3 } Else { 600 }))
+        $Deadline = [System.DateTime]::UtcNow.AddSeconds($SETTLE_DEADLINE_SECONDS)
         While ($True) {
           $Persisted = @{}
           ForEach ($Row In @(& $SQLITE_PATH $DatabasePath 'SELECT Name, Value FROM Settings;' 2>&1)) {
@@ -529,7 +526,7 @@ Try {
           If ([System.DateTime]::UtcNow -gt $Deadline) {
             Throw ('The service did not persist {0} inside the settle window' -f ($Draining -join ', '))
           }
-          Start-Sleep -Milliseconds ([System.Int32]$(If ($StandaloneRun) { 50 } Else { 5000 }))
+          Start-Sleep -Milliseconds $SETTLE_POLL_MILLISECONDS
         }
       }
     } Else {

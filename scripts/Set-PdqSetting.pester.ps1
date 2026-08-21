@@ -295,6 +295,23 @@ Describe 'Set-PdqSetting' {
       $global:FakeSettings['PrintingSettings.MarginTop'] | Should -Be '21'
     }
 
+    It 'proves an export-invisible setting against its database row' {
+      # Four measured names are real -- the console displays them -- yet the export never
+      # publishes them; their table rows carry Unexported, and compare and verify read the
+      # database instead. Modeled here by an export that drops the name while the row lands.
+      $global:FakeIgnored = @('InterfaceSettings.ShowDashboardOnLaunch')
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{
+        interface = @{ show_dashboard_on_launch = $False }
+      } | ConvertFrom-Json
+      $Result.applied | Should -Contain 'InterfaceSettings.ShowDashboardOnLaunch'
+      $Result.changed | Should -BeTrue
+      $Again = & $script:ScriptPath @script:Ctx -Preference @{
+        interface = @{ show_dashboard_on_launch = $False }
+      } | ConvertFrom-Json
+      $Again.unchanged | Should -Contain 'InterfaceSettings.ShowDashboardOnLaunch'
+      $Again.changed | Should -BeFalse
+    }
+
     It 'waits for the service to persist the queue, and fails when it never drains' {
       # Edits are queued with the background service and drain at its own pace; the export
       # shows the pending state, so the script waits on the database row itself. A queue that

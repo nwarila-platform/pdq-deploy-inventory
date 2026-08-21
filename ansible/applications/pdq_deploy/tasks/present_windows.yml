@@ -863,6 +863,7 @@
           AutoUpdateCheckEnabled: "{{ pdq_deploy_running.preferences.alerts.auto_update_check_enabled }}"
           ColorTheme: "{{ pdq_deploy_running.preferences.interface.color_theme | default('', true) }}"
           DisableSplashScreen: "{{ pdq_deploy_running.preferences.interface.disable_splash_screen }}"
+          ReleaseChannel: "{{ pdq_deploy_running.preferences.alerts.release_channel | default('', true) }}"
           ShowWebcastAlerts: "{{ pdq_deploy_running.preferences.alerts.show_webcast_alerts }}"
         remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqConsoleDefault.ps1') }}"

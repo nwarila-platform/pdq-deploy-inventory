@@ -104,9 +104,14 @@ pdq_deploy_defaults:
     alerts:
       auto_update_check_enabled: true
       show_webcast_alerts: true
+      # null leaves the product's own channel; the value the console writes is Release or Beta.
+      release_channel: null
     interface:
       color_theme: null
       disable_splash_screen: false
+      show_dashboard_on_launch: true
+      show_missing_package_popup_during_export: true
+      include_dependency_packages_in_export: true
     auto_download:
       enable_auto_download: true
       approval: 'Delayed'
@@ -147,6 +152,9 @@ pdq_deploy_defaults:
       use_logging_configuration_file: false
       logging_configuration_file: ''
     mail_server:
+      # null leaves the product's compiled choice; the console writes OAuth2 or MSGraphAPI when
+      # those pages are picked, and the spelling it writes for basic auth is not yet measured.
+      authentication_method: null
       smtp_server: ''
       enable_ssl: false
       smtp_user: ''

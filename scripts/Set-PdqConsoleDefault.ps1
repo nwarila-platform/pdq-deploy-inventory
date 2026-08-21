@@ -56,6 +56,10 @@
     .PARAMETER ColorTheme
         The console theme new users start on. Omit to leave the product's own first-run choice.
 
+    .PARAMETER ReleaseChannel
+        The update channel new users' consoles watch, Release or Beta. Omit to leave the
+        product's own default.
+
     .EXAMPLE
         .\Set-PdqConsoleDefault.ps1 -DisableSplashScreen:$True -AutoUpdateCheckEnabled:$False -ShowWebcastAlerts:$False
 
@@ -128,7 +132,19 @@ Param (
   [AllowNull()]
   [AllowEmptyString()]
   [System.String]
-  $ColorTheme = $Null
+  $ColorTheme = $Null,
+
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $False,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [AllowNull()]
+  [AllowEmptyString()]
+  [System.String]
+  $ReleaseChannel = $Null
 )
 
 #region ------ [ Script ] -------------------------------------------------------------------- #
@@ -239,6 +255,9 @@ $Rows.Add(@{ Key = $CHECKER_KEY; Name = 'Auto Check Enabled'; Value = [System.In
 $Rows.Add(@{ Key = $CHECKER_KEY; Name = 'Show Webcast Alerts'; Value = [System.Int32]$ShowWebcastAlerts })
 If (-not [System.String]::IsNullOrEmpty($ColorTheme)) {
   $Rows.Add(@{ Key = $STARTUP_KEY; Name = 'Color Theme'; Value = [System.String]$ColorTheme })
+}
+If (-not [System.String]::IsNullOrEmpty($ReleaseChannel)) {
+  $Rows.Add(@{ Key = $CHECKER_KEY; Name = 'ReleaseChannel'; Value = [System.String]$ReleaseChannel })
 }
 
 # Load, work, ALWAYS unload: a Default hive left mounted blocks every future logon from copying

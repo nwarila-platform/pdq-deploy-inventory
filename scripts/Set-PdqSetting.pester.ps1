@@ -43,6 +43,15 @@ $ErrorActionPreference = 'Stop'
 
 BeforeAll {
   $script:ScriptPath = Join-Path -Path $PSScriptRoot -ChildPath 'Set-PdqSetting.ps1'
+  # The context every call carries: where the database lives and what the share is called,
+  # from which the script derives the repository path and the two beside-the-database
+  # locations. The fake export is seeded to match, so derivation reads as unchanged and each
+  # case still exercises exactly the settings it names.
+  $script:Ctx = @{
+    DatabaseDrive       = 'E'
+    DatabaseDirectory   = 'PDQ Deploy'
+    RepositoryShareName = 'AppRepo$'
+  }
 
   # The three constants the script owns. Named here so a drift between the two
   # files fails the spec rather than silently testing nothing.
@@ -122,10 +131,13 @@ Describe 'Set-PdqSetting' {
     }
     New-Item -ItemType Directory -Path 'C:\Windows\Temp' -Force | Out-Null
 
+    $env:COMPUTERNAME = 'TESTBOX'
     $global:FakeSettings = @{
       'DeploymentSettings.CleanupDays'                = '30'
       'PerformanceSettings.CopyMode'                  = 'Push'
-      'RepositorySettings.Path'                       = '\\HOST\C$\Repository'
+      'RepositorySettings.Path'                       = '\\TESTBOX\AppRepo$'
+      'DatabaseBackupSettings.BackupDirectory'        = 'E:\PDQ Deploy\Backups'
+      'AuditLogSettings.VerboseFileDirectory'         = 'E:\PDQ Deploy\Logs'
       'AnalyticsSettings.CollectAnalyticsUsage'       = 'true'
       'AutoDeployDefaultSettings.ApprovalMode'        = 'Delayed'
     }
@@ -212,28 +224,28 @@ Describe 'Set-PdqSetting' {
   Context 'the table as the contract' {
 
     It 'refuses a name it does not carry, rather than storing a row nothing reads' {
-      { & $script:ScriptPath -Setting @{ DeploymentCleanupDay = 45 } } |
+      { & $script:ScriptPath @script:Ctx -Preference @{ 'deployments.cleanup_day' = 45 } } |
         Should -Throw -ExpectedMessage '*not a setting this script can apply*'
 
       @($global:FakeCliCalls).Count | Should -Be 0
     }
 
     It 'refuses a value of the wrong type before anything is read or written' {
-      { & $script:ScriptPath -Setting @{ DeploymentCleanupDays = 'soon' } } |
+      { & $script:ScriptPath @script:Ctx -Preference @{ 'deployments.cleanup_days' = 'soon' } } |
         Should -Throw -ExpectedMessage '*takes a Int32*'
 
       @($global:FakeCliCalls).Count | Should -Be 0
     }
 
     It 'refuses a value outside an enumerated setting' {
-      { & $script:ScriptPath -Setting @{ PerformanceCopyMode = 'Sideways' } } |
+      { & $script:ScriptPath @script:Ctx -Preference @{ 'performance.copy_mode' = 'Sideways' } } |
         Should -Throw -ExpectedMessage '*takes one of: Push, Pull*'
     }
 
     It 'treats a declared-but-null value as unmanaged' {
-      $Result = & $script:ScriptPath -Setting @{ DeploymentCleanupDays = $Null } | ConvertFrom-Json
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{ 'deployments.cleanup_days' = $Null } | ConvertFrom-Json
 
-      $Result.requested | Should -Be 0
+      $Result.requested | Should -Be 3
       $Result.changed | Should -BeFalse
       @($global:FakeCliCalls | Where-Object { $_ -like 'Settings*' }).Count | Should -Be 0
     }
@@ -242,11 +254,22 @@ Describe 'Set-PdqSetting' {
   Context 'deciding what to write' {
 
     It 'writes nothing when every declared setting already matches' {
-      $Result = & $script:ScriptPath -Setting @{ DeploymentCleanupDays = 30 } | ConvertFrom-Json
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{ 'deployments.cleanup_days' = 30 } | ConvertFrom-Json
 
       $Result.changed | Should -BeFalse
       $Result.unchanged | Should -Contain 'DeploymentSettings.CleanupDays'
       @($global:FakeCliCalls | Where-Object { $_ -like 'Settings*' }).Count | Should -Be 0
+    }
+
+    It 'takes the console shape: pages holding their settings' {
+      # The caller may hand a map of PAGES exactly as the console groups them;
+      # the script flattens page.setting itself, so the two spellings are one.
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{
+        deployments = @{ cleanup_days = 45 }
+        performance = @{ copy_mode = 'Push' }
+      } | ConvertFrom-Json
+      $Result.applied | Should -Be @('DeploymentSettings.CleanupDays')
+      $Result.unchanged | Should -Contain 'PerformanceSettings.CopyMode'
     }
 
     It 'writes through the storage spelling when it differs from the export name' {
@@ -254,7 +277,7 @@ Describe 'Set-PdqSetting' {
       # PrintingSettings.*; the row's Store field carries the stored name and
       # the export name stays the oracle the verify pass reads.
       $global:FakeSettings['PrintingSettings.MarginTop'] = '20'
-      $Result = & $script:ScriptPath -Setting @{ PrintingMarginTop = 21 } | ConvertFrom-Json
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{ 'printing.margin_top' = 21 } | ConvertFrom-Json
       $Result.applied | Should -Be @('PrintingSettings.MarginTop')
       ($global:FakeCliCalls -join '; ') | Should -Match 'ProductPrintingSettings\.MarginTop -Set 21'
       $global:FakeSettings['PrintingSettings.MarginTop'] | Should -Be '21'
@@ -265,7 +288,7 @@ Describe 'Set-PdqSetting' {
       # -Reset -- measured 2026-08-21 after a converge died mid-campaign and the
       # revert to blank was refused with 'Parameter Set requires a single value'.
       $global:FakeSettings['AuditLogSettings.CustomConfigPath'] = 'left-behind'
-      $Result = & $script:ScriptPath -Setting @{ LoggingAuditLogCustomConfigPath = '' } |
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{ 'logging.logging_configuration_file' = '' } |
         ConvertFrom-Json
       $Result.applied | Should -Be @('AuditLogSettings.CustomConfigPath')
       $global:FakeSettings['AuditLogSettings.CustomConfigPath'] | Should -Be ''
@@ -274,25 +297,25 @@ Describe 'Set-PdqSetting' {
     }
 
     It 'writes only the setting that differs, leaving the rest alone' {
-      $Result = & $script:ScriptPath -Setting @{ DeploymentCleanupDays = 45; PerformanceCopyMode = 'Push' } |
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{ 'deployments.cleanup_days' = 45; 'performance.copy_mode' = 'Push' } |
         ConvertFrom-Json
 
       $Result.applied | Should -Be @('DeploymentSettings.CleanupDays')
-      $Result.unchanged | Should -Be @('PerformanceSettings.CopyMode')
+      $Result.unchanged | Should -Contain 'PerformanceSettings.CopyMode'
       $Result.changed | Should -BeTrue
       $global:FakeSettings['DeploymentSettings.CleanupDays'] | Should -Be '45'
       @($global:FakeCliCalls | Where-Object { $_ -like 'Settings*' }).Count | Should -Be 1
     }
 
     It 'manages only the parameters that were passed' {
-      $Result = & $script:ScriptPath -Setting @{ DeploymentCleanupDays = 45 } | ConvertFrom-Json
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{ 'deployments.cleanup_days' = 45 } | ConvertFrom-Json
 
-      $Result.requested | Should -Be 1
+      $Result.requested | Should -Be 4
       $global:FakeSettings['PerformanceSettings.CopyMode'] | Should -Be 'Push'
     }
 
     It 'spells booleans the way the export does' {
-      $Result = & $script:ScriptPath -Setting @{ AnalyticsCollectAnalyticsUsage = $False } | ConvertFrom-Json
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{ 'usage_data.collect_usage_data' = $False } | ConvertFrom-Json
 
       $Result.applied | Should -Be @('AnalyticsSettings.CollectAnalyticsUsage')
       $global:FakeSettings['AnalyticsSettings.CollectAnalyticsUsage'] | Should -Be 'false'
@@ -304,10 +327,10 @@ Describe 'Set-PdqSetting' {
       # while the product's command line takes the last two components. The
       # caller states neither: it passes a parameter, and the script indexes
       # both spellings so the nesting never reaches the playbook.
-      $Result = & $script:ScriptPath -Setting @{ PackageLibraryAutoDeployDefaultApprovalMode = 'Delayed' } |
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{ 'auto_download.approval' = 'Delayed' } |
         ConvertFrom-Json
 
-      $Result.unchanged | Should -Be @('AutoDeployDefaultSettings.ApprovalMode')
+      $Result.unchanged | Should -Contain 'AutoDeployDefaultSettings.ApprovalMode'
       $Result.changed | Should -BeFalse
     }
   }
@@ -317,7 +340,7 @@ Describe 'Set-PdqSetting' {
     It 'reports a setting the product accepted and discarded as ignored, and fails' {
       $global:FakeIgnored = @('DeploymentSettings.CleanupDays')
 
-      $Output = & $script:ScriptPath -Setting @{ DeploymentCleanupDays = 45 }
+      $Output = & $script:ScriptPath @script:Ctx -Preference @{ 'deployments.cleanup_days' = 45 }
       $Result = $Output | ConvertFrom-Json
 
       $Result.ignored | Should -Be @('DeploymentSettings.CleanupDays')
@@ -327,13 +350,13 @@ Describe 'Set-PdqSetting' {
     }
 
     It 'exports twice: once to decide, once to prove' {
-      & $script:ScriptPath -Setting @{ DeploymentCleanupDays = 45 } | Out-Null
+      & $script:ScriptPath @script:Ctx -Preference @{ 'deployments.cleanup_days' = 45 } | Out-Null
 
       @($global:FakeCliCalls | Where-Object { $_ -like 'ExportSettings*' }).Count | Should -Be 2
     }
 
     It 'leaves no export file behind' {
-      & $script:ScriptPath -Setting @{ DeploymentCleanupDays = 45 } | Out-Null
+      & $script:ScriptPath @script:Ctx -Preference @{ 'deployments.cleanup_days' = 45 } | Out-Null
 
       Test-Path -LiteralPath $script:ExportPath | Should -BeFalse
     }
@@ -341,14 +364,15 @@ Describe 'Set-PdqSetting' {
     It 'fails loudly when the export itself fails' {
       $global:FakeExportFails = $True
 
-      { & $script:ScriptPath -Setting @{ DeploymentCleanupDays = 45 } } | Should -Throw
+      { & $script:ScriptPath @script:Ctx -Preference @{ 'deployments.cleanup_days' = 45 } } | Should -Throw
     }
   }
 
   Context 'the settings that are not reachable by command line' {
 
     It 'writes the repository through the database, never the command line' {
-      $Result = & $script:ScriptPath -Setting @{ RepositoryPath = '\\HOST\AppRepo$' } | ConvertFrom-Json
+      $global:FakeSettings['RepositorySettings.Path'] = '\\TESTBOX\Old$'
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{} | ConvertFrom-Json
 
       $Result.applied | Should -Be @('RepositorySettings.Path')
       $global:FakeSqliteCalls.Count | Should -Be 1
@@ -358,7 +382,8 @@ Describe 'Set-PdqSetting' {
     }
 
     It 'asks the product where its database is rather than assuming' {
-      & $script:ScriptPath -Setting @{ RepositoryPath = '\\HOST\AppRepo$' } | Out-Null
+      $global:FakeSettings['RepositorySettings.Path'] = '\\TESTBOX\Old$'
+      & $script:ScriptPath @script:Ctx -Preference @{} | Out-Null
 
       @($global:FakeCliCalls | Where-Object { $_ -eq 'SystemInfo' }).Count | Should -Be 1
       $global:FakeSqliteCalls[0] | Should -BeLike ($script:DatabasePath + '*')
@@ -367,7 +392,8 @@ Describe 'Set-PdqSetting' {
     It 'fails loudly when the product will not say where its database is' {
       $global:FakeSystemInfoBlank = $True
 
-      { & $script:ScriptPath -Setting @{ RepositoryPath = '\\HOST\AppRepo$' } } | Should -Throw
+      $global:FakeSettings['RepositorySettings.Path'] = '\\TESTBOX\Old$'
+      { & $script:ScriptPath @script:Ctx -Preference @{} } | Should -Throw
     }
   }
 
@@ -376,7 +402,7 @@ Describe 'Set-PdqSetting' {
     It 'sets Changed=$False explicitly when nothing differs' {
       $Context = New-AnsibleContext
 
-      & $script:ScriptPath -Setting @{ DeploymentCleanupDays = 30 } | Out-Null
+      & $script:ScriptPath @script:Ctx -Preference @{ 'deployments.cleanup_days' = 30 } | Out-Null
 
       $Context.Changed | Should -BeFalse
       $Context.Failed | Should -BeFalse
@@ -387,7 +413,7 @@ Describe 'Set-PdqSetting' {
       $global:FakeIgnored = @('DeploymentSettings.CleanupDays')
       $Context = New-AnsibleContext
 
-      & $script:ScriptPath -Setting @{ DeploymentCleanupDays = 45 } | Out-Null
+      & $script:ScriptPath @script:Ctx -Preference @{ 'deployments.cleanup_days' = 45 } | Out-Null
 
       $Context.Failed | Should -BeTrue
       $Context.Result.ignored | Should -Be @('DeploymentSettings.CleanupDays')
@@ -396,7 +422,7 @@ Describe 'Set-PdqSetting' {
     It 'reports the would-be change in check mode and writes nothing' {
       $Context = New-AnsibleContext -CheckMode
 
-      & $script:ScriptPath -Setting @{ DeploymentCleanupDays = 45 } | Out-Null
+      & $script:ScriptPath @script:Ctx -Preference @{ 'deployments.cleanup_days' = 45 } | Out-Null
 
       $Context.Changed | Should -BeTrue
       $Context.Result.check_mode | Should -BeTrue

@@ -21,6 +21,12 @@
         measured ones the console itself writes: the splash and theme under the console's Startup
         key, the update checks under the product's AutoUpdateChecker key.
 
+        The account the build CONNECTS as is the one profile that always predates this task:
+        its profile is born the moment the transport first signs in, minutes before any seeding
+        runs, so it can never inherit the Default hive. Its own hive is therefore stamped too --
+        but only values the product has never written there; a preference any user has saved is
+        that user's, and stays.
+
         Org scripts are a single straightforward process stage: [ Initialization ], [ Main ]
         (read -> compare -> apply -> verify -> ONE result object), [ Output ]. Developed under
         scripts/ with the sibling Set-PdqConsoleDefault.pester.ps1 spec; the role tracks only
@@ -286,6 +292,32 @@ Try {
   If ($LASTEXITCODE -ne 0) {
     Write-Warning -Message:('Unloading {0} failed with exit code {1}' -f $MOUNT, $LASTEXITCODE)
   }
+}
+
+# The connection account's own profile predates every converge, so the Default seed can never
+# reach it. Stamp the same values into its live hive -- but ONLY names the product has never
+# written there: presence means somebody chose, and a chosen preference is not the deployment's.
+ForEach ($Row In $Rows) {
+  $OwnKey = $Row.Key -replace '^Registry::HKEY_USERS\\PdqDefaultSeed', 'HKCU:'
+  $Have = $Null
+  If (Test-Path -LiteralPath:$OwnKey) {
+    $Item = Get-ItemProperty -LiteralPath:$OwnKey -ErrorAction:'SilentlyContinue'
+    If ($Null -ne $Item -and $Item.PSObject.Properties.Match($Row.Name).Count -gt 0) {
+      $Have = $Item.($Row.Name)
+    }
+  }
+  If ($Null -ne $Have) {
+    Continue
+  }
+  $Changed = $True
+  If ($Ansible.CheckMode) {
+    Continue
+  }
+  If (-not (Test-Path -LiteralPath:$OwnKey)) {
+    $Null = New-Item -Path:$OwnKey -Force
+  }
+  $Type = If ($Row.Value -is [System.Int32]) { 'DWord' } Else { 'String' }
+  $Null = New-ItemProperty -LiteralPath:$OwnKey -Name:$Row.Name -Value:$Row.Value -PropertyType:$Type -Force
 }
 
 $Ansible.Changed = $Changed

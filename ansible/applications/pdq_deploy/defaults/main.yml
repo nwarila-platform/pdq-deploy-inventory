@@ -83,151 +83,122 @@ pdq_deploy_defaults:
   # fixed location as the command line above, and fixed for the same reason.
   service_path: 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeployService.exe'
 
-  # Every setting the product's background service exposes, declared at the product's OWN default
-  # -- measured from its ExportSettings on a host built by this role, version 20.1.8.0, with the
-  # deployment's own overrides removed first (2026-08-20). Declared rather than left out on
-  # purpose: a role that states only what it changes leaves the rest to whatever the vendor
-  # ships, so an upgrade that moves a default silently moves this deployment with it. Stating
-  # the whole surface makes the converged host deterministic, and makes a vendor default change
-  # visible as a task that reports a change rather than as drift nobody sees.
+  # Every preference the console shows, organised exactly as its Preferences window is: a map
+  # of PAGES, each holding that page's settings under the labels the page uses. The reader tunes
+  # what they can SEE; the role owns where each value actually lives -- most flow through the
+  # product's own command line into its database, the four event-log severities are machine
+  # registry values, and the alerts/interface pages are per-user, seeded into the Default profile
+  # (and the connection account's own, where the product has never written) so consoles start as
+  # declared. Values are the product's own measured defaults (ExportSettings, v20.1.8.0,
+  # 2026-08-20), declared in full so a vendor moving one shows up as a reported change instead of
+  # silent drift. A playbook overrides individual keys; the loader merges recursively.
   #
-  # Keyed by the settings script's own parameter names, not the product's dotted spelling, which
-  # the script owns the translation for; a name its table does not carry is a typo and fails the
-  # run. A playbook overrides individual keys -- the loader merges recursively, so setting one
-  # here keeps the other sixty-four.
-  #
-  # Mail, proxy, Spiceworks and OAuth identity are blank because blank is what the product ships;
-  # a deployment that uses them sets them in its playbook, and blank here means the role restores
-  # blank on a host where someone configured them by hand rather than leaving a half-configured
-  # integration in place.
-  #
-  # Five audit-log names the export publishes are absent because they are read-only: the
-  # min/max pairs are the BOUNDS of the console's two spinners, and the verbose file name is the
-  # fixed label beside the browsable directory. Each was measured accepted-and-not-stored
-  # (2026-08-21); the script still carries them, so declaring one fails loudly.
-  # RepositoryPath is absent because the role owns it, deriving the value from the share it
-  # publishes so the folder, its permissions, its share name and the product's repository cannot
-  # disagree; the database backup directory is derived the same way, for the same reason. Both
-  # are UNC paths naming this machine, so neither can be stated here as one host's literal value.
-  # InventoryScanProfileId is absent because it names an object inside PDQ Inventory, so there is
-  # no deterministic default to state.
-  settings:
-    # Package library
-    PackageLibraryAutoDeployDefaultApprovalMode: 'Delayed'
-    PackageLibraryAutoDeployDefaultDelayedApprovalTimeSpan: '7.00:00:00'
-    PackageLibraryAutoDeployDefaultIsEnabled: true
-    PackageLibraryAutoDownloadArchiveCopiesToKeep: 5
-    PackageLibraryAutoDownloadArchiveIsArchiving: false
-
-    # Database backup
-    DatabaseDatabaseBackupCompress: true
-    DatabaseDatabaseBackupIsEnabled: true
-    DatabaseDatabaseBackupKeep: 10
-
-    # Deployments
-    DeploymentCleanupDays: 30
-    DeploymentComputerTimeout: 60
-    DeploymentRunAs: 'Admin'
-    DeploymentScanAfterDeployment: true
-
-    # Offline targets
-    DeploymentOfflineRetryMaxTries: 72
-    DeploymentOfflineUsePing: false
-    DeploymentOfflineTryWol: false
-    DeploymentOfflineIsRetryEnabled: false
-    DeploymentOfflineRetryInterval: '01:00:00'
-
-    # Logging and audit
-    LoggingSentryCanSendAnonymousExceptionData: true
-    LoggingAuditLogDaysRecordsKept: 30
-    LoggingAuditLogWriteVerboseFile: true
-    LoggingAuditLogLoadCustomConfig: false
-    LoggingAuditLogVerboseFileDirectory: 'C:\ProgramData\Admin Arsenal\PDQ Deploy'
-    LoggingAuditLogCustomConfigPath: ''
-    LoggingAuditLogNumArchivedFiles: 4
-    LoggingAuditLogArchiveSchedule: 'Monday'
-
-    # Mail server
-    MailServerEnableSSL: false
-    MailServerHost: ''
-    MailServerSender: ''
-    MailServerUser: ''
-    MailServerOAuth2ClientId: ''
-    MailServerOAuth2TenantId: ''
-    MailServerOAuth2RedirectUri: ''
-    MailServerOAuth2Provider: 'Microsoft'
-    MailServerOAuth2Sender: ''
-    MailServerMSGraphAPIClientId: ''
-    MailServerMSGraphAPITenantId: ''
-    MailServerMSGraphAPICloudHostUrl: 'Azure Public Cloud'
-    MailServerMSGraphAPISender: ''
-
-    # Performance
-    PerformanceBandwidthLimitPercent: 50
-    PerformanceCopyMode: 'Push'
-    PerformanceMaxDeploymentThreads: 8
-    PerformanceMaxServerThreads: 32
-    PerformanceCredentialBatchSize: 200
-    PerformanceIntegrationMessageTimeoutSeconds: 30
-
-    # Printing
-    PrintingFooterAlignment: 'Center'
-    PrintingFooterText: ''
-    PrintingHeaderAlignment: 'Center'
-    PrintingHeaderText: ''
-    PrintingInColor: true
-    PrintingMarginBottom: 20
-    PrintingMarginLeft: 20
-    PrintingMarginRight: 20
-    PrintingMarginTop: 20
-
-    # Proxy
-    ProxyHostName: ''
-    ProxyPort: 8080
-    ProxyUserName: ''
-    ProxyUseSystemHost: true
-
-    # Repository
-    RepositoryEnableUnusedFilesWarning: true
-    RepositoryExclusions: ''
-
-    # Spiceworks
-    SpiceworksHostName: ''
-    SpiceworksIsEnabled: true
-    SpiceworksPort: 443
-    SpiceworksSyncInterval: '04:00:00'
-    SpiceworksUserName: ''
-    SpiceworksUseSSL: true
-
-    # Target service
-    TargetServiceRemoteDirectory: 'ADMIN$\AdminArsenal'
-    TargetServiceSharePath: ''
-
-    # Analytics
-    AnalyticsCollectAnalyticsUsage: false
-    AnalyticsAlertFirstTimeAnalyticsDialog: true
-
-  # Which severities the product records to the Windows Application event log. Its OWN default
-  # is everything but Debug -- the values live under HKLM ...\Admin Arsenal\Logging\PDQ Deploy,
-  # a key the product only creates once a console saves the page (measured 2026-08-21), so the
-  # role writes all four and the machine no longer depends on whether anyone ever opened the
-  # console. Debug stays off: the vendor's page marks it for support-directed troubleshooting.
-  event_log:
-    error: true
-    warning: true
-    information: true
-    debug: false
-
-  # The console preferences every NEW user profile starts from, seeded into the Default profile
-  # hive -- the only per-user surface a converge can reach, because profiles that do not exist
-  # yet are built from it. Existing profiles are never touched: a preference a user has saved is
-  # that user's. Values are the product's own first-run behaviour; the theme is null because the
-  # product's unset default is the console's own first-run pick, and null leaves it that way.
-  console_default:
-    disable_splash_screen: false
-    auto_update_check: true
-    show_webcast_alerts: true
-    color_theme: null
+  # Two locations follow a declared-or-derived rule: the database backup location and the
+  # verbose audit log directory are null by default, meaning the role places them beside the
+  # database on its dedicated drive; declaring a path overrides that. Not offered at all:
+  # repository.path (derived from the share the role publishes, so folder, share and product
+  # cannot disagree); the five read-only audit-log names (spinner bounds and a fixed label --
+  # FIND-18); the deployments page's Inventory scan profile (it names an object inside PDQ
+  # Inventory); and the alerts page's release channel (per-user, storage not yet measured).
+  preferences:
+    alerts:
+      auto_update_check_enabled: true
+      show_webcast_alerts: true
+    interface:
+      color_theme: null
+      disable_splash_screen: false
+    auto_download:
+      enable_auto_download: true
+      approval: 'Delayed'
+      automatic_approval_delay: '7.00:00:00'
+      save_copies_of_previous_versions: false
+      copies_to_keep: 5
+    database:
+      enable_automatic_backups: true
+      backups_to_keep: 10
+      compress_backups: true
+      # null means: beside the database, on its dedicated drive (<drive>:\<directory>\Backups).
+      # Declare a path only to send backups somewhere else.
+      backup_location: null
+    deployments:
+      run_packages_as: 'Admin'
+      timeout_minutes: 60
+      cleanup_days: 30
+      scan_after_deployment: true
+      ping_before_deployment: false
+      wake_on_lan: false
+      retry_queue_enabled: false
+      allowed_retries: 72
+      retry_interval: '01:00:00'
+    logging:
+      send_anonymous_exception_data: true
+      record_error: true
+      record_warning: true
+      record_informational: true
+      record_debug: false
+      audit_keep_days: 30
+      verbose_log_to_file: true
+      # null means: beside the database, on its dedicated drive (<drive>:\<directory>\Logs) --
+      # the same rule as the backup location, because logs grow like backups do. Declare a path
+      # only to send them somewhere else.
+      verbose_log_directory: null
+      archive_log_every: 'Monday'
+      archived_logs_to_keep: 4
+      use_logging_configuration_file: false
+      logging_configuration_file: ''
+    mail_server:
+      smtp_server: ''
+      enable_ssl: false
+      smtp_user: ''
+      sender_address: ''
+      oauth2_client_id: ''
+      oauth2_tenant_id: ''
+      oauth2_redirect_uri: ''
+      oauth2_provider: 'Microsoft'
+      oauth2_sender: ''
+      graph_client_id: ''
+      graph_tenant_id: ''
+      graph_cloud: 'Azure Public Cloud'
+      graph_sender: ''
+    performance:
+      concurrent_targets_per_deployment: 8
+      total_concurrent_targets: 32
+      copy_mode: 'Push'
+      bandwidth_limit_percent: 50
+      credential_batch_size: 200
+      integration_message_timeout_seconds: 30
+    printing:
+      header_text: ''
+      header_alignment: 'Center'
+      footer_text: ''
+      footer_alignment: 'Center'
+      margin_left: 20
+      margin_right: 20
+      margin_top: 20
+      margin_bottom: 20
+      in_color: true
+    proxy_server:
+      use_system_proxy: true
+      host_name: ''
+      port: 8080
+      username: ''
+    repository:
+      show_unused_files_warning: true
+      cleanup_exclusions: ''
+    spiceworks:
+      host_name: ''
+      port: 443
+      use_ssl: true
+      email: ''
+      auto_sync_enabled: true
+      sync_interval: '04:00:00'
+    target_service:
+      unc_path: >-
+        ADMIN$\AdminArsenal
+      local_path_of_shared_directory: ''
+    usage_data:
+      collect_usage_data: false
+      alert_first_time_analytics_dialog: true
 
   #region ------ [ Installer layout ] -------------------------------------------------------- #
 

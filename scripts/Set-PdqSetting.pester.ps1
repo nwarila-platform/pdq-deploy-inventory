@@ -142,6 +142,8 @@ Describe 'Set-PdqSetting' {
       'AutoDeployDefaultSettings.ApprovalMode'        = 'Delayed'
     }
     $global:FakeIgnored = @()
+    $global:FakeDbRows = @{}
+    $global:FakeDrainStalls = $False
     $global:FakeCliCalls = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeSqliteCalls = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeExportFails = $False
@@ -171,6 +173,13 @@ Describe 'Set-PdqSetting' {
           # The real product stores a few families under a 'Product' prefix and
           # publishes them in the export without it; the fake mirrors that.
           $Name = $args[2] -replace '^ProductPrintingSettings\.', 'PrintingSettings.'
+          # The row lands for ANY name -- the bogus-name control measured that -- and only the
+          # EXPORT drops the ones the product does not read. A stalled fake models the queue.
+          If ($args[3] -eq '-Reset') {
+            $global:FakeDbRows.Remove($args[2])
+          } ElseIf (-not $global:FakeDrainStalls) {
+            $global:FakeDbRows[$args[2]] = $args[4]
+          }
           If ($global:FakeIgnored -notcontains $Name) {
             If ($args[3] -eq '-Reset') {
               $global:FakeSettings[$Name] = ''
@@ -189,6 +198,9 @@ Describe 'Set-PdqSetting' {
       $global:FakeSqliteCalls.Add($args -join ' ')
       If ($args[1] -match "SET Value = '(?<v>.*?)'") {
         $global:FakeSettings['RepositorySettings.Path'] = $Matches['v']
+      }
+      If ($args[1] -like 'SELECT Name, Value FROM Settings*') {
+        ForEach ($K In @($global:FakeDbRows.Keys)) { '{0}|{1}' -f $K, $global:FakeDbRows[$K] }
       }
       $global:LASTEXITCODE = 0
     } | Out-Null
@@ -281,6 +293,15 @@ Describe 'Set-PdqSetting' {
       $Result.applied | Should -Be @('PrintingSettings.MarginTop')
       ($global:FakeCliCalls -join '; ') | Should -Match 'ProductPrintingSettings\.MarginTop -Set 21'
       $global:FakeSettings['PrintingSettings.MarginTop'] | Should -Be '21'
+    }
+
+    It 'waits for the service to persist the queue, and fails when it never drains' {
+      # Edits are queued with the background service and drain at its own pace; the export
+      # shows the pending state, so the script waits on the database row itself. A queue that
+      # never drains -- here, a stalled fake -- must fail the run, not report applied.
+      $global:FakeDrainStalls = $True
+      { & $script:ScriptPath @script:Ctx -Preference @{ deployments = @{ cleanup_days = 45 } } 2>$null } |
+        Should -Throw '*settle window*'
     }
 
     It 'restores a blank default by resetting, never by writing an empty value' {

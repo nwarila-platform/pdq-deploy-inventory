@@ -61,6 +61,15 @@ BeforeAll {
     [PSCustomObject]@{ License = $global:FakeLicenseBlob }
   }
 
+  # The database-exists guard checks the path SystemInfo reports; it is present unless a test
+  # clears $global:FakeDbPresent to model a stale/broken install.
+  Function Test-Path {
+    [CmdletBinding()]
+    Param ([Parameter()] [System.String]$LiteralPath)
+    If ($LiteralPath -eq 'C:\fake\Database.db') { Return [bool]$global:FakeDbPresent }
+    Throw ('unexpected Test-Path: {0}' -f $LiteralPath)
+  }
+
   # Command-line door: SystemInfo names the database, nothing else is asked.
   New-Item -Force -Path 'function:C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe' -Value {
     $global:CliCalls += , @($args)
@@ -76,9 +85,9 @@ BeforeAll {
     $global:LASTEXITCODE = If ($global:FakeSqliteFails) { 1 } Else { 0 }
     If ($global:FakeSqliteFails) { Return }
     Switch -Regex ($Sql) {
-      '^SELECT \* FROM LicensedMachine;$' { $global:FakeMachines; Break }
-      '^SELECT \* FROM LicensedUser;$' { $global:FakeUsers; Break }
-      '^SELECT \* FROM Registration;$' { $global:FakeRegistrations; Break }
+      'SELECT \* FROM LicensedMachine;' { $global:FakeMachines; Break }
+      'SELECT \* FROM LicensedUser;' { $global:FakeUsers; Break }
+      'SELECT \* FROM Registration;' { $global:FakeRegistrations; Break }
       Default {
         $global:WriteCalls += 1
         ForEach ($Statement In ($Sql -split ';')) {
@@ -88,7 +97,10 @@ BeforeAll {
             $global:FakeUsers += ('{0}|{1}' -f $Matches[1], $Matches[2])
           } ElseIf ($Statement -match "^\s*INSERT OR REPLACE INTO Registration VALUES\('([^']*)','([^']*)','([^']*)','([^']*)','([^']*)','([^']*)',(\d)\)") {
             $Row = '{0}|{1}|{2}|{3}|{4}|{5}|{6}' -f $Matches[1], $Matches[2], $Matches[3], $Matches[4], $Matches[5], $Matches[6], $Matches[7]
-            $Kept = @($global:FakeRegistrations | Where-Object -FilterScript { $PSItem.Split('|')[0] -ne $Matches[1] })
+            $Kept = @($global:FakeRegistrations | Where-Object -FilterScript {
+                $F = $PSItem.Split('|')
+                -not ($F[0] -eq $Matches[1] -and $F[1] -eq $Matches[2] -and $F[2] -eq $Matches[3])
+              })
             $global:FakeRegistrations = $Kept + $Row
             If ($global:FakeWriteIgnored) {
               $global:FakeRegistrations = $Kept
@@ -114,6 +126,7 @@ Describe 'Set-PdqRegistration' {
     $global:FakeMachines = @()
     $global:FakeUsers = @()
     $global:FakeRegistrations = @()
+    $global:FakeDbPresent = $True
     $global:FakeSqliteFails = $False
     $global:FakeWriteIgnored = $False
     $global:CliCalls = @()
@@ -137,6 +150,29 @@ Describe 'Set-PdqRegistration' {
     It 'throws when the database write fails' {
       $global:FakeSqliteFails = $True
       { & $script:ScriptPath -Email 'someone@example.com' 2>$null } | Should -Throw '*exit code 1*'
+    }
+  }
+
+  Context 'hardening' {
+    It 'escapes every interpolated value, not just the email' {
+      $env:COMPUTERNAME = "o'brien-pc"
+      $Null = & $script:ScriptPath -Email 'someone@example.com'
+      $Batch = ($global:SqliteCalls | Where-Object { $_[1] -match 'INSERT' } | Select-Object -Last 1)[1]
+      $Batch | Should -Match "o''brien-pc"
+      $Batch | Should -Not -Match "o'brien-pc'"
+    }
+
+    It 'refuses an absent database rather than creating an empty one' {
+      $global:FakeDbPresent = $False
+      { & $script:ScriptPath -Email 'someone@example.com' 2>$null } | Should -Throw '*is not at*'
+    }
+
+    It 'reports no change when the email guard rejects the input' {
+      $global:FakeLicenseBlob = New-FakeLicense -Id 'lic-0001' -Email 'real@example.com'
+      $Context = New-AnsibleContext
+      { & $script:ScriptPath -Email 'wrong@example.com' 2>$null } | Should -Throw '*does not match*'
+      $Context.Changed | Should -BeFalse
+      Remove-AnsibleContext
     }
   }
 

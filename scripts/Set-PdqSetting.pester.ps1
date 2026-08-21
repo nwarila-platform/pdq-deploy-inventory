@@ -124,6 +124,13 @@ Describe 'Set-PdqSetting' {
     $Script | Should -Match '\[CmdletBinding\(SupportsShouldProcess'
   }
 
+  It 'keeps the script itself under the event-log size cap' {
+    # The win_powershell audit entry is the script text PLUS the serialized parameters; the
+    # parameter payload is outside our control, so the least we owe is a script that fits the
+    # 32766-byte cap on its own. The mandatory template scaffold leaves little headroom.
+    (Get-Item (Join-Path $PSScriptRoot 'Set-PdqSetting.ps1')).Length | Should -BeLessThan 32766
+  }
+
 
   BeforeEach {
     # Each test owns a directory, mounted as C: so the script's Windows-shaped

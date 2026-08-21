@@ -151,6 +151,7 @@ Describe 'Set-PdqSetting' {
     $global:FakeIgnored = @()
     $global:FakeDbRows = @{}
     $global:FakeConsoleSessions = @()
+    $global:FakeSessionFails = $False
     $global:FakeDrainStalls = $False
     $global:FakeCliCalls = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeSqliteCalls = [System.Collections.Generic.List[System.String]]::new()
@@ -211,6 +212,7 @@ Describe 'Set-PdqSetting' {
         ForEach ($K In @($global:FakeDbRows.Keys)) { '{0}|{1}' -f $K, $global:FakeDbRows[$K] }
       }
       If ($args[1] -like 'SELECT UserName FROM ConsoleUserSessions*') {
+        If ($global:FakeSessionFails) { $global:LASTEXITCODE = 1; Return }
         $global:FakeConsoleSessions
       }
       $global:LASTEXITCODE = 0
@@ -282,6 +284,29 @@ Describe 'Set-PdqSetting' {
       $Result.changed | Should -BeFalse
       $Result.unchanged | Should -Contain 'DeploymentSettings.CleanupDays'
       @($global:FakeCliCalls | Where-Object { $_ -like 'Settings*' }).Count | Should -Be 0
+    }
+
+    It 'rejects a caller-declared repository.path instead of silently discarding it' {
+      { & $script:ScriptPath @script:Ctx -Preference @{ repository = @{ path = '\\other\share$' } } 2>$null } |
+        Should -Throw '*derived*'
+    }
+
+    It 'refuses to blank an export-invisible setting' {
+      { & $script:ScriptPath @script:Ctx -Preference @{ mail_server = @{ authentication_method = '' } } 2>$null } |
+        Should -Throw '*not published by the export*'
+    }
+
+    It 'treats case-only drift as a change, not a match' {
+      $global:FakeSettings['PrintingSettings.HeaderText'] = 'confidential'
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{ printing = @{ header_text = 'CONFIDENTIAL' } } |
+        ConvertFrom-Json
+      $Result.applied | Should -Contain 'PrintingSettings.HeaderText'
+    }
+
+    It 'fails loudly when the console-session read errors instead of reporting no console' {
+      $global:FakeSessionFails = $True
+      { & $script:ScriptPath @script:Ctx -Preference @{ deployments = @{ cleanup_days = 45 } } 2>$null } |
+        Should -Throw '*console sessions failed*'
     }
 
     It 'takes the console shape: pages holding their settings' {

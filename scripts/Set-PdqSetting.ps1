@@ -303,6 +303,9 @@ ForEach ($PageName In @($PSBoundParameters['Preference'].Keys)) {
 # this machine publishes, so its path is composed from this machine's own name; the backup and
 # verbose-log locations default to sitting beside the database on its dedicated drive, because
 # both grow the way the database does, and a caller may still name somewhere else.
+If ($Flat.ContainsKey('repository.path')) {
+  Throw 'repository.path is derived from the share the role publishes; it cannot be declared'
+}
 $Flat['repository.path'] = '\\{0}\{1}' -f $env:COMPUTERNAME, $RepositoryShareName
 If ([System.String]::IsNullOrEmpty([System.String]$Flat['database.backup_location'])) {
   $Flat['database.backup_location'] = '{0}:\{1}\Backups' -f $DatabaseDrive, $DatabaseDirectory
@@ -351,6 +354,11 @@ ForEach ($Given In @($Flat.Keys)) {
     $StoreName[$Entry.Name] = $Entry.Store
   }
   If ($Entry.ContainsKey('Unexported')) {
+    If ([System.String]::IsNullOrEmpty([System.String]$Setting[$Entry.Name])) {
+      # Verified against its database ROW, an export-invisible setting stored as no row has
+      # nothing to read back, so blank would fail verification forever.
+      Throw ('{0} cannot be set blank: it is not published by the export' -f $Given)
+    }
     $Unexported[$Entry.Name] = $True
   }
 }
@@ -458,7 +466,7 @@ Try {
       # name neither store carries still queues -- the verify pass decides whether it counted.
       $ToWrite = [System.Collections.Generic.List[System.String]]::new()
       ForEach ($Name In @($Setting.Keys)) {
-        If ($Null -ne $Effective[$Name] -and [System.String]$Effective[$Name] -eq [System.String]$Setting[$Name]) {
+        If ($Null -ne $Effective[$Name] -and [System.String]$Effective[$Name] -ceq [System.String]$Setting[$Name]) {
           $Unchanged.Add($Name)
         } Else {
           $ToWrite.Add($Name)
@@ -471,10 +479,8 @@ Try {
       ForEach ($Name In $ToWrite) {
         $Desired = [System.String]$Setting[$Name]
         # A few families store under a different spelling than the export publishes --
-        # ProductPrintingSettings against the export's PrintingSettings was the measured case,
-        # 2026-08-21 -- and the command line only answers to the STORED name. The export stays
-        # the verify oracle, so the export spelling stays the row's Name and the stored one
-        # travels only in the write.
+        # ProductPrintingSettings vs the export's PrintingSettings, measured 2026-08-21 -- the
+        # command line answers only to the STORED name, while the export stays verify oracle.
         $WriteName = If ($StoreName.ContainsKey($Name)) { $StoreName[$Name] } Else { $Name }
         If ($DatabaseVariable.ContainsKey($Name)) {
           $Statement = "UPDATE SystemVariables SET Value = '{0}', Modified = datetime('now') WHERE Name = '{1}';" -f @(
@@ -538,8 +544,12 @@ Try {
       # An open console's next save writes its stale page model back over anything applied
       # here (measured 2026-08-21), so writes report who has a console open.
       If ($ToWrite.Count -gt 0) {
-        ForEach ($Row In @(& $SQLITE_PATH $DatabasePath "SELECT UserName FROM ConsoleUserSessions WHERE Console <> '';" 2>&1)) {
-          If ($LASTEXITCODE -eq 0 -and $Row) {
+        $Sessions = @(& $SQLITE_PATH $DatabasePath "SELECT UserName FROM ConsoleUserSessions WHERE Console <> '';" 2>&1)
+        If ($LASTEXITCODE -ne 0) {
+          Throw ('Reading the console sessions failed with exit code {0}' -f $LASTEXITCODE)
+        }
+        ForEach ($Row In $Sessions) {
+          If ($Row) {
             $OpenConsole.Add([System.String]$Row)
           }
         }
@@ -551,7 +561,7 @@ Try {
         If ($Unchanged -contains $Name) {
           Continue
         }
-        If ($Null -ne $Effective[$Name] -and [System.String]$Effective[$Name] -eq [System.String]$Setting[$Name]) {
+        If ($Null -ne $Effective[$Name] -and [System.String]$Effective[$Name] -ceq [System.String]$Setting[$Name]) {
           $Applied.Add($Name)
         } Else {
           $Ignored.Add($Name)

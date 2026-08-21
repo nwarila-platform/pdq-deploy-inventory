@@ -101,6 +101,13 @@ BeforeAll {
 }
 
 Describe 'Set-PdqRegistration' {
+  It 'declares SupportsShouldProcess so the module runs it in check mode' {
+    # win_powershell SKIPS a script in check mode unless it advertises this, returning
+    # changed=true and no result -- the exact spelling the module's own detector keys on.
+    $Script = Get-Content -Raw (Join-Path $PSScriptRoot 'Set-PdqRegistration.ps1')
+    $Script | Should -Match '\[CmdletBinding\(SupportsShouldProcess'
+  }
+
   BeforeEach {
     $env:COMPUTERNAME = 'TESTBOX'
     $global:FakeLicenseBlob = New-FakeLicense -Id 'lic-0001' -Email 'someone@example.com'

@@ -117,6 +117,13 @@ BeforeAll {
 }
 
 Describe 'Set-PdqSetting' {
+  It 'declares SupportsShouldProcess so the module runs it in check mode' {
+    # win_powershell SKIPS a script in check mode unless it advertises this, returning
+    # changed=true and no result -- the exact spelling the module's own detector keys on.
+    $Script = Get-Content -Raw (Join-Path $PSScriptRoot 'Set-PdqSetting.ps1')
+    $Script | Should -Match '\[CmdletBinding\(SupportsShouldProcess'
+  }
+
 
   BeforeEach {
     # Each test owns a directory, mounted as C: so the script's Windows-shaped

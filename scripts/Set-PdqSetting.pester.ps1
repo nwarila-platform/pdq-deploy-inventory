@@ -205,13 +205,23 @@ Describe 'Set-PdqSetting' {
     # The sqlite tool. Only the repository system variable reaches it.
     New-Item -Force -Path ('function:global:' + $script:SqlitePath) -Value {
       $global:FakeSqliteCalls.Add($args -join ' ')
-      If ($args[1] -match "SET Value = '(?<v>.*?)'") {
+      # The statement is the last SELECT/UPDATE argument, wherever the mode flags put it.
+      $Sql = @($args | Where-Object -FilterScript { $PSItem -like 'SELECT *' -or $PSItem -like 'UPDATE *' })[-1]
+      If ($Sql -match "SET Value = '(?<v>.*?)'") {
         $global:FakeSettings['RepositorySettings.Path'] = $Matches['v']
       }
-      If ($args[1] -like 'SELECT Name, Value FROM Settings*') {
-        ForEach ($K In @($global:FakeDbRows.Keys)) { '{0}|{1}' -f $K, $global:FakeDbRows[$K] }
+      If ($Sql -like 'SELECT Name, Value FROM Settings*') {
+        # Emulate sqlite -csv: a field holding a comma, quote or newline is wrapped in quotes
+        # with its own quotes doubled. Emit each PHYSICAL line separately, the way a native
+        # tool's stdout arrives, so a quoted newline reaches the script split -- which is the
+        # exact hazard the script's rejoin-then-parse read has to survive.
+        ForEach ($K In @($global:FakeDbRows.Keys)) {
+          $V = [System.String]$global:FakeDbRows[$K]
+          If ($V -match '[",\r\n]') { $V = '"' + $V.Replace('"', '""') + '"' }
+          ('{0},{1}' -f $K, $V) -split "`n"
+        }
       }
-      If ($args[1] -like 'SELECT UserName FROM ConsoleUserSessions*') {
+      If ($Sql -like 'SELECT UserName FROM ConsoleUserSessions*') {
         If ($global:FakeSessionFails) { $global:LASTEXITCODE = 1; Return }
         $global:FakeConsoleSessions
       }
@@ -301,6 +311,24 @@ Describe 'Set-PdqSetting' {
       $Result = & $script:ScriptPath @script:Ctx -Preference @{ printing = @{ header_text = 'CONFIDENTIAL' } } |
         ConvertFrom-Json
       $Result.applied | Should -Contain 'PrintingSettings.HeaderText'
+    }
+
+    It 'reads a multiline value back whole instead of stalling on the newline' {
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{
+        printing = @{ header_text = "Confidential`nDo Not Distribute" }
+      } | ConvertFrom-Json
+      $Result.applied | Should -Contain 'PrintingSettings.HeaderText'
+      $Result.changed | Should -BeTrue
+    }
+
+    It 'fails on a misspelled routed key rather than silently reverting it to the default' {
+      { & $script:ScriptPath @script:Ctx -Preference @{ logging = @{ record_erorr = $False } } 2>$null } |
+        Should -Throw
+    }
+
+    It 'sets a correctly spelled routed key aside instead of failing it as unknown' {
+      { & $script:ScriptPath @script:Ctx -Preference @{ alerts = @{ release_channel = 'Beta' } } } |
+        Should -Not -Throw
     }
 
     It 'fails loudly when the console-session read errors instead of reporting no console' {

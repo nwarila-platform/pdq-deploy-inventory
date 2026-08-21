@@ -77,6 +77,9 @@ BeforeAll {
 
     If ($LiteralPath -and $LiteralPath.StartsWith('HKLM:')) {
       $global:FakeReads++
+      If ($global:FakeDenied) {
+        Throw ('Requested registry access is not allowed: {0}' -f $LiteralPath)
+      }
       If (-not $global:FakeRegistry.Contains($LiteralPath)) {
         Return @()
       }
@@ -90,7 +93,9 @@ BeforeAll {
       # Get-ItemProperty below.
       Return @(
         0..($Subkeys.Count - 1) | ForEach-Object {
-          [PSCustomObject]@{ PSPath = ('{0}##{1}' -f $LiteralPath, $PSItem) }
+          $Reg = $Subkeys[$PSItem]
+          $KeyName = If ($Reg.Contains('PSChildName')) { $Reg['PSChildName'] } Else { [System.String]$PSItem }
+          [PSCustomObject]@{ PSPath = ('{0}##{1}' -f $LiteralPath, $PSItem); PSChildName = $KeyName }
         }
       )
     }
@@ -117,6 +122,11 @@ AfterAll {
 }
 
 Describe 'Get-InstalledSoftware' {
+  It 'declares SupportsShouldProcess so the module runs it in check mode' {
+    (Get-Content -Raw (Join-Path $PSScriptRoot 'Get-InstalledSoftware.ps1')) |
+      Should -Match '\[CmdletBinding\(SupportsShouldProcess'
+  }
+
 
   BeforeEach {
     # Both roots exist and hold only unrelated neighbours by default. The first
@@ -131,6 +141,7 @@ Describe 'Get-InstalledSoftware' {
       $script:Wow = @()
     }
     $global:FakeReads = 0
+    $global:FakeDenied = $False
   }
 
   AfterEach {
@@ -194,6 +205,35 @@ Describe 'Get-InstalledSoftware' {
       $Result.entries[0].DisplayVersion | Should -Be '20.1.8.0'
     }
 
+    It 'fails closed when a root cannot be read, never reporting absent' {
+      $global:FakeDenied = $True
+      { & $script:ScriptPath -DisplayName 'PDQ Deploy' -Version '20.1.8.0' 2>$null } | Should -Throw '*not allowed*'
+    }
+
+    It 'takes the ProductCode from the key name, not a tampered uninstall string' {
+      $global:FakeRegistry[$script:Native] += @{
+        DisplayName = 'PDQ Deploy'; DisplayVersion = '20.1.8.0'
+        PSChildName = '{4E9FA177-A200-4DFC-9DC6-9D0290FCAAC2}'
+        UninstallString = 'MsiExec.exe /X{DEADBEEF-0000-0000-0000-000000000000}'
+      }
+      $Result = & $script:ScriptPath -DisplayName 'PDQ Deploy' -Version '20.1.8.0' | ConvertFrom-Json
+      $Result.entries[0].product_id | Should -Be '{4E9FA177-A200-4DFC-9DC6-9D0290FCAAC2}'
+      $Result.product_ids | Should -Contain '{4E9FA177-A200-4DFC-9DC6-9D0290FCAAC2}'
+    }
+
+    It 'reports ambiguity without crashing when a duplicate lacks a version' {
+      $global:FakeRegistry[$script:Native] += @{ DisplayName = 'PDQ Deploy'; DisplayVersion = '20.1.8.0'; PSChildName = 'a' }
+      $global:FakeRegistry[$script:Native] += @{ DisplayName = 'PDQ Deploy'; PSChildName = 'b' }
+      $Context = New-AnsibleContext
+      & $script:ScriptPath -DisplayName 'PDQ Deploy' -Version '20.1.8.0'
+      $Context.Failed | Should -BeTrue
+      $Context.Result.count | Should -Be 2
+    }
+
+    It 'rejects a version that is not four parts' {
+      { & $script:ScriptPath -DisplayName 'PDQ Deploy' -Version '20.1.8' 2>$null } | Should -Throw
+    }
+
     It 'drops PowerShell path bookkeeping, which is not registry data' {
       $global:FakeRegistry[$script:Native] += @{
         DisplayName    = 'PDQ Deploy'
@@ -229,7 +269,7 @@ Describe 'Get-InstalledSoftware' {
       $global:FakeRegistry[$script:Native] += @{
         DisplayName     = 'PDQ Deploy'
         DisplayVersion  = '20.1.8.0'
-        UninstallString = 'MsiExec.exe /X{4E9FA177-A200-4DFC-9DC6-9D0290FCAAC2}'
+        PSChildName = '{4E9FA177-A200-4DFC-9DC6-9D0290FCAAC2}'
       }
 
       $Result = & $script:ScriptPath -DisplayName 'PDQ Deploy' -Version '20.1.8.0' | ConvertFrom-Json
@@ -241,7 +281,7 @@ Describe 'Get-InstalledSoftware' {
       $global:FakeRegistry[$script:Native] += @{
         DisplayName     = 'PDQ Deploy'
         DisplayVersion  = '20.1.8.0'
-        UninstallString = 'C:\PDQ\uninstall.exe'
+        PSChildName = 'PDQ Deploy'
       }
 
       $Result = & $script:ScriptPath -DisplayName 'PDQ Deploy' -Version '20.1.8.0' | ConvertFrom-Json

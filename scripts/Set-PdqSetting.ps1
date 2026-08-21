@@ -131,29 +131,29 @@ New-Variable -Force -Name:'SETTINGS' -Option:('Private', 'ReadOnly') -Value:(
     @{ Param = 'mail_server.graph_cloud'; Name = 'MailServerSettings.MSGraphAPICloudHostUrl'; Type = 'String' }
     @{ Param = 'mail_server.graph_sender'; Name = 'MailServerSettings.MSGraphAPISender'; Type = 'String' }
     @{ Param = 'performance.bandwidth_limit_percent'; Name = 'PerformanceSettings.BandwidthLimitPercent'; Type = 'Int32' }
-    @{ Param = 'performance.copy_mode'; Name = 'PerformanceSettings.CopyMode'; Type = 'String'; ; Allowed = @('Push', 'Pull') }
+    @{ Param = 'performance.copy_mode'; Name = 'PerformanceSettings.CopyMode'; Type = 'String'; Allowed = @('Push', 'Pull') }
     @{ Param = 'performance.concurrent_targets_per_deployment'; Name = 'PerformanceSettings.MaxDeploymentThreads'; Type = 'Int32' }
     @{ Param = 'performance.total_concurrent_targets'; Name = 'PerformanceSettings.MaxServerThreads'; Type = 'Int32' }
     @{ Param = 'performance.credential_batch_size'; Name = 'PerformanceSettings.CredentialBatchSize'; Type = 'Int32' }
     @{ Param = 'performance.integration_message_timeout_seconds'; Name = 'PerformanceSettings.IntegrationMessageTimeoutSeconds'; Type = 'Int32' }
     # Printing stores under ProductPrintingSettings.* while the export publishes
     # PrintingSettings.* -- the Store field carries the difference (measured 2026-08-21).
-    @{ Param = 'printing.footer_alignment'; Name = 'PrintingSettings.FooterAlignment'; Type = 'String'; ; Store = 'ProductPrintingSettings.FooterAlignment' }
-    @{ Param = 'printing.footer_text'; Name = 'PrintingSettings.FooterText'; Type = 'String'; ; Store = 'ProductPrintingSettings.FooterText' }
-    @{ Param = 'printing.header_alignment'; Name = 'PrintingSettings.HeaderAlignment'; Type = 'String'; ; Store = 'ProductPrintingSettings.HeaderAlignment' }
-    @{ Param = 'printing.header_text'; Name = 'PrintingSettings.HeaderText'; Type = 'String'; ; Store = 'ProductPrintingSettings.HeaderText' }
-    @{ Param = 'printing.in_color'; Name = 'PrintingSettings.IsInColor'; Type = 'Boolean'; ; Store = 'ProductPrintingSettings.IsInColor' }
-    @{ Param = 'printing.margin_bottom'; Name = 'PrintingSettings.MarginBottom'; Type = 'Int32'; ; Store = 'ProductPrintingSettings.MarginBottom' }
-    @{ Param = 'printing.margin_left'; Name = 'PrintingSettings.MarginLeft'; Type = 'Int32'; ; Store = 'ProductPrintingSettings.MarginLeft' }
-    @{ Param = 'printing.margin_right'; Name = 'PrintingSettings.MarginRight'; Type = 'Int32'; ; Store = 'ProductPrintingSettings.MarginRight' }
-    @{ Param = 'printing.margin_top'; Name = 'PrintingSettings.MarginTop'; Type = 'Int32'; ; Store = 'ProductPrintingSettings.MarginTop' }
+    @{ Param = 'printing.footer_alignment'; Name = 'PrintingSettings.FooterAlignment'; Type = 'String'; Store = 'ProductPrintingSettings.FooterAlignment' }
+    @{ Param = 'printing.footer_text'; Name = 'PrintingSettings.FooterText'; Type = 'String'; Store = 'ProductPrintingSettings.FooterText' }
+    @{ Param = 'printing.header_alignment'; Name = 'PrintingSettings.HeaderAlignment'; Type = 'String'; Store = 'ProductPrintingSettings.HeaderAlignment' }
+    @{ Param = 'printing.header_text'; Name = 'PrintingSettings.HeaderText'; Type = 'String'; Store = 'ProductPrintingSettings.HeaderText' }
+    @{ Param = 'printing.in_color'; Name = 'PrintingSettings.IsInColor'; Type = 'Boolean'; Store = 'ProductPrintingSettings.IsInColor' }
+    @{ Param = 'printing.margin_bottom'; Name = 'PrintingSettings.MarginBottom'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginBottom' }
+    @{ Param = 'printing.margin_left'; Name = 'PrintingSettings.MarginLeft'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginLeft' }
+    @{ Param = 'printing.margin_right'; Name = 'PrintingSettings.MarginRight'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginRight' }
+    @{ Param = 'printing.margin_top'; Name = 'PrintingSettings.MarginTop'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginTop' }
     @{ Param = 'proxy_server.host_name'; Name = 'ProxySettings.HostName'; Type = 'String' }
     @{ Param = 'proxy_server.port'; Name = 'ProxySettings.Port'; Type = 'Int32' }
     @{ Param = 'proxy_server.username'; Name = 'ProxySettings.UserName'; Type = 'String' }
     @{ Param = 'proxy_server.use_system_proxy'; Name = 'ProxySettings.UseSystemHost'; Type = 'Boolean' }
     @{ Param = 'repository.show_unused_files_warning'; Name = 'RepositorySettings.EnableUnusedFilesWarning'; Type = 'Boolean' }
     @{ Param = 'repository.cleanup_exclusions'; Name = 'RepositorySettings.Exclusions'; Type = 'String' }
-    @{ Param = 'repository.path'; Name = 'RepositorySettings.Path'; Type = 'String'; ; Variable = 'Repository' }
+    @{ Param = 'repository.path'; Name = 'RepositorySettings.Path'; Type = 'String'; Variable = 'Repository' }
     @{ Param = 'spiceworks.host_name'; Name = 'SpiceworksSettings.HostName'; Type = 'String' }
     @{ Param = 'spiceworks.auto_sync_enabled'; Name = 'SpiceworksSettings.IsEnabled'; Type = 'Boolean' }
     @{ Param = 'spiceworks.port'; Name = 'SpiceworksSettings.Port'; Type = 'Int32' }
@@ -219,29 +219,37 @@ New-Variable -Force -Name:'SETTLE_POLL_MILLISECONDS' -Option:('Private', 'ReadOn
 #region ------ [ Main ] ---------------------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Main'
 
-# The caller declares preferences as the console shows them: a map of PAGES, each holding
-# that page's settings. The role's routing lives here -- set aside are the
-# alerts page, the interface page's theme and splash (per-user, profile seeding), the logging
-# page's record_* switches and the performance page's service_manager_tcp pair (machine
-# registry, other tasks); everything else flattens to the table's page.setting names.
+# The caller declares preferences as the console shows them: a map of PAGES, each holding that
+# page's settings. The names below are owned by other tasks -- the per-user alerts and interface
+# theme/splash pages, the logging page's record_* switches, the performance page's
+# service_manager_tcp pair. They are set aside here by EXACT name: everything a page holds that is
+# not listed flattens to a page.setting name and must match the table, so a misspelled routed key
+# fails as an unknown setting instead of silently reverting to its default.
+New-Variable -Force -Name:'ROUTED_NAMES' -Option:('Private', 'ReadOnly') -Value:(
+  [System.Collections.Generic.HashSet[System.String]]@(
+    'alerts.auto_update_check_enabled',
+    'alerts.show_webcast_alerts',
+    'alerts.release_channel',
+    'interface.color_theme',
+    'interface.disable_splash_screen',
+    'logging.record_error',
+    'logging.record_warning',
+    'logging.record_informational',
+    'logging.record_debug',
+    'performance.service_manager_tcp',
+    'performance.service_manager_tcp_timeout_seconds'
+  )
+)
 $Flat = @{}
 ForEach ($PageName In @($PSBoundParameters['Preference'].Keys)) {
-  If ($PageName -eq 'alerts') {
-    Continue
-  }
   $Page = $PSBoundParameters['Preference'][$PageName]
   If ($Page -is [System.Collections.IDictionary]) {
     ForEach ($Leaf In @($Page.Keys)) {
-      If ($PageName -eq 'logging' -and $Leaf -like 'record_*') {
+      $Dotted = '{0}.{1}' -f $PageName, $Leaf
+      If ($ROUTED_NAMES.Contains($Dotted)) {
         Continue
       }
-      If ($PageName -eq 'interface' -and $Leaf -in @('color_theme', 'disable_splash_screen')) {
-        Continue
-      }
-      If ($PageName -eq 'performance' -and $Leaf -like 'service_manager_tcp*') {
-        Continue
-      }
-      $Flat[('{0}.{1}' -f $PageName, $Leaf)] = $Page[$Leaf]
+      $Flat[$Dotted] = $Page[$Leaf]
     }
   } Else {
     $Flat[$PageName] = $Page
@@ -388,14 +396,15 @@ Try {
 
     $PersistedNow = @{}
     If ($Unexported.Count -gt 0) {
-      ForEach ($Row In @(& $SQLITE_PATH $DatabasePath 'SELECT Name, Value FROM Settings;' 2>&1)) {
-        $Parts = ([System.String]$Row).Split('|', 2)
-        If ($Parts.Count -eq 2) {
-          $PersistedNow[$Parts[0]] = $Parts[1]
-        }
-      }
+      # -csv, not the default list mode: a value may hold a comma or a newline (a printing
+      # header), which pipe-delimited line parsing would split and mangle. CSV quotes such a
+      # value, and ConvertFrom-Csv reads it whole once the native lines are rejoined.
+      $Rows = @(& $SQLITE_PATH -csv $DatabasePath 'SELECT Name, Value FROM Settings;' 2>&1) -join "`n"
       If ($LASTEXITCODE -ne 0) {
         Throw ('Reading the settings table failed with exit code {0}' -f $LASTEXITCODE)
+      }
+      ForEach ($Record In @($Rows | ConvertFrom-Csv -Header:('Name', 'Value'))) {
+        $PersistedNow[$Record.Name] = $Record.Value
       }
     }
 
@@ -464,14 +473,12 @@ Try {
         $Deadline = [System.DateTime]::UtcNow.AddSeconds($SETTLE_DEADLINE_SECONDS)
         While ($True) {
           $Persisted = @{}
-          ForEach ($Row In @(& $SQLITE_PATH $DatabasePath 'SELECT Name, Value FROM Settings;' 2>&1)) {
-            $Parts = ([System.String]$Row).Split('|', 2)
-            If ($Parts.Count -eq 2) {
-              $Persisted[$Parts[0]] = $Parts[1]
-            }
-          }
+          $Rows = @(& $SQLITE_PATH -csv $DatabasePath 'SELECT Name, Value FROM Settings;' 2>&1) -join "`n"
           If ($LASTEXITCODE -ne 0) {
             Throw ('Reading the settings table failed with exit code {0}' -f $LASTEXITCODE)
+          }
+          ForEach ($Record In @($Rows | ConvertFrom-Csv -Header:('Name', 'Value'))) {
+            $Persisted[$Record.Name] = $Record.Value
           }
           $Draining = @($CliWritten.Keys | Where-Object -FilterScript {
               If ($CliWritten[$PSItem] -eq [System.String]::Empty) {

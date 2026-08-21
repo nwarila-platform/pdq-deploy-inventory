@@ -169,6 +169,12 @@ pdq_deploy_defaults:
       graph_cloud: 'Azure Public Cloud'
       graph_sender: ''
     performance:
+      # Windows-wide client behaviour for remote service-manager connections, stored outside
+      # the product (HKLM SCMApiConnectionParam; measured 2026-08-21: absent = Default,
+      # high bit = Disabled, otherwise the timeout in milliseconds). The seconds value only
+      # applies when the mode is Timeout.
+      service_manager_tcp: 'Default'
+      service_manager_tcp_timeout_seconds: 21
       concurrent_targets_per_deployment: 8
       total_concurrent_targets: 32
       copy_mode: 'Push'

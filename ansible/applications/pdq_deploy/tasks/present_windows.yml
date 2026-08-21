@@ -846,6 +846,30 @@
 
     #endregion --- [ Process: Choose The Event Log Severities ] ------------------------------- #
 
+    #region ------ [ Process: Choose The Service Manager TCP Behaviour ] ---------------------- #
+    # The console's Performance page carries one control that is not the product's at all: how
+    # WINDOWS connects to remote service managers, machine-wide. Measured 2026-08-21 by flipping
+    # the radio live: Default leaves the value absent, Disabled sets the high bit, and Timeout
+    # stores the chosen seconds as milliseconds. Managed here as registry state like the
+    # event-log severities, because that is what it is.
+
+    - name: 'PROCESS | Choose The Service Manager TCP Behaviour'
+      vars:
+        __scm_mode__: "{{ pdq_deploy_running.preferences.performance.service_manager_tcp }}"
+
+      ansible.windows.win_regedit:
+        data: >-
+          {{ 2147483648 if __scm_mode__ == 'Disabled'
+             else pdq_deploy_running.preferences.performance.service_manager_tcp_timeout_seconds
+                  | int * 1000 }}
+        delete_key: false
+        name: 'SCMApiConnectionParam'
+        path: 'HKLM:\SYSTEM\CurrentControlSet\Control'
+        state: "{{ 'absent' if __scm_mode__ == 'Default' else 'present' }}"
+        type: 'dword'
+
+    #endregion --- [ Process: Choose The Service Manager TCP Behaviour ] ----------------------- #
+
     #region ------ [ Process: Seed The Console Defaults For New Users ] ----------------------- #
     # A few console preferences are per-user: the product writes them to the signed-in user's own
     # hive and nowhere else (measured 2026-08-21 against a console flipping every page). Profiles

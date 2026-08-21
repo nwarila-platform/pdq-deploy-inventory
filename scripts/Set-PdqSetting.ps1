@@ -284,12 +284,11 @@ New-Variable -Force -Name:'SETTLE_POLL_MILLISECONDS' -Option:('Private', 'ReadOn
 #region ------ [ Main ] ---------------------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Main'
 
-# The caller declares preferences the way the console shows them: a map of PAGES, each holding
-# that page's settings. The role's routing lives here in plain sight: the alerts page, the
-# interface page's theme and splash (per-user, profile seeding) and the logging page's record_*
-# switches (machine registry, another task) are set aside; everything else -- the interface
-# page's dashboard and export controls included, measured landing in the database 2026-08-21 --
-# flattens to the table's page.setting names.
+# The caller declares preferences as the console shows them: a map of PAGES, each holding
+# that page's settings. The role's routing lives here -- set aside are the
+# alerts page, the interface page's theme and splash (per-user, profile seeding), the logging
+# page's record_* switches and the performance page's service_manager_tcp pair (machine
+# registry, other tasks); everything else flattens to the table's page.setting names.
 $Flat = @{}
 ForEach ($PageName In @($PSBoundParameters['Preference'].Keys)) {
   If ($PageName -eq 'alerts') {
@@ -302,6 +301,9 @@ ForEach ($PageName In @($PSBoundParameters['Preference'].Keys)) {
         Continue
       }
       If ($PageName -eq 'interface' -and $Leaf -in @('color_theme', 'disable_splash_screen')) {
+        Continue
+      }
+      If ($PageName -eq 'performance' -and $Leaf -like 'service_manager_tcp*') {
         Continue
       }
       $Flat[('{0}.{1}' -f $PageName, $Leaf)] = $Page[$Leaf]

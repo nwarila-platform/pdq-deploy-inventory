@@ -55,6 +55,8 @@
       - pdq_deploy_running.arp.display_name | default('') | length > 0
       - pdq_deploy_running.service_name | default('') | length > 0
       - pdq_deploy_running.rbac_enabled is boolean
+      - pdq_deploy_running.preferences.performance.service_manager_tcp in ['Default', 'Disabled', 'Timeout']
+      - pdq_deploy_running.preferences.performance.service_manager_tcp_timeout_seconds | int > 0
       - pdq_deploy_running.preferences.logging.record_error is boolean
       - pdq_deploy_running.preferences.logging.record_warning is boolean
       - pdq_deploy_running.preferences.logging.record_informational is boolean

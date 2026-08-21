@@ -143,6 +143,7 @@ Describe 'Set-PdqSetting' {
     }
     $global:FakeIgnored = @()
     $global:FakeDbRows = @{}
+    $global:FakeConsoleSessions = @()
     $global:FakeDrainStalls = $False
     $global:FakeCliCalls = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeSqliteCalls = [System.Collections.Generic.List[System.String]]::new()
@@ -201,6 +202,9 @@ Describe 'Set-PdqSetting' {
       }
       If ($args[1] -like 'SELECT Name, Value FROM Settings*') {
         ForEach ($K In @($global:FakeDbRows.Keys)) { '{0}|{1}' -f $K, $global:FakeDbRows[$K] }
+      }
+      If ($args[1] -like 'SELECT UserName FROM ConsoleUserSessions*') {
+        $global:FakeConsoleSessions
       }
       $global:LASTEXITCODE = 0
     } | Out-Null
@@ -293,6 +297,20 @@ Describe 'Set-PdqSetting' {
       $Result.applied | Should -Be @('PrintingSettings.MarginTop')
       ($global:FakeCliCalls -join '; ') | Should -Match 'ProductPrintingSettings\.MarginTop -Set 21'
       $global:FakeSettings['PrintingSettings.MarginTop'] | Should -Be '21'
+    }
+
+    It 'names whoever has a console open when it writes' {
+      # An open console's next save writes its stale model back over applied rows (measured);
+      # a converge that wrote anything says who is holding one.
+      $global:FakeConsoleSessions = @('HOST\\someone')
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{ deployments = @{ cleanup_days = 45 } } |
+        ConvertFrom-Json
+      $Result.open_consoles | Should -Be @('HOST\\someone')
+      $Result.msg | Should -Match 'console is open'
+      $global:FakeConsoleSessions = @()
+      $Quiet = & $script:ScriptPath @script:Ctx -Preference @{ deployments = @{ cleanup_days = 30 } } |
+        ConvertFrom-Json
+      $Quiet.open_consoles | Should -BeNullOrEmpty
     }
 
     It 'proves an export-invisible setting against its database row' {
@@ -413,7 +431,7 @@ Describe 'Set-PdqSetting' {
       $Result = & $script:ScriptPath @script:Ctx -Preference @{} | ConvertFrom-Json
 
       $Result.applied | Should -Be @('RepositorySettings.Path')
-      $global:FakeSqliteCalls.Count | Should -Be 1
+      @($global:FakeSqliteCalls | Where-Object { $_ -match 'SystemVariables' }).Count | Should -Be 1
       $global:FakeSqliteCalls[0] | Should -Match 'UPDATE SystemVariables'
       $global:FakeSqliteCalls[0] | Should -Match "WHERE Name = 'Repository'"
       @($global:FakeCliCalls | Where-Object { $_ -like 'Settings*' }).Count | Should -Be 0

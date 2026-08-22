@@ -138,9 +138,9 @@
     # rather than owning it. Membership is enforced EXACTLY: replace adds every listed group and
     # removes the account from all others, so a membership widened by hand is pulled back to the
     # single group the vendor requires instead of persisting unnoticed. Both roles name the same
-    # one group, so neither strips the other's work. update_password on_create means an existing
-    # account keeps its password and the task stays idempotent instead of resetting it every
-    # converge.
+    # one group, so neither strips the other's work. update_password always enforces the password
+    # to match the secret, but win_user validates the current one first (a logon attempt), so an
+    # unchanged password reports no change and a genuine rotation is reported honestly, not hidden.
 
     - name: 'PROCESS | Ensure The Background Service User'
       no_log: true
@@ -152,21 +152,8 @@
         password: "{{ __pdq_deploy_secret__.contents }}"
         password_never_expires: false
         state: 'present'
-        update_password: 'on_create'
-        user_cannot_change_password: false
-
-    # ----------------------------------------------------------------------------------------- #
-
-    - name: 'PROCESS | Enforce The Service Account Password'
-      changed_when: false
-      no_log: true
-
-      ansible.windows.win_user:
-        groups_action: 'replace'
-        name: "{{ pdq_deploy_running.service_account.name }}"
-        password: "{{ __pdq_deploy_secret__.contents }}"
-        state: 'present'
         update_password: 'always'
+        user_cannot_change_password: false
 
     #endregion --- [ Process: Ensure The Background Service User ] ---------------------------- #
 
@@ -837,28 +824,30 @@
       vars:
         ansible_become_flags: 'logon_type=batch'
         ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
-        __pdq_cli__: 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
 
       block:
         - name: 'PROCESS | Read The Authorized Console Users'
           ansible.windows.win_command:
             argv:
-              - "{{ __pdq_cli__ }}"
+              - "{{ pdq_deploy_running.cli_path }}"
               - 'ConsoleUsers'
           changed_when: false
+          check_mode: false
           register: '__pdq_deploy_console_users__'
 
         - name: 'PROCESS | Add The Console Users The Product Does Not Yet Carry'
           ansible.windows.win_command:
             argv:
-              - "{{ __pdq_cli__ }}"
+              - "{{ pdq_deploy_running.cli_path }}"
               - 'ConsoleUsers'
               - '-Add'
               - "{{ item }}"
           loop: "{{ pdq_deploy_running.console_users }}"
           loop_control:
             label: "{{ item }}"
-          when: item not in __pdq_deploy_console_users__.stdout
+          # Exact per-line match, not a substring of the whole blob: 'Administrator' must not be
+          # treated as already present just because 'Administrators' is authorised.
+          when: item not in (__pdq_deploy_console_users__.stdout_lines | map('trim') | list)
           changed_when: true
 
     #endregion --- [ Process: Authorize The Console Users ] ----------------------------------- #
@@ -931,7 +920,7 @@
 
     - name: 'PROCESS | Compose The Per-User Console Seed'
       ansible.builtin.set_fact:
-        __console_seed__:
+        __pdq_deploy_console_seed__:
           - name: 'Disable Splash Screen'
             subkey: 'PDQ Deploy Console\Settings\Startup'
             data: "{{ pdq_deploy_running.preferences.interface.disable_splash_screen | int }}"
@@ -957,7 +946,7 @@
 
     - name: 'PROCESS | Seed The Console Defaults For New Users'
       vars:
-        __console_declared__: "{{ __console_seed__ | rejectattr('data', 'equalto', '') | list }}"
+        __pdq_deploy_console_declared__: "{{ __pdq_deploy_console_seed__ | rejectattr('data', 'equalto', '') | list }}"
 
       ansible.windows.win_regedit:
         data: "{{ item.data }}"
@@ -966,7 +955,7 @@
         path: 'HKLM:\ANSIBLE\Software\Admin Arsenal\{{ item.subkey }}'
         state: 'present'
         type: "{{ item.type }}"
-      loop: "{{ __console_declared__ }}"
+      loop: "{{ __pdq_deploy_console_declared__ }}"
       loop_control:
         label: "{{ item.subkey }} :: {{ item.name }}"
 
@@ -974,13 +963,13 @@
 
     - name: 'PROCESS | Read The Connection Account Console Defaults'
       vars:
-        __console_declared__: "{{ __console_seed__ | rejectattr('data', 'equalto', '') | list }}"
+        __pdq_deploy_console_declared__: "{{ __pdq_deploy_console_seed__ | rejectattr('data', 'equalto', '') | list }}"
       register: '__pdq_deploy_own_console__'
 
       ansible.windows.win_reg_stat:
         name: "{{ item.name }}"
         path: 'HKCU:\Software\Admin Arsenal\{{ item.subkey }}'
-      loop: "{{ __console_declared__ }}"
+      loop: "{{ __pdq_deploy_console_declared__ }}"
       loop_control:
         label: "{{ item.subkey }} :: {{ item.name }}"
 
@@ -1096,6 +1085,7 @@
 
     - name: 'END | Read The Licence Mode From The Product'
       changed_when: false
+      check_mode: false
       register: '__pdq_deploy_systeminfo__'
 
       ansible.windows.win_command:

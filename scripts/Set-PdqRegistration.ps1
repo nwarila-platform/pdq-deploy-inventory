@@ -331,7 +331,8 @@ $Result = [ordered]@{
   changed    = $Changed
   check_mode = [System.Boolean]$Ansible.CheckMode
   registered = $Email
-  msg        = If ($Changed) { 'registration recorded' } Else { 'registration already present' }
+  msg        = If ($Ansible.CheckMode -and $Changed) { 'registration would be recorded' }
+  ElseIf ($Changed) { 'registration recorded' } Else { 'registration already present' }
 }
 
 #endregion --- [ Main ] ---------------------------------------------------------------------- #

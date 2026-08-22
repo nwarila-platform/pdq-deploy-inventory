@@ -48,7 +48,8 @@
         .\Set-PdqSetting.ps1 -Preference @{ deployments = @{ cleanup_days = 45 } } -DatabaseDrive 'E' -DatabaseDirectory 'PDQ Deploy' -RepositoryShareName 'AppRepo$'
 
     .OUTPUTS
-        One object carrying applied, unchanged, ignored, requested, changed, check_mode and msg.
+        One object carrying applied, unchanged, ignored, requested, changed, check_mode,
+        open_consoles and msg.
 #>
 
 [CmdletBinding(SupportsShouldProcess)]
@@ -577,7 +578,9 @@ $Result = [PSCustomObject]@{
   changed       = [System.Boolean]($Applied.Count -gt 0)
   check_mode    = [System.Boolean]$Ansible.CheckMode
   ignored       = [System.String[]]$Ignored
-  msg           = If ($Ignored.Count -gt 0) {
+  msg           = If ($Ansible.CheckMode) {
+    '{0} would be applied, {1} already correct' -f $Applied.Count, $Unchanged.Count
+  } ElseIf ($Ignored.Count -gt 0) {
     'The product accepted but did not apply: {0}' -f ($Ignored -join ', ')
   } ElseIf ($OpenConsole.Count -gt 0) {
     '{0} applied, {1} already correct; a console is open for {2}, whose next save may overwrite them' -f @(

@@ -24,7 +24,7 @@
   become: false
 
   vars:
-    __pdq_inventory_hosts__: "{{ groups['pdq_servers'] | default([]) }}"
+    __pdq_hosts__: "{{ groups['pdq_servers'] | default([]) }}"
     __expected_repository_id__: "{{ lookup('ansible.builtin.env', 'GITHUB_REPOSITORY_ID') | trim }}"
     __expected_run_id__: "{{ lookup('ansible.builtin.env', 'GITHUB_RUN_ID') | trim }}"
     __expected_region__: "{{ aws_region | default('') | trim }}"
@@ -33,14 +33,14 @@
     - name: 'INVENTORY | Require One Host And An Immutable Repository Identity'
       ansible.builtin.assert:
         that:
-          - __pdq_inventory_hosts__ | length == 1
+          - __pdq_hosts__ | length == 1
           - __expected_repository_id__ is match('^[0-9]+$')
           - __expected_run_id__ is match('^[0-9]+$')
           - __expected_region__ is match('^[a-z]{2}(-[a-z]+)+-[0-9]$')
         fail_msg: >-
           Refusing to configure: expected exactly one running Function=pdq instance and a
           numeric GITHUB_REPOSITORY_ID and GITHUB_RUN_ID, but inventory
-          hosts={{ __pdq_inventory_hosts__ }}, repository_id='{{ __expected_repository_id__ }}',
+          hosts={{ __pdq_hosts__ }}, repository_id='{{ __expected_repository_id__ }}',
           run_id='{{ __expected_run_id__ }}', region='{{ __expected_region__ }}'. A zero-host
           inventory is not a successful deployment proof.
         quiet: true
@@ -48,16 +48,16 @@
     - name: 'INVENTORY | Select The Sole Terraform Instance'
       ansible.builtin.set_fact:
         cacheable: false
-        __pdq_inventory_host__: "{{ __pdq_inventory_hosts__ | first }}"
+        __pdq_host__: "{{ __pdq_hosts__ | first }}"
 
     - name: 'INVENTORY | Assert Instance, Platform, Region, And Ownership Tags'
       vars:
-        __selected__: "{{ hostvars[__pdq_inventory_host__] }}"
+        __selected__: "{{ hostvars[__pdq_host__] }}"
         __selected_tags__: "{{ __selected__.aws_tags | default({}) }}"
       ansible.builtin.assert:
         that:
           - __selected__.aws_instance_id is match('^i-[0-9a-f]+$')
-          - __pdq_inventory_host__ == __selected__.aws_instance_id
+          - __pdq_host__ == __selected__.aws_instance_id
           - (__selected__.aws_platform | default('') | lower) == 'windows'
           - (__selected__.aws_state.name | default('')) == 'running'
           - (__selected_tags__.Function | default('')) == 'pdq'
@@ -65,7 +65,7 @@
           - (__selected__.aws_placement.availability_zone | default('')).startswith(__expected_region__)
           - (__selected_tags__['RunId'] | default('') | string) == __expected_run_id__
         fail_msg: >-
-          Refusing to configure {{ __pdq_inventory_host__ }}: it is not the one running Windows
+          Refusing to configure {{ __pdq_host__ }}: it is not the one running Windows
           instance owned by repository id {{ __expected_repository_id__ }} in
           {{ __expected_region__ }}, or its tags do not contain current run id
           '{{ __expected_run_id__ }}'. tags={{ __selected_tags__ }}.
@@ -203,9 +203,6 @@
             version: '20.1.8.0'
             sha256: '856dbe3dd4544d4b9ae1f382ee51f2a5f25f41714c462fa4afcff9743cc85eb9'
 
-          # The licence itself never appears here: only the object that holds it, in the same
-          # bucket the installer comes from. It is fetched as a string and written straight to the
-          # registry, so it touches no disk on either machine.
           # The password itself never appears here: only the object that holds it and the digest
           # that pins it. Fetched as a string and used to create the account; never on disk.
           service_account:
@@ -213,6 +210,10 @@
             object: 'applications/pdq/svc-pdq-password.txt'
             sha256: 'd522139ebd26b7729f781d88aa9b41fcf189c6e59719ab3c46be32cd003ea729'
 
+          # The licence itself never appears here: only the object that holds it, in the -ansible
+          # bucket beside the other deployment material (NOT the installer's -apprepo bucket). It is
+          # fetched as a string and written straight to the registry, touching no disk on either
+          # machine.
           license:
             bucket: "{{ aws_account_id }}-ansible"
             object: 'applications/pdq/pdq-deploy-license.lic'

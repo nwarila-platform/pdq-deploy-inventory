@@ -225,13 +225,13 @@ pdq_deploy_defaults:
 
   #region ------ [ Installer layout ] -------------------------------------------------------- #
 
-  # The application repository is laid out <product>/<component>/<version>/<file>, so older
-  # builds stay addressable for rollback rather than being overwritten in place. The literal
-  # token <version> is replaced with installer.version at fetch time, which is why the playbook
-  # supplies only a version and a digest. A repository laid out differently overrides this whole
-  # path, with or without the token.
+  # The application repository is laid out <vendor>/<application>/<version>/<file>, using the
+  # product's real names -- so older builds stay addressable for rollback rather than being
+  # overwritten in place. The literal token <version> is replaced with installer.version at fetch
+  # time, which is why the playbook supplies only a version and a digest. A repository laid out
+  # differently overrides this whole path, with or without the token.
   installer:
-    path: 'PDQ/Deploy/<version>/PDQ_Deploy_x86-x64.exe'
+    path: 'PDQ.com/PDQ Deploy/<version>/PDQ_Deploy_x86-x64.exe'
 
   #endregion --- [ Installer layout ] -------------------------------------------------------- #
 

@@ -342,6 +342,32 @@ jobs:
             --extra-vars aws_region="${AWS_REGION}"                            \
             --extra-vars state=present
 
+      # Idempotency gate: a settled host reports NO changes on a second converge. The same play is
+      # run again and the step fails if any managed host reports changed>0 -- the standard proof
+      # that every task's change detection is honest. A role that re-reports a change would bounce
+      # its service on every run, so this is a hard gate, not a warning.
+      - name: Prove the converge is idempotent (second run is a no-op)
+        timeout-minutes: 30
+        working-directory: .frameworks/ansible-framework
+        env:
+          ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          recap="$(ansible-playbook "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
+            --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"    \
+            --extra-vars env=test                                              \
+            --extra-vars aws_account_id="${AWS_ACCOUNT_ID}"                    \
+            --extra-vars aws_region="${AWS_REGION}"                            \
+            --extra-vars state=present 2>&1 | tee /dev/stderr)"
+          if printf '%s\n' "${recap}" | grep -Eq ': +ok=[0-9]+ +changed=[1-9]'; then
+            echo "::error::second converge reported changes -- the role is not idempotent" >&2
+            exit 1
+          fi
+          echo "idempotent: the second converge reported no changes"
+
       - name: Hold the converged guest for interactive work
         if: >-
           !cancelled() &&

@@ -845,9 +845,14 @@
           loop: "{{ pdq_deploy_running.console_users }}"
           loop_control:
             label: "{{ item }}"
-          # Exact per-line match, not a substring of the whole blob: 'Administrator' must not be
-          # treated as already present just because 'Administrators' is authorised.
-          when: item not in (__pdq_deploy_console_users__.stdout_lines | map('trim') | list)
+          # The product lists console users in qualified, cased form -- 'BUILTIN\Administrators'
+          # (measured 2026-08-22) -- so the bare declared name is compared against each line's
+          # last backslash-segment, case-insensitively. Per line, never a substring of the blob, so
+          # 'Administrator' is not treated as present just because 'Administrators' is. Without this
+          # the qualified echo never matches the bare name and -Add re-runs every converge.
+          when: (item | regex_replace('^.*\\\\', '') | lower)
+            not in (__pdq_deploy_console_users__.stdout_lines
+                    | map('trim') | map('regex_replace', '^.*\\\\', '') | map('lower') | list)
           changed_when: true
 
     #endregion --- [ Process: Authorize The Console Users ] ----------------------------------- #

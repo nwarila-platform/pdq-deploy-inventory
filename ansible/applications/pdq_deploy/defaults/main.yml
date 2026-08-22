@@ -56,12 +56,12 @@ pdq_deploy_defaults:
   # on a converged host 2026-08-18 -- the 7337 named in older notes here is wrong. A site that must
   # move it overrides this; the MODE itself is not offered, because an all-in-one Central Server is
   # a design invariant of this repository rather than a choice.
-  # Whether console users are authorised individually rather than by being administrators. True by
-  # default because that is the tighter posture and the one the product's own wizard selects; a
-  # deployment that is not ready to model roles sets it false explicitly rather than by accident.
-  # Stated as a boolean because that is what an on-or-off setting looks like everywhere else; the
-  # dword the registry actually stores is the role's business, not the caller's.
-  rbac_enabled: true
+  # Whether console users are authorised individually (RBAC on) rather than by being an
+  # administrator (RBAC off). FALSE by default: with it on and no roles yet modelled the product
+  # authorises no one, locking every human out of the console, so off is what lets administrators
+  # open it. A site ready to model roles sets it true and defines those users in the console. The
+  # input is a boolean; the dword the registry stores is the role's business, not the caller's.
+  rbac_enabled: false
 
   server:
     port: 6336

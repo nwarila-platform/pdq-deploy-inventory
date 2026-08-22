@@ -2,19 +2,262 @@
 # File: '{{ role_path }}/defaults/main.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# Lowest-precedence configuration for the PDQ Inventory role.
+# Lowest-precedence configuration for the PDQ Inventory role. The v3 loader merges the OS overlay
+# in vars/ over this map and publishes the result as 'pdq_inventory_running'; tasks read only the
+# merged map, never these keys directly.
+#
+# WHAT BELONGS HERE: values that are universally safe — true for anyone running this role,
+# whatever their account, bucket or artifact layout. Product identity, the silent switch, the
+# Add/Remove Programs identity the product registers.
+#
+# WHAT DOES NOT: anything deployment-specific. The artifact bucket carries an account id, and
+# the installer and licence paths change with every version and every site. A default for those
+# is not universally safe — it is one site's value wearing a default's clothes, and a role that
+# ships one will silently reach for the wrong object when someone else runs it. They are supplied
+# by the PLAYBOOK, where they are visible and changeable, described in meta/main.yml, and
+# enforced by tasks/validate.yml.
 #
 # =========================================================================================== #
 ---
 pdq_inventory_defaults:
-  # Pinned PDQ Inventory installer. artifact_bucket is required in the pdq_inventory override dict
-  # and has no safe default.
-  inventory_installer:
-    version: '20.1.8.0'
-    object_key: 'applications/pdq/Inventory_20.1.8.0.exe'
-    sha256: '48a486f3682cc01218993e72a8006163616166dd5f0fdcd1fab36724710fdbbf'
-    region: 'us-east-1'
-    staging_path: 'C:\Windows\Temp\Inventory_20.1.8.0.exe'
-    product_id: '{47D90CDF-2CE4-4B71-87DD-1223B1DA0AB2}'
-# service_account and license are required in the pdq_inventory override dict and have no safe
-# defaults.
+
+  #region ------ [ Install ] ----------------------------------------------------------------- #
+
+  install:
+    # Staging directory on the guest. The installer is removed from here after execution.
+    #
+    # Genuinely site-specific: application control (AppLocker/WDAC) and endpoint protection are
+    # commonly configured to permit execution only from named paths, so a site may have to stage
+    # the installer somewhere its security software already trusts. This default suits a host with
+    # no such policy; it is expected to be overridden where one exists.
+    staging_dir: 'C:\Windows\Temp\pdq-inventory-install'
+
+    # A wrong silent switch can leave the installer waiting on a dialog instead of returning.
+    # Bounding it here fails the run inside Ansible rather than hanging the play.
+    timeout_seconds: 900
+
+  #endregion --- [ Install ] ----------------------------------------------------------------- #
+
+  #region ------ [ Product identity ] -------------------------------------------------------- #
+
+  # Install state is read from Add/Remove Programs, not from the vendor's own key. The ARP entry
+  # carries the version AND the install location, is a documented Windows contract rather than a
+  # vendor implementation detail, and is removed on uninstall by definition. The clean path
+  # already reads ARP for its uninstall command, so both directions agree on one source. Where
+  # Windows keeps those entries is a property of Windows, not of this deployment, so the script
+  # owns the roots outright rather than offering a setting with one correct value.
+  # Measured on a converged host 2026-08-22.
+  arp:
+    display_name: 'PDQ Inventory'
+
+  service_name: 'PDQInventory'
+
+  # Whether console users are authorised individually (RBAC on) rather than by being an
+  # administrator (RBAC off). FALSE by default: with it on and no roles yet modelled the product
+  # authorises no one, locking every human out of the console, so off is what lets administrators
+  # open it. PDQ RBAC is defined in the Inventory console, so a site ready to model roles sets it
+  # true and defines those users there. The input is a boolean; the dword the registry stores is
+  # the role's business, not the caller's.
+  rbac_enabled: false
+
+  # Who may open the console. A silent install authorises no one, and RBAC being off does not change
+  # that -- the product still requires an explicit Console User, not merely local administrator
+  # rights (measured 2026-08-22: ConsoleUsers empty on a fresh licensed host). Defaults to the
+  # built-in Administrators group so any local administrator can open the console; a site models
+  # finer access by naming individual accounts instead. Local accounts take the bare name.
+  console_users:
+    - 'Administrators'
+
+  server:
+    # Client consoles reach the background service on this port. The product's own default, measured
+    # on a converged host 2026-08-22 (Protocol\ServerPort). A site that must move it overrides this;
+    # the MODE itself is not offered, because an all-in-one Central Server is a design invariant of
+    # this repository rather than a choice.
+    port: 7337
+
+    # Which addresses the server answers consoles on. Null means every address, which is what a
+    # host whose address is assigned at launch needs, and what the wizard chooses by default. A
+    # site that must bind explicitly supplies a list instead, and the all-addresses flag is
+    # cleared for it.
+    listen_addresses: null
+
+  # The product's command line, which is how the role asks the product about itself. Hardcoded
+  # rather than read from Add/Remove Programs because the path cannot vary: the vendor stub
+  # swallows the documented relocation switches (measured 2026-08-18 for the sibling product), so
+  # every silent install lands here (measured 2026-08-22). Deriving it would suggest a flexibility
+  # that does not exist.
+  cli_path: 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
+
+  # The background service executable, which is what the firewall exception is written for. Same
+  # fixed location as the command line above, and fixed for the same reason.
+  service_path: 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventoryService.exe'
+
+  # Every preference the console shows, organised as its Preferences pages are: a map of PAGES,
+  # each holding that page's settings under readable labels. The reader tunes what they can SEE;
+  # the role owns where each value actually lives -- most flow through the product's own command
+  # line into its database, the four event-log severities are machine registry values, and the
+  # per-user alerts/interface preferences are seeded into the Default profile (and the connection
+  # account's own, where the product has never written) so consoles start as declared. Values are
+  # the product's own measured defaults (ExportSettings, v20.1.8.0, 2026-08-22) -- which, for the
+  # settings the vendor publishes guidance on, ARE its best practices: automatic backups on, ten
+  # compressed backups kept. Settings the vendor gives no published guidance on stay at the
+  # measured default rather than an invented preference. Declared in full so a vendor moving one
+  # shows up as a reported change instead of silent drift. A playbook overrides keys; loader merges.
+  #
+  # One location follows a declared-or-derived rule: the database backup location and the verbose
+  # audit log directory are null by default, meaning the role places them beside the database on
+  # its dedicated drive; declaring a path overrides that. Not offered at all: the two nested
+  # families the export cannot round-trip as scalars (the backup schedule triggers and the Active
+  # Directory container list), left to the product's own defaults.
+  preferences:
+    # Per-user auto-update alerts: written to the signed-in user's hive, seeded for new profiles.
+    alerts:
+      auto_update_check_enabled: true
+      show_webcast_alerts: true
+      # null leaves the product's own channel; the value the console writes is Release or Beta.
+      release_channel: null
+    # disable_splash_screen and color_theme are per-user (seeded like the alerts above);
+    # show_collection_item_counts is a database setting applied through the command line.
+    interface:
+      color_theme: null
+      disable_splash_screen: false
+      show_collection_item_counts: true
+    # The scanner's database backups: on, ten kept, compressed -- the vendor's own recommendation.
+    database:
+      enable_automatic_backups: true
+      backups_to_keep: 10
+      compress_backups: true
+      # null means: beside the database, on its dedicated drive (<drive>:\<directory>\Backups).
+      # Declare a path only to send backups somewhere else.
+      backup_location: null
+    # Active Directory sync, off by default; the container list it would target is not offered.
+    active_directory:
+      create_ad_collections: true
+      create_group_collections: true
+      delete_mode: 'ImportOnly'
+      sync_interval: '01:00:00'
+      enable_sync: false
+      sync_disabled: false
+    scanning:
+      ping_before_scan: false
+      wake_on_lan: false
+      cleanup_log_days: 14
+      max_stored_scan_output_size: 268435456
+    performance:
+      total_concurrent_targets: 32
+      scan_timeout_minutes: 10
+      wmi_timeout_seconds: 90
+    logging:
+      # The four severities that reach the Windows Application event log are machine registry
+      # values (Logging\PDQ Inventory), written directly.
+      record_error: true
+      record_warning: true
+      record_informational: true
+      record_debug: false
+      # Off by deliberate choice -- data-egress hardening, NOT the product default (true) and not a
+      # PDQ recommendation; this deployment minimises what leaves the host.
+      send_anonymous_exception_data: false
+      audit_keep_days: 30
+      verbose_log_to_file: true
+      # null means: beside the database, on its dedicated drive (<drive>:\<directory>\Logs) --
+      # the same rule as the backup location, because logs grow like backups do. Declare a path
+      # only to send them somewhere else.
+      verbose_log_directory: null
+      archive_log_every: 'Monday'
+      archived_logs_to_keep: 4
+      use_logging_configuration_file: false
+      logging_configuration_file: ''
+    # The console's link to a co-located PDQ Deploy: how long deployment history is kept.
+    pdq_deploy:
+      cleanup_history: false
+      cleanup_history_days: 180
+    # Heartbeat polling that keeps the online/offline state current.
+    heartbeat:
+      auto_heartbeat_enabled: true
+      heartbeat_interval_seconds: 300
+    mail_server:
+      enable_ssl: false
+      smtp_server: ''
+      sender_address: ''
+      smtp_user: ''
+      oauth2_client_id: ''
+      oauth2_tenant_id: ''
+      oauth2_redirect_uri: ''
+      oauth2_provider: 'Microsoft'
+      oauth2_sender: ''
+      graph_client_id: ''
+      graph_tenant_id: ''
+      graph_cloud: 'Azure Public Cloud'
+      graph_sender: ''
+    printing:
+      header_text: ''
+      header_alignment: 'Center'
+      footer_text: ''
+      footer_alignment: 'Center'
+      margin_left: 20
+      margin_right: 20
+      margin_top: 20
+      margin_bottom: 20
+      in_color: true
+    proxy_server:
+      use_system_proxy: true
+      host_name: ''
+      port: 8080
+      username: ''
+    # Console remote-control launch points; irrelevant to a headless server but declared in full.
+    remote_control:
+      rdp_full_screen: false
+      rdp_height: 768
+      rdp_width: 1024
+      rdp_port: 3389
+      vnc_display_number: 0
+      vnc_viewer_path: ''
+    # Where the product stages its agent on a target during a scan.
+    target_service:
+      unc_path: 'ADMIN$\AdminArsenal'
+      local_path_of_shared_directory: ''
+    # Auto-installing the .NET the scanner needs on targets that lack it.
+    software_deployment:
+      install_dotnet_automatically: false
+      dotnet_installer_path: ''
+      dotnet_install_timeout: '00:30:00'
+    usage_data:
+      collect_usage_data: false
+      alert_first_time_analytics_dialog: true
+
+  #region ------ [ Installer layout ] -------------------------------------------------------- #
+
+  # The application repository is laid out <vendor>/<application>/<version>/<file>, using the
+  # product's real names -- so older builds stay addressable for rollback rather than being
+  # overwritten in place. The literal token <version> is replaced with installer.version at fetch
+  # time, which is why the playbook supplies only a version and a digest. A repository laid out
+  # differently overrides this whole path, with or without the token.
+  installer:
+    path: 'PDQ.com/PDQ Inventory/<version>/PDQ_Inventory_x86-x64.exe'
+
+  #endregion --- [ Installer layout ] -------------------------------------------------------- #
+
+  #region ------ [ Background service user ] ------------------------------------------------- #
+
+  # Deploy and Inventory are co-located and share ONE Background Service User, so the name is
+  # product identity rather than a deployment choice. Where its password lives IS deployment
+  # specific, so the bucket, object and digest come from the playbook.
+  #
+  # RENAMING does not retire the old account: present converges what is declared and removes
+  # nothing, so the previous name survives as a member of Administrators. Retirement is a removal,
+  # and removals belong to state=clean -- rename in two steps.
+  service_account:
+    name: 'svc-pdq'
+
+  #endregion --- [ Background service user ] ------------------------------------------------- #
+
+  # The product creates its database here the first time the service starts, so the role sets the
+  # path before that happens and never has to stop, copy and restart. The DRIVE comes from the
+  # playbook -- this role consumes a letter, it does not provision the disk. The folder is not
+  # decoration: an ACL belongs on a directory, where it can be set without touching the volume
+  # root and the permissions Windows grants there by default. Inventory has no package repository
+  # -- it is a scanner, not a deployer -- so no share is published.
+  database:
+    directory: 'PDQ Inventory'
+
+  #endregion --- [ Product identity ] -------------------------------------------------------- #

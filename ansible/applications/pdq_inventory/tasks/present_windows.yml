@@ -1,283 +1,1110 @@
-# =========================================================================================== #
+# ============================================================================================= #
 # File: '{{ role_path }}/tasks/present_windows.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# Ensures the shared Background Service User and installs the pinned PDQ Inventory bundle on
-# Windows.
+# Installs PDQ Inventory at the pinned version and brings it up as an all-in-one Central Server.
 #
-# =========================================================================================== #
+# BEGIN reads the machine and decides ONE action — install, upgrade, or none. PROCESS acts on that
+# decision, and END proves the result and cleans up. Every PROCESS task carries the decision
+# individually rather than the stage carrying it once, so a run always lists the same steps in the
+# same order: a converged host reads as a column of skips, not a stage that vanished.
+#
+# END is deliberately ungated, so a converged host proves the same state as a freshly built one.
+#
+# Install state comes from Add/Remove Programs, read by a first-class PowerShell script rather than
+# an inline block: the guest-side logic is developed and Pester-tested once under scripts/, and the
+# role executes a materialized copy. ARP carries the version and the install location together and
+# Windows removes the entry on uninstall, which the vendor's own product key cannot answer because
+# it survives uninstall. Not the MSI ProductCode, which changes every release.
+#
+# Everything moves through the runner: the controller fetches the installer and hands it to the
+# target, so the guest never receives cloud credentials or any other reach into S3. The digest is
+# verified on the guest, because that is the copy that executes.
+#
+# Return code 3010 is a success: it means the product installed and wants a restart. The role
+# restarts when the installer asks for one, and only then.
+#
+# PDQ Inventory is a scanner, not a deployer: it has no package repository and publishes no share.
+# The database on its dedicated drive, the licence, Central Server mode, the console port and the
+# console users are the whole of its server-side state.
+#
+# ============================================================================================= #
 ---
-#region ------ [ Main ] ---------------------------------------------------------------------- #
+#region ------ [ Begin: Install PDQ Inventory on Windows ] ------------------------------------ #
 
-#region ------ [ Background Service User ] --------------------------------------------------- #
+- name: 'BEGIN | Read The Machine And Decide One Action'
 
-- name: 'CONFIGURE | Create the PDQ Background Service User'
+  # Begin The 'Begin' Block
   block:
-    - name: 'CONFIGURE | Create the local PDQ service account'
+
+    #region ------ [ Begin: Read The Installed Product ] -------------------------------------- #
+    # Add/Remove Programs is the source of truth for install state: it carries the version and
+    # the install location together, and Windows removes the entry on uninstall. The vendor's own
+    # product key survives with no install-path value, so it cannot answer "is this installed,
+    # and at what version". Parameters cross as typed module options, never Jinja spliced into
+    # the script source, which is what keeps the injection surface at zero. No changed_when: the
+    # script's $Ansible.Changed is the change report, and a read never changes anything. The
+    # referenced .ps1 is MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the
+    # role tracks only files/Get-InstalledSoftware.ps1.stub); run it before this role.
+
+    - name: 'BEGIN | Read The Installed Product From Add/Remove Programs'
+      register: '__pdq_inventory_arp__'
+
+      ansible.windows.win_powershell:
+        depth: 3
+        error_action: 'stop'
+        parameters:
+          DisplayName: "{{ pdq_inventory_running.arp.display_name }}"
+          Version: "{{ pdq_inventory_running.installer.version }}"
+        remote_src: false
+        script: "{{ lookup('ansible.builtin.file', 'Get-InstalledSoftware.ps1') }}"
+
+    #endregion --- [ Begin: Read The Installed Product ] -------------------------------------- #
+
+#endregion --- [ Begin: Install PDQ Inventory on Windows ] ------------------------------------ #
+
+
+#region ------ [ Process: Install PDQ Inventory on Windows ] ---------------------------------- #
+
+- name: 'PROCESS | Install And Licence PDQ Inventory At The Pinned Version'
+  vars:
+    __installer_name__: "{{ pdq_inventory_running.installer.path | basename }}"
+    __guest_installer__: "{{ pdq_inventory_running.install.staging_dir }}\\{{ __installer_name__ }}"
+    __action_required__: "{{ __pdq_inventory_arp__.result.action_required }}"
+
+  # Begin The 'Process' Block
+  block:
+
+    #region ------ [ Process: Fetch The Service Account Password ] ---------------------------- #
+    # Pulled as a STRING and never written to disk on either machine, exactly like the licence.
+    # The object holds the password with no trailing newline, so it is used verbatim; the digest
+    # pins that byte-for-byte, and a re-upload that adds whitespace fails the next task loudly.
+    # Reading changes nothing and the task says so, which is what lets a converged host report
+    # no changes at all -- a fetch that claimed one would hide real drift behind constant noise.
+
+    - name: 'PROCESS | Fetch The Service Account Password'
+      changed_when: false
+      delegate_to: 'localhost'
       no_log: true
-      ansible.windows.win_user:
-        name: '{{ config.service_account.name }}'
-        password: '{{ config.service_account.password }}'
-        state: 'present'
-        groups:
-          - 'Administrators'
-        groups_action: 'add'
-        password_never_expires: true
-        user_cannot_change_password: true
-        update_password: 'on_create'
+      register: '__pdq_inventory_secret__'
 
-    - name: 'CONFIGURE | Grant Log-On-as-Service to the PDQ service account'
-      ansible.windows.win_user_right:
-        name: 'SeServiceLogonRight'
-        users:
-          - '.\{{ config.service_account.name }}'
-        action: 'add'
-
-#endregion --- [ Background Service User ] --------------------------------------------------- #
-
-#region ------ [ PDQ Inventory ] ------------------------------------------------------------- #
-
-#region ------ [ PDQ Inventory: Observing Installed State ] ---------------------------------- #
-- name: 'GUARD | Observe the PDQ Inventory uninstall registration'
-  vars:
-    __inventory_uninstall_root__: >-
-      HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall
-  ansible.windows.win_reg_stat:
-    path: '{{ __inventory_uninstall_root__ }}\{{ config.inventory_installer.product_id }}'
-  register: __inventory_registration__
-
-- name: 'GUARD | Observe the PDQ Inventory service'
-  ansible.windows.win_service_info:
-    name: 'PDQInventory'
-  register: __inventory_service__
-#endregion --- [ PDQ Inventory: Observing Installed State ] ---------------------------------- #
-
-#region ------ [ PDQ Inventory: Delivering The Pinned Artifact ] ----------------------------- #
-- name: 'CONFIGURE | Deliver the pinned PDQ Inventory artifact'
-  when:
-    - not ansible_check_mode
-    - not __inventory_registration__.exists
-    - not __inventory_service__.exists
-  block:
-    #region ------ [ Delivery: Resolving Controller Artifact Source ] -------------------- #
-    - name: 'CONFIGURE | Create the controller artifact directory'
-      ansible.builtin.tempfile:
-        state: 'directory'
-        prefix: 'pdq-inventory-'
-      delegate_to: 'localhost'
-      register: __inventory_controller_temp__
-
-    - name: 'CONFIGURE | Download the pinned PDQ Inventory artifact'
       amazon.aws.s3_object:
-        bucket: '{{ config.inventory_installer.artifact_bucket }}'
-        object: '{{ config.inventory_installer.object_key }}'
-        dest: >-
-          {{ __inventory_controller_temp__.path }}/{{
-          config.inventory_installer.object_key | basename }}
-        mode: 'get'
-        region: '{{ config.inventory_installer.region }}'
+        bucket: "{{ pdq_inventory_running.service_account.bucket }}"
+        ceph: false
+        debug_botocore_endpoint_logs: false
+        dualstack: false
+        encrypt: true
+        encryption_mode: 'AES256'
+        expiry: 600
         ignore_nonexistent_bucket: true
-      delegate_to: 'localhost'
-    #endregion --- [ Delivery: Resolving Controller Artifact Source ] -------------------- #
+        mode: 'getstr'
+        object: "{{ pdq_inventory_running.service_account.object }}"
+        overwrite: 'different'
+        permission: [ 'private' ]
+        prefix: ''
+        purge_tags: true
+        retries: 0
+        sig_v4: true
+        validate_bucket_name: true
+        validate_certs: true
 
-    #region ------ [ Delivery: Verifying The Downloaded Artifact ] ----------------------- #
-    - name: 'CONFIGURE | Calculate the PDQ Inventory artifact checksum'
-      ansible.builtin.stat:
-        path: >-
-          {{ __inventory_controller_temp__.path }}/{{
-          config.inventory_installer.object_key | basename }}
-        checksum_algorithm: 'sha256'
-      delegate_to: 'localhost'
-      register: __inventory_artifact_stat__
+    #endregion --- [ Process: Fetch The Service Account Password ] ---------------------------- #
 
-    - name: 'GUARD | Verify the PDQ Inventory artifact checksum'
+    #region ------ [ Process: Verify The Service Account Password Digest ] -------------------- #
+    # Same contract the installer and licence get: an object is trusted only once it matches the
+    # digest pinned in the playbook. Deliberately NOT no_log -- assert reports the expression text
+    # and our message, never the value, so a mismatch stays diagnosable without exposing a secret.
+
+    - name: 'PROCESS | Verify The Service Account Password Digest'
       ansible.builtin.assert:
-        that:
-          - __inventory_artifact_stat__.stat.checksum == config.inventory_installer.sha256
         fail_msg: >-
-          PDQ Inventory artifact checksum mismatch: refusing to copy or execute the artifact.
+          The service account password object
+          '{{ pdq_inventory_running.service_account.object }}' does not match the sha256 pinned in
+          the playbook. Refusing to create an account from an unverified secret.
         quiet: true
-      delegate_to: 'localhost'
-    #endregion --- [ Delivery: Verifying The Downloaded Artifact ] ----------------------- #
+        that: [ __pdq_inventory_secret__.contents | hash('sha256') == pdq_inventory_running.service_account.sha256 ]
 
-    #region ------ [ Delivery: Installing On The Target ] -------------------------------- #
-    - name: 'CONFIGURE | Stage the verified PDQ Inventory artifact'
-      ansible.windows.win_copy:
-        src: >-
-          {{ __inventory_controller_temp__.path }}/{{
-          config.inventory_installer.object_key | basename }}
-        dest: '{{ config.inventory_installer.staging_path }}'
-        force: true
+    #endregion --- [ Process: Verify The Service Account Password Digest ] -------------------- #
 
-    - name: 'CONFIGURE | Install the verified PDQ Inventory artifact'
-      ansible.windows.win_package:
-        path: '{{ config.inventory_installer.staging_path }}'
-        product_id: '{{ config.inventory_installer.product_id }}'
-        arguments:
-          - '/s'
-          - '/norestart'
-        expected_return_code: [0]
+    #region ------ [ Process: Ensure The Background Service User ] ---------------------------- #
+    # One Background Service User is shared by Deploy and Inventory, so this role ensures it
+    # rather than owning it. Membership is enforced EXACTLY: replace adds every listed group and
+    # removes the account from all others, so a membership widened by hand is pulled back to the
+    # single group the vendor requires instead of persisting unnoticed. Both roles name the same
+    # one group, so neither strips the other's work. update_password always enforces the password
+    # to match the secret, but win_user validates the current one first (a logon attempt), so an
+    # unchanged password reports no change and a genuine rotation is reported honestly, not hidden.
+
+    - name: 'PROCESS | Ensure The Background Service User'
+      no_log: true
+
+      ansible.windows.win_user:
+        groups: [ 'Administrators' ]
+        groups_action: 'replace'
+        name: "{{ pdq_inventory_running.service_account.name }}"
+        password: "{{ __pdq_inventory_secret__.contents }}"
+        password_never_expires: false
         state: 'present'
-    #endregion --- [ Delivery: Installing On The Target ] -------------------------------- #
-  rescue:
-    #region ------ [ Delivery: Reporting Delivery Failure ] ---------------------------------- #
-    # The always section has not run yet, so cleanup registers do not exist here; projecting
-    # cleanup results would invent an outcome rather than report one that was observed.
-    - name: 'CONFIGURE | Report the PDQ Inventory delivery failure'
-      ansible.builtin.fail:
-        msg: >-
-          {{ ansible_failed_result.msg
-          | default('PDQ Inventory installation failed', true) }}
-    #endregion --- [ Delivery: Reporting Delivery Failure ] ---------------------------------- #
-  always:
-    #region ------ [ Delivery: Cleaning Up Temporary Artifacts ] ----------------------------- #
-    - name: 'CLEANUP | Remove the controller artifact directory'
-      ansible.builtin.file:
-        path: '{{ __inventory_controller_temp__.path | default("") }}'
-        state: 'absent'
+        update_password: 'always'
+        user_cannot_change_password: false
+
+    #endregion --- [ Process: Ensure The Background Service User ] ---------------------------- #
+
+    #region ------ [ Process: Grant Log On As A Service ] ------------------------------------- #
+    # A service account that cannot log on as a service fails at service start with an error that
+    # names neither the right nor the account. action adds rather than sets, so other holders of
+    # the right keep it.
+
+    - name: 'PROCESS | Grant Log On As A Service'
+      ansible.windows.win_user_right:
+        action: 'add'
+        name: 'SeServiceLogonRight'
+        users: [ ".\\{{ pdq_inventory_running.service_account.name }}" ]
+
+    #endregion --- [ Process: Grant Log On As A Service ] ------------------------------------- #
+
+    #region ------ [ Process: Deny Interactive Logon To The Service Account ] ----------------- #
+    # STIG: a service account must not be usable to sign in at the console. Denying the right
+    # outright beats relying on nobody knowing the password, and a service logon is unaffected
+    # because it is a different right. action adds, so other denied principals keep their entry.
+
+    - name: 'PROCESS | Deny Interactive Logon To The Service Account'
+      ansible.windows.win_user_right:
+        action: 'add'
+        name: 'SeDenyInteractiveLogonRight'
+        users: [ ".\\{{ pdq_inventory_running.service_account.name }}" ]
+
+    #endregion --- [ Process: Deny Interactive Logon To The Service Account ] ----------------- #
+
+    #region ------ [ Process: Deny Remote Interactive Logon To The Service Account ] ---------- #
+    # The same rule for the remote desktop path, which is a separate right: denying console logon
+    # alone would still leave the account able to sign in over RDP.
+
+    - name: 'PROCESS | Deny Remote Interactive Logon To The Service Account'
+      ansible.windows.win_user_right:
+        action: 'add'
+        name: 'SeDenyRemoteInteractiveLogonRight'
+        users: [ ".\\{{ pdq_inventory_running.service_account.name }}" ]
+
+    #endregion --- [ Process: Deny Remote Interactive Logon To The Service Account ] ---------- #
+
+    #region ------ [ Process: Create The Controller Staging Directory ] ----------------------- #
+
+    - name: 'PROCESS | Create The Controller Staging Directory'
+      changed_when: false
       delegate_to: 'localhost'
-      when:
-        - __inventory_controller_temp__ is defined
-        - __inventory_controller_temp__.path is defined
-      ignore_errors: true
-      register: __inventory_controller_cleanup__
+      register: '__pdq_inventory_stage__'
+      when: __action_required__ | bool
 
-    - name: 'CLEANUP | Remove the guest staging artifact'
+      ansible.builtin.tempfile:
+        path: '/tmp'
+        prefix: 'pdq-inventory-'
+        state: 'directory'
+        suffix: ''
+
+    #endregion --- [ Process: Create The Controller Staging Directory ] ----------------------- #
+
+    #region ------ [ Process: Fetch The Installer To The Controller ] ------------------------- #
+    # The module probes the BUCKET before the object, and that probe is authorized by a bucket-
+    # level grant this deployment deliberately does not hold: reading one pinned prefix must not
+    # imply the right to see the bucket. Skipping the probe is the module's documented answer for
+    # exactly that policy shape. A missing object still fails loudly — the key check uses
+    # head_object, which the object-level grant does authorize.
+
+    - name: 'PROCESS | Fetch The Installer To The Controller'
+      delegate_to: 'localhost'
+      vars:
+        __installer_key__: >-
+          {{ pdq_inventory_running.installer.path
+             | replace('<version>', pdq_inventory_running.installer.version) }}
+      when: __action_required__ | bool
+
+      amazon.aws.s3_object:
+        bucket: "{{ pdq_inventory_running.installer.bucket }}"
+        ceph: false
+        debug_botocore_endpoint_logs: false
+        dest: "{{ __pdq_inventory_stage__.path }}/{{ __installer_name__ }}"
+        dualstack: false
+        encrypt: true
+        encryption_mode: 'AES256'
+        expiry: 600
+        ignore_nonexistent_bucket: true
+        mode: 'get'
+        object: "{{ __installer_key__ }}"
+        overwrite: 'different'
+        permission: [ 'private' ]
+        prefix: ''
+        purge_tags: true
+        retries: 0
+        sig_v4: true
+        validate_bucket_name: true
+        validate_certs: true
+
+    #endregion --- [ Process: Fetch The Installer To The Controller ] ------------------------- #
+
+    #region ------ [ Process: Ensure The Guest Staging Directory Exists ] --------------------- #
+    # Everything moves through the runner: the controller holds the S3 credentials and hands the
+    # file to the guest, so the guest never receives any reach into S3.
+
+    - name: 'PROCESS | Ensure The Guest Staging Directory Exists'
+      when: __action_required__ | bool
+
       ansible.windows.win_file:
-        path: '{{ config.inventory_installer.staging_path }}'
-        state: 'absent'
-      when: config.inventory_installer.staging_path is defined
-      ignore_errors: true
-      register: __inventory_guest_cleanup__
-    #endregion --- [ Delivery: Cleaning Up Temporary Artifacts ] ----------------------------- #
+        access_time: 'preserve'
+        access_time_format: 'yyyy-MM-dd HH:mm:ss'
+        modification_time: 'preserve'
+        modification_time_format: 'yyyy-MM-dd HH:mm:ss'
+        path: "{{ pdq_inventory_running.install.staging_dir }}"
+        state: 'directory'
 
-    #region ------ [ Delivery: Reporting Cleanup Failure ] ----------------------------------- #
-    # This report is reachable after both successful and failed delivery, so it stays
-    # status-neutral about the installation and reports only observed cleanup outcomes.
-    - name: 'CLEANUP | Report the PDQ Inventory cleanup failure'
-      ansible.builtin.fail:
-        msg: >-
-          PDQ Inventory artifact cleanup failed. Cleanup results: controller cleanup failed={{
-          __inventory_controller_cleanup__.failed | default(false) }}; guest cleanup failed={{
-          __inventory_guest_cleanup__.failed | default(false) }}.
+    #endregion --- [ Process: Ensure The Guest Staging Directory Exists ] --------------------- #
+
+    #region ------ [ Process: Copy The Installer To The Guest ] ------------------------------- #
+    # remote_src stays false because the source is the controller copy fetched above, and force
+    # stays true so a partial or stale staged file is replaced rather than trusted.
+
+    - name: 'PROCESS | Copy The Installer To The Guest'
+      register: '__pdq_inventory_copied__'
+      when: __action_required__ | bool
+
+      ansible.windows.win_copy:
+        backup: false
+        decrypt: true
+        dest: "{{ __guest_installer__ }}"
+        force: true
+        local_follow: true
+        remote_src: false
+        src: "{{ __pdq_inventory_stage__.path }}/{{ __installer_name__ }}"
+
+    #endregion --- [ Process: Copy The Installer To The Guest ] ------------------------------- #
+
+    #region ------ [ Process: Install Silently From The Verified Copy ] ----------------------- #
+    # The vendor's silent switch and success code are properties of this binary, not operator
+    # choices, so they live beside the package invocation. The digest is verified on the guest,
+    # because that is the copy that executes. A wrong silent switch can leave the installer
+    # waiting on a dialog rather than returning, so the run is bounded and fails inside Ansible.
+    # 3010 is accepted alongside 0 because it is not a failure: it means the product installed
+    # and wants a restart to finalise. The module turns that exact code into reboot_required,
+    # which the next region acts on, so the install is only reported complete once the machine is
+    # in the state the installer asked for.
+
+    - name: 'PROCESS | Install Silently From The Verified Copy'
+      async: "{{ pdq_inventory_running.install.timeout_seconds }}"
+      poll: 15
+      register: '__pdq_inventory_installed__'
+      when: __action_required__ | bool
+
+      ansible.windows.win_package:
+        arguments: '/s'
+        checksum_algorithm: 'sha256'
+        checksum: "{{ pdq_inventory_running.installer.sha256 }}"
+        expected_return_code: [ 0, 3010 ]
+        follow_redirects: 'safe'
+        force_basic_auth: false
+        http_agent: 'ansible-httpget'
+        maximum_redirection: 50
+        path: "{{ __guest_installer__ }}"
+        provider: 'auto'
+        proxy_use_default_credential: false
+        state: 'present'
+        url_timeout: 30
+        use_default_credential: false
+        use_proxy: true
+        validate_certs: true
+        verify_signature: false
+        wait_for_children: false
+
+    #endregion --- [ Process: Install Silently From The Verified Copy ] ----------------------- #
+
+    #region ------ [ Process: Reboot When The Installer Requires It ] ------------------------- #
+    # reboot_required is set by the module for return code 3010 and nothing else, so this acts
+    # on the installer's own request rather than on a guess. It is the only condition needed: a
+    # run that never installed leaves no reboot_required to be true.
+
+    - name: 'PROCESS | Reboot When The Installer Requires It'
+      when: __pdq_inventory_installed__.reboot_required | default(false) | bool
+
+      ansible.windows.win_reboot:
+        boot_time_command: >-
+          (Get-CimInstance -ClassName Win32_OperatingSystem -Property
+          LastBootUpTime).LastBootUpTime.ToFileTime()
+        connect_timeout: 5
+        msg: 'Restarting to finalise the PDQ Inventory installation.'
+        post_reboot_delay: 0
+        pre_reboot_delay: 2
+        reboot_timeout: 600
+
+    #endregion --- [ Process: Reboot When The Installer Requires It ] ------------------------- #
+
+    #region ------ [ Process: Fetch The Product Licence ] ------------------------------------- #
+    # The licence is secret material, so it is pulled as a STRING and never written to disk on
+    # either machine: getstr hands the content straight to the next task. no_log covers the
+    # task because the value is the secret itself, not merely a parameter that touches one.
+    # Reading changes nothing and the task says so, for the same reason the password fetch does.
+
+    - name: 'PROCESS | Fetch The Product Licence'
+      changed_when: false
+      delegate_to: 'localhost'
+      no_log: true
+      register: '__pdq_inventory_license__'
+
+      amazon.aws.s3_object:
+        bucket: "{{ pdq_inventory_running.license.bucket }}"
+        ceph: false
+        debug_botocore_endpoint_logs: false
+        dualstack: false
+        encrypt: true
+        encryption_mode: 'AES256'
+        expiry: 600
+        ignore_nonexistent_bucket: true
+        mode: 'getstr'
+        object: "{{ pdq_inventory_running.license.object }}"
+        overwrite: 'different'
+        permission: [ 'private' ]
+        prefix: ''
+        purge_tags: true
+        retries: 0
+        sig_v4: true
+        validate_bucket_name: true
+        validate_certs: true
+
+    #endregion --- [ Process: Fetch The Product Licence ] ------------------------------------- #
+
+    #region ------ [ Process: Verify The Licence Digest ] ------------------------------------- #
+    # The same contract the installer gets: an object is trusted only after it matches a digest
+    # pinned in the playbook, so a replaced or truncated licence stops the deployment instead
+    # of reaching the registry. Verified at the point of USE -- this is the content the next task
+    # writes. Deliberately NOT no_log: assert reports the expression text and our message, never
+    # the evaluated value, so the failure stays readable without exposing the licence.
+
+    - name: 'PROCESS | Verify The Licence Digest'
+      ansible.builtin.assert:
+        fail_msg: >-
+          The licence object '{{ pdq_inventory_running.license.object }}' does not match the sha256
+          pinned in the playbook. Refusing to write an unverified licence to the registry: the
+          object in the bucket has changed, or the pin is stale.
+        quiet: true
+        that: [ __pdq_inventory_license__.contents | hash('sha256') == pdq_inventory_running.license.sha256 ]
+
+    #endregion --- [ Process: Verify The Licence Digest ] ------------------------------------- #
+
+    #region ------ [ Process: Apply The Product Licence ] ------------------------------------- #
+    # The product accepts the marker block and nothing else: the object carries trailing lines past
+    # the end marker and LF endings, and written verbatim it leaves the console in Free mode. The
+    # slice keeps both markers because the vendor requires them, and the two replacements normalise
+    # every ending to CRLF whatever the object used. No guard on an empty match is needed, because
+    # the digest above pins the exact bytes.
+    #
+    # The product REWRITES what it is given (measured 2026-08-22, the same behaviour as PDQ
+    # Deploy): a marker block comes back reflowed, the same characters in a different shape.
+    # Comparing literally would therefore report a change on every converge and bounce the service
+    # with it, so the comparison ignores whitespace and asks only whether the licence itself
+    # differs. A licence removed or replaced by hand is still restored.
+
+    - name: 'PROCESS | Read The Licence Already Stored'
+      no_log: true
+      register: '__pdq_inventory_license_current__'
+
+      ansible.windows.win_reg_stat:
+        name: 'License'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Apply The Product Licence'
+      no_log: true
+      notify: 'pdq-inventory-restart-required'
+      vars:
+        __licence__: >-
+          {{ __pdq_inventory_license__.contents
+             | regex_search('--- START LICENSE ---[\s\S]*--- END LICENSE ---')
+             | regex_replace('\r\n', '\n')
+             | regex_replace('\n', '\r\n') }}
       when: >-
-        (__inventory_controller_cleanup__.failed | default(false))
-        or (__inventory_guest_cleanup__.failed | default(false))
-    #endregion --- [ Delivery: Reporting Cleanup Failure ] ----------------------------------- #
-#endregion --- [ PDQ Inventory: Delivering The Pinned Artifact ] ----------------------------- #
+        __pdq_inventory_license_current__.value | default('') | regex_replace('\s', '')
+        != __licence__ | regex_replace('\s', '')
 
-#region ------ [ PDQ Inventory: Verifying Installed Identity ] ------------------------------- #
-- name: 'END | Observe the installed PDQ Inventory identity'
-  vars:
-    __inventory_uninstall_root__: >-
-      HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall
-  ansible.windows.win_reg_stat:
-    path: '{{ __inventory_uninstall_root__ }}\{{ config.inventory_installer.product_id }}'
-  register: __inventory_installed_registration__
+      ansible.windows.win_regedit:
+        data: "{{ __licence__ }}"
+        delete_key: true
+        name: 'License'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory'
+        state: 'present'
+        type: 'string'
 
-- name: 'END | Observe the installed PDQ Inventory service'
-  ansible.windows.win_service_info:
-    name: 'PDQInventory'
-  register: __inventory_installed_service__
+    #endregion --- [ Process: Apply The Product Licence ] ------------------------------------- #
 
-- name: 'END | Verify the installed PDQ Inventory identity'
-  vars:
-    __inventory_initial_absent__: >-
-      {{
-        not __inventory_registration__.exists
-        and not __inventory_service__.exists
-      }}
-    __inventory_initial_converged__: >-
-      {{
-        __inventory_registration__.exists
-        and 'DisplayName' in (__inventory_registration__.properties | default({}))
-        and __inventory_registration__.properties.DisplayName.value == 'PDQ Inventory'
-        and 'DisplayVersion' in (__inventory_registration__.properties | default({}))
-        and __inventory_registration__.properties.DisplayVersion.value
-        == config.inventory_installer.version
-        and __inventory_service__.exists
-      }}
-    __inventory_delivery_attempted__: >-
-      {{ not ansible_check_mode and __inventory_initial_absent__ }}
-  ansible.builtin.assert:
-    that:
-      - __inventory_installed_registration__.exists
-      - >-
-        'DisplayName' in (__inventory_installed_registration__.properties | default({}))
-        and __inventory_installed_registration__.properties.DisplayName.value == 'PDQ Inventory'
-      - >-
-        'DisplayVersion' in (__inventory_installed_registration__.properties | default({}))
-        and __inventory_installed_registration__.properties.DisplayVersion.value
-        == config.inventory_installer.version
-      - __inventory_installed_service__.exists
-    fail_msg: >-
-      {% if ansible_check_mode and __inventory_initial_absent__ %}
-      PDQ Inventory installation is not supported in check mode; run without --check to install
-      the pinned artifact.
-      {% elif not __inventory_initial_absent__ and not __inventory_initial_converged__ %}
-      Unsupported initial PDQ Inventory identity: expected both the uninstall registration and
-      PDQInventory service to be absent, or both to be present with DisplayName PDQ Inventory and
-      DisplayVersion {{ config.inventory_installer.version }}. Upgrade, downgrade, and
-      partial-install repair are outside this piece. Observed uninstall key present={{
-      __inventory_registration__.exists }}, DisplayName property present={{ 'DisplayName' in
-      (__inventory_registration__.properties | default({})) }}, DisplayName={{
-      __inventory_registration__.properties.DisplayName.value if 'DisplayName' in
-      (__inventory_registration__.properties | default({})) else 'absent' }}, DisplayVersion
-      property present={{ 'DisplayVersion' in
-      (__inventory_registration__.properties | default({})) }}, DisplayVersion={{
-      __inventory_registration__.properties.DisplayVersion.value if 'DisplayVersion' in
-      (__inventory_registration__.properties | default({})) else 'absent' }}, PDQInventory
-      service present={{ __inventory_service__.exists }}.
-      {% else %}
-      PDQ Inventory postcondition failed: expected DisplayName PDQ Inventory, DisplayVersion
-      {{ config.inventory_installer.version }}, and the PDQInventory service. Delivery attempted={{
-      __inventory_delivery_attempted__ | string | lower }}. Observed uninstall key present={{
-      __inventory_installed_registration__.exists }}, DisplayName property present={{
-      'DisplayName' in (__inventory_installed_registration__.properties | default({})) }},
-      DisplayName={{ __inventory_installed_registration__.properties.DisplayName.value if
-      'DisplayName' in (__inventory_installed_registration__.properties | default({})) else
-      'absent' }}, DisplayVersion property present={{ 'DisplayVersion' in
-      (__inventory_installed_registration__.properties | default({})) }}, DisplayVersion={{
-      __inventory_installed_registration__.properties.DisplayVersion.value if 'DisplayVersion' in
-      (__inventory_installed_registration__.properties | default({})) else 'absent' }},
-      PDQInventory service present={{ __inventory_installed_service__.exists }}.
-      {% endif %}
-    quiet: true
-#endregion --- [ PDQ Inventory: Verifying Installed Identity ] ------------------------------- #
+    #region ------ [ Process: Place The Database On The Dedicated Drive ] --------------------- #
+    # The database is the one part of this product that grows without bound, so it lives on the
+    # drive provisioned for it rather than on the system volume. Set BEFORE the service is first
+    # started, which is why this sits above the service region: the product creates the database
+    # wherever this points on that first start, so there is nothing to stop, copy and restart.
+    # A host whose database already exists elsewhere is not migrated by this -- it would be left
+    # behind, and moving it is a different job from building a server. It goes in a FOLDER on that
+    # drive rather than at the root, because an ACL set on a directory can be tightened without
+    # disturbing the permissions Windows grants on a volume root.
 
-#region ------ [ PDQ Inventory: Writing License Registry Payload ] ---------------------------- #
-- name: 'CONFIGURE | Write the PDQ Inventory license registry payload'
-  no_log: true
-  vars:
-    __inventory_license_start_marker__: '--- START LICENSE ---'
-    __inventory_license_end_marker__: '--- END LICENSE ---'
-    __inventory_license_line_separator__: "\r\n"
-    __inventory_license_cr__: "\r"
-    __inventory_license_lf__: "\n"
-    __inventory_license_lines__: >-
-      {{
-        (config.license | default('', true) | string)
-        .replace(__inventory_license_line_separator__, __inventory_license_lf__)
-        .replace(__inventory_license_cr__, __inventory_license_lf__)
-        .split(__inventory_license_lf__)
-      }}
-    __inventory_license_start_index__: >-
-      {{ (((__inventory_license_lines__ | list) + [__inventory_license_start_marker__]).index(__inventory_license_start_marker__)) | int }}
-    __inventory_license_end_index__: >-
-      {{ (((__inventory_license_lines__ | list) + [__inventory_license_end_marker__]).index(__inventory_license_end_marker__)) | int }}
-    __inventory_license_payload__: >-
-      {{
-        (__inventory_license_lines__ | list)[
-          (__inventory_license_start_index__ | int):((__inventory_license_end_index__ | int) + 1)
-        ] | join(__inventory_license_line_separator__)
-      }}
-  ansible.windows.win_regedit:
-    path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory'
-    name: 'License'
-    data: '{{ __inventory_license_payload__ }}'
-    type: 'string'
-#endregion --- [ PDQ Inventory: Writing License Registry Payload ] ---------------------------- #
+    - name: 'PROCESS | Create The Database Directory On The Dedicated Drive'
+      ansible.windows.win_file:
+        access_time: 'preserve'
+        access_time_format: 'yyyy-MM-dd HH:mm:ss'
+        modification_time: 'preserve'
+        modification_time_format: 'yyyy-MM-dd HH:mm:ss'
+        path: >-
+          {{ pdq_inventory_running.database.drive }}:\{{ pdq_inventory_running.database.directory }}
+        state: 'directory'
 
-#endregion --- [ PDQ Inventory ] ------------------------------------------------------------- #
+    # ----------------------------------------------------------------------------------------- #
 
-#endregion --- [ Main ] ---------------------------------------------------------------------- #
+    - name: 'PROCESS | Point The Product At The Database On The Dedicated Drive'
+      notify: 'pdq-inventory-restart-required'
+      vars:
+        __database_file__: >-
+          {{ pdq_inventory_running.database.drive }}:\{{ pdq_inventory_running.database.directory
+             }}\Database.db
+      ansible.windows.win_regedit:
+        data: "{{ __database_file__ }}"
+        delete_key: true
+        name: 'FileName'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory\Settings\Database'
+        state: 'present'
+        type: 'string'
+
+    #endregion --- [ Process: Place The Database On The Dedicated Drive ] --------------------- #
+
+    #region ------ [ Process: Put The Console In Central Server Mode ] ------------------------ #
+    # PDQ Deploy and PDQ Inventory integrate only co-located and in the same operating mode, so
+    # an all-in-one Central Server is an invariant of this repository rather than a value to
+    # offer -- the mode is written literally, because an input here would be a knob that must
+    # never be turned. A silent install leaves it Local, which is why a console opened on an
+    # otherwise converged host still walks the Initialize wizard. Written through the REGISTRY,
+    # not the SetServiceMode command line: that command refuses while the service is running
+    # ("close the Console and Background Service"), whereas the registry value is read at start,
+    # so the restart below picks it up (measured 2026-08-22: registry Mode=Server flips
+    # SystemInfo's ServiceMode to Server). Written before the service region for the same reason.
+
+    - name: 'PROCESS | Put The Console In Central Server Mode'
+      notify: 'pdq-inventory-restart-required'
+
+      ansible.windows.win_regedit:
+        data: 'Server'
+        delete_key: true
+        name: 'Mode'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory\Protocol'
+        state: 'present'
+        type: 'string'
+
+    #endregion --- [ Process: Put The Console In Central Server Mode ] ------------------------ #
+
+    #region ------ [ Process: Set The Central Server Port ] ----------------------------------- #
+    # The port client consoles connect to. 7337 is the product's own default, measured on a
+    # converged host 2026-08-22 (Protocol\ServerPort). Deliberately NOT written beside it:
+    # LocalTcpPort, which the product assigns per host from the dynamic range, and
+    # ServicePrincipalName, which the wizard leaves at a value whose contract is not understood --
+    # pinning a value we cannot explain is worse than leaving the product's own.
+
+    - name: 'PROCESS | Set The Central Server Port'
+      notify: 'pdq-inventory-restart-required'
+
+      ansible.windows.win_regedit:
+        data: "{{ pdq_inventory_running.server.port }}"
+        delete_key: true
+        name: 'ServerPort'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory\Protocol'
+        state: 'present'
+        type: 'dword'
+
+    #endregion --- [ Process: Set The Central Server Port ] ----------------------------------- #
+
+    #region ------ [ Process: Choose The Addresses The Server Answers On ] -------------------- #
+    # Two halves of one decision, so they live together: name no addresses and the server
+    # answers on all of them, name some and it answers only there. A server bound to one
+    # address stops answering when that address changes, and this host's is assigned at launch,
+    # so every-address is the default. The flag is written on BOTH paths rather than only the
+    # first -- left at 1 it would outrank a named list, and a host moved from all-addresses to
+    # a list would keep answering everywhere while appearing not to.
+
+    - name: 'PROCESS | Answer Consoles On Every Address Unless Addresses Are Named'
+      notify: 'pdq-inventory-restart-required'
+
+      ansible.windows.win_regedit:
+        data: >-
+          {{ 0 if pdq_inventory_running.server.listen_addresses | default([], true) | length > 0
+             else 1 }}
+        delete_key: true
+        name: 'ServerListenAllAddresses'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory\Protocol'
+        state: 'present'
+        type: 'dword'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Answer Consoles On The Named Addresses'
+      notify: 'pdq-inventory-restart-required'
+      when: pdq_inventory_running.server.listen_addresses | default([], true) | length > 0
+
+      ansible.windows.win_regedit:
+        data: "{{ pdq_inventory_running.server.listen_addresses }}"
+        delete_key: true
+        name: 'ServerListenAddresses'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory\Protocol'
+        state: 'present'
+        type: 'multistring'
+
+    #endregion --- [ Process: Choose The Addresses The Server Answers On ] -------------------- #
+
+    #region ------ [ Process: Enable Role-Based Access Control ] ------------------------------ #
+    # Role-Based Access Control decides whether console users are authorised individually or
+    # simply by being administrators. Written from an input rather than fixed, because a
+    # deployment that has not yet modelled roles needs it off, and turning it on before then
+    # authorises nobody for anything. Lives at the product root rather than under Protocol, and
+    # is read at service start like the rest, so a change joins the restart below. The input is a
+    # boolean and the stored value a dword, so the filter is the whole translation between them.
+
+    - name: 'PROCESS | Enable Role-Based Access Control'
+      notify: 'pdq-inventory-restart-required'
+
+      ansible.windows.win_regedit:
+        data: "{{ pdq_inventory_running.rbac_enabled | int }}"
+        delete_key: true
+        name: 'RBAC Enabled'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory'
+        state: 'present'
+        type: 'dword'
+
+    #endregion --- [ Process: Enable Role-Based Access Control ] ------------------------------ #
+
+    #region ------ [ Process: Open The Firewall For Client Consoles ] ------------------------- #
+    # Opening the port on the cloud side reaches the host and stops there: Windows Firewall is
+    # on for every profile on this image, so without this rule the service listens and nothing
+    # arrives. Scoped BOTH ways, as the product's own wizard scopes it -- to the service
+    # executable and to the port -- so the exception admits that one program on that one port
+    # rather than opening the port to whatever else may bind it later. This names the rule
+    # directly, which is also what makes it idempotent and removable.
+
+    - name: 'PROCESS | Open The Firewall For Client Consoles'
+      community.windows.win_firewall_rule:
+        action: 'allow'
+        description: 'Inbound access to the PDQ Inventory background service for client consoles'
+        direction: 'in'
+        enabled: true
+        localport: "{{ pdq_inventory_running.server.port }}"
+        name: 'PDQ Inventory'
+        profiles: [ 'domain', 'private', 'public' ]
+        program: "{{ pdq_inventory_running.service_path }}"
+        protocol: 'tcp'
+        state: 'present'
+
+    #endregion --- [ Process: Open The Firewall For Client Consoles ] ------------------------- #
+
+    #region ------ [ Process: Run The Background Service As The Service Account ] ------------- #
+    # The product is installed and licensed by this point, so the service it registered exists
+    # and can be pointed at the account the previous regions built. The vendor requires an
+    # administrator on the console machine and the SeServiceLogonRight, both of which are already
+    # in place. A local account carries the '.\' prefix -- the same convention the product's own
+    # console uses when the domain field is left blank. The silent installer leaves the service
+    # DISABLED and never started (measured 2026-08-22), so the start mode and running state are
+    # set here as well, or nothing downstream can restart it and the product never reaches a
+    # working state. DELAYED auto-start, matching what the product's own SetServiceCredentials
+    # configures, so a settled host does not fight its own credential recording. update_password
+    # is on_create so a settled host reports ok rather than rewriting the credential every
+    # converge; the module sets the password regardless whenever the account itself changes, so
+    # the first converge is complete.
+
+    - name: 'PROCESS | Run The Background Service As The Service Account'
+      no_log: true
+      notify: 'pdq-inventory-restart-required'
+
+      ansible.windows.win_service:
+        dependency_action: 'set'
+        desktop_interact: false
+        force_dependent_services: false
+        name: "{{ pdq_inventory_running.service_name }}"
+        password: "{{ __pdq_inventory_secret__.contents }}"
+        start_mode: 'delayed'
+        state: 'started'
+        update_password: 'on_create'
+        username: ".\\{{ pdq_inventory_running.service_account.name }}"
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Enforce The Background Service Credential'
+      changed_when: false
+      no_log: true
+
+      ansible.windows.win_service:
+        dependency_action: 'set'
+        desktop_interact: false
+        force_dependent_services: false
+        name: "{{ pdq_inventory_running.service_name }}"
+        password: "{{ __pdq_inventory_secret__.contents }}"
+        update_password: 'always'
+        username: ".\\{{ pdq_inventory_running.service_account.name }}"
+
+    #endregion --- [ Process: Run The Background Service As The Service Account ] ------------- #
+
+    #region ------ [ Process: Record The Service Credential With The Product ] ---------------- #
+    # Setting the account on the Windows service is not enough: the product keeps its OWN record
+    # of that credential, and a console finding it absent runs its initialisation wizard even
+    # though everything else is configured. Only the vendor's command can write it: the value is
+    # an encrypted blob, and this is the command whose job that is.
+    #
+    # The password is fed on STDIN and never appears in an argument. That matters more than it
+    # looks: this image audits process creation WITH command lines, so a password passed as
+    # -Password is written into Security event 4688 and persists in a log that is usually shipped
+    # off the host -- a durable copy of the credential, not a transient one. The tool's own
+    # -SecurePassword reads the console directly and fails when input is redirected, so stdin is
+    # the only headless path that keeps the secret out of both the process table and the log.
+    #
+    # -NoRestart because restarting is the next region's job, not this one's; written only when
+    # the recorded account differs, because the command always writes and always reports success.
+
+    - name: 'PROCESS | Read The Credential The Product Has Recorded'
+      no_log: true
+      register: '__pdq_inventory_recorded_account__'
+
+      ansible.windows.win_reg_stat:
+        name: 'Background Service Username'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Record The Service Credential With The Product'
+      no_log: true
+      notify: 'pdq-inventory-restart-required'
+      when: >-
+        __pdq_inventory_recorded_account__.value | default('') | lower | split('\\') | last
+        != pdq_inventory_running.service_account.name | lower
+
+      ansible.windows.win_command:
+        argv:
+          - "{{ pdq_inventory_running.cli_path }}"
+          - 'SetServiceCredentials'
+          - '-Username'
+          - ".\\{{ pdq_inventory_running.service_account.name }}"
+          - '-NoRestart'
+        stdin: "{{ __pdq_inventory_secret__.contents }}"
+
+    #endregion --- [ Process: Record The Service Credential With The Product ] ---------------- #
+
+    #region ------ [ Process: Apply Any Pending Restart ] ------------------------------------- #
+    # Handlers would otherwise run at the very END of the play, after this role's own proofs.
+    # Flushing here means the product has already restarted by the time END asks it whether it
+    # is licensed and which account it runs as -- so those proofs describe the converged host
+    # rather than the one that existed before the bounce.
+
+    - name: 'PROCESS | Apply Any Pending Restart'
+      ansible.builtin.meta: 'flush_handlers'
+
+    #endregion --- [ Process: Apply Any Pending Restart ] ------------------------------------- #
+
+    #region ------ [ Process: Apply The Product Settings ] ------------------------------------ #
+    # The whole preference tree crosses as ONE parameter, shaped exactly as the console's
+    # Preferences window is, and the script owns the routing and the arithmetic: it sets aside
+    # the pages other tasks write (the per-user alerts and interface pages, the event-log
+    # switches) and places the backup and verbose-log locations beside the database unless the
+    # caller named somewhere else. What the product accepts and drops is still caught by the
+    # script's export-verify pass, and censoring is still off because every value here is
+    # playbook-tracked.
+    #
+    # The product answers its own command line only for the account its service runs as -- an
+    # administrator and even SYSTEM are refused -- so this runs AS the background service user,
+    # whose batch logon the STIG deny rights deliberately leave open. Runs last because the
+    # command line needs the service up, which the regions above guarantee. The referenced .ps1
+    # is MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role tracks only
+    # files/Set-PdqInventorySetting.ps1.stub); run it before this role.
+
+    - name: 'PROCESS | Apply The Product Settings'
+      become: true
+      become_method: 'ansible.builtin.runas'
+      become_user: "{{ pdq_inventory_running.service_account.name }}"
+      vars:
+        ansible_become_flags: 'logon_type=batch'
+        ansible_become_password: "{{ __pdq_inventory_secret__.contents }}"
+
+      ansible.windows.win_powershell:
+        depth: 3
+        error_action: 'stop'
+        parameters:
+          Preference: "{{ pdq_inventory_running.preferences }}"
+          DatabaseDrive: "{{ pdq_inventory_running.database.drive }}"
+          DatabaseDirectory: "{{ pdq_inventory_running.database.directory }}"
+        remote_src: false
+        script: "{{ lookup('ansible.builtin.file', 'Set-PdqInventorySetting.ps1') }}"
+
+    #endregion --- [ Process: Apply The Product Settings ] ------------------------------------ #
+
+    #region ------ [ Process: Authorize The Console Users ] ----------------------------------- #
+    # Who may open the console. A silent install authorises no one, and RBAC being off leaves it
+    # that way -- the product requires each account or group to be an explicit Console User, not
+    # merely a local administrator (measured 2026-08-22: ConsoleUsers empty on a fresh licensed
+    # host). Applied through the command line as the service account, the only identity the
+    # product answers. -Add reports success whether or not the name was already authorised, so the
+    # current list is read first and only missing names are added, keeping the run idempotent.
+    # Runs in the command-line zone because the service must be up -- the same reason the settings
+    # above do.
+
+    - name: 'PROCESS | Authorize The Console Users'
+      become: true
+      become_method: 'ansible.builtin.runas'
+      become_user: "{{ pdq_inventory_running.service_account.name }}"
+      vars:
+        ansible_become_flags: 'logon_type=batch'
+        ansible_become_password: "{{ __pdq_inventory_secret__.contents }}"
+
+      block:
+        - name: 'PROCESS | Read The Authorized Console Users'
+          ansible.windows.win_command:
+            argv:
+              - "{{ pdq_inventory_running.cli_path }}"
+              - 'ConsoleUsers'
+          changed_when: false
+          check_mode: false
+          register: '__pdq_inventory_console_users__'
+
+        - name: 'PROCESS | Add The Console Users The Product Does Not Yet Carry'
+          ansible.windows.win_command:
+            argv:
+              - "{{ pdq_inventory_running.cli_path }}"
+              - 'ConsoleUsers'
+              - '-Add'
+              - "{{ item }}"
+          loop: "{{ pdq_inventory_running.console_users }}"
+          loop_control:
+            label: "{{ item }}"
+          # Exact per-line match, not a substring of the whole blob: 'Administrator' must not be
+          # treated as already present just because 'Administrators' is authorised.
+          when: item not in (__pdq_inventory_console_users__.stdout_lines | map('trim') | list)
+          changed_when: true
+
+    #endregion --- [ Process: Authorize The Console Users ] ----------------------------------- #
+
+    #region ------ [ Process: Choose The Event Log Severities ] ------------------------------- #
+    # Which severities reach the Windows Application event log. The product keeps these under its
+    # own Logging key and only creates that key when a console saves the preferences page -- so
+    # without this, what a server records depends on whether anyone ever opened a console on it.
+    # All four are written, so the state is the playbook's whatever the console did or did not do.
+    # One action -- choose the severities -- split over a loop because each severity is its own
+    # value under the key.
+
+    - name: 'PROCESS | Choose The Event Log Severities'
+      loop:
+        - { name: 'Error Enabled', value: "{{ pdq_inventory_running.preferences.logging.record_error }}" }
+        - { name: 'Warning Enabled', value: "{{ pdq_inventory_running.preferences.logging.record_warning }}" }
+        - { name: 'Info Enabled', value: "{{ pdq_inventory_running.preferences.logging.record_informational }}" }
+        - { name: 'Debug Enabled', value: "{{ pdq_inventory_running.preferences.logging.record_debug }}" }
+      loop_control:
+        label: "{{ item.name }} = {{ item.value }}"
+      notify: 'pdq-inventory-restart-required'
+
+      ansible.windows.win_regedit:
+        data: "{{ item.value | int }}"
+        delete_key: true
+        name: "{{ item.name }}"
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\Logging\PDQ Inventory'
+        state: 'present'
+        type: 'dword'
+
+    #endregion --- [ Process: Choose The Event Log Severities ] ------------------------------- #
+
+    #region ------ [ Process: Seed The Console Defaults For New Users ] ----------------------- #
+    # A few console preferences are per-user: the product writes them to the signed-in user's own
+    # hive and nowhere else (measured 2026-08-22). A new profile is built from the Default
+    # profile, so its hive is seeded through win_regedit's own hive loader -- which loads, writes
+    # type-aware and idempotent, and unloads under its own finally, with none of the hand-rolled
+    # lifecycle a script would carry. The connection account's profile already exists and cannot
+    # inherit the Default, so its own hive is seeded too, but only where the product has never
+    # written: a preference someone saved is theirs. The string values (theme, release channel)
+    # are seeded only when declared -- an undeclared one is dropped by the reject filter, leaving
+    # the product's own first-run choice.
+    #
+    # The seed rows are composed once below; each of the three tasks derives from that one list,
+    # dropping the string rows left undeclared so the product's own first-run choice stands.
+
+    - name: 'PROCESS | Compose The Per-User Console Seed'
+      ansible.builtin.set_fact:
+        __pdq_inventory_console_seed__:
+          - name: 'Disable Splash Screen'
+            subkey: 'PDQ Inventory Console\Settings\Startup'
+            data: "{{ pdq_inventory_running.preferences.interface.disable_splash_screen | int }}"
+            type: 'dword'
+          - name: 'Auto Check Enabled'
+            subkey: 'PDQ Inventory\AutoUpdateChecker'
+            data: "{{ pdq_inventory_running.preferences.alerts.auto_update_check_enabled | int }}"
+            type: 'dword'
+          - name: 'Show Webcast Alerts'
+            subkey: 'PDQ Inventory\AutoUpdateChecker'
+            data: "{{ pdq_inventory_running.preferences.alerts.show_webcast_alerts | int }}"
+            type: 'dword'
+          - name: 'Color Theme'
+            subkey: 'PDQ Inventory Console\Settings\Startup'
+            data: "{{ pdq_inventory_running.preferences.interface.color_theme | default('', true) }}"
+            type: 'string'
+          - name: 'ReleaseChannel'
+            subkey: 'PDQ Inventory\AutoUpdateChecker'
+            data: "{{ pdq_inventory_running.preferences.alerts.release_channel | default('', true) }}"
+            type: 'string'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Seed The Console Defaults For New Users'
+      vars:
+        __pdq_inventory_console_declared__: "{{ __pdq_inventory_console_seed__ | rejectattr('data', 'equalto', '') | list }}"
+
+      ansible.windows.win_regedit:
+        data: "{{ item.data }}"
+        hive: 'C:\Users\Default\NTUSER.DAT'
+        name: "{{ item.name }}"
+        path: 'HKLM:\ANSIBLE\Software\Admin Arsenal\{{ item.subkey }}'
+        state: 'present'
+        type: "{{ item.type }}"
+      loop: "{{ __pdq_inventory_console_declared__ }}"
+      loop_control:
+        label: "{{ item.subkey }} :: {{ item.name }}"
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Read The Connection Account Console Defaults'
+      vars:
+        __pdq_inventory_console_declared__: "{{ __pdq_inventory_console_seed__ | rejectattr('data', 'equalto', '') | list }}"
+      register: '__pdq_inventory_own_console__'
+
+      ansible.windows.win_reg_stat:
+        name: "{{ item.name }}"
+        path: 'HKCU:\Software\Admin Arsenal\{{ item.subkey }}'
+      loop: "{{ __pdq_inventory_console_declared__ }}"
+      loop_control:
+        label: "{{ item.subkey }} :: {{ item.name }}"
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Seed The Connection Account Where The Product Has Not Written'
+      when: not item.exists
+      loop: "{{ __pdq_inventory_own_console__.results }}"
+      loop_control:
+        label: "{{ item.item.subkey }} :: {{ item.item.name }}"
+
+      ansible.windows.win_regedit:
+        data: "{{ item.item.data }}"
+        name: "{{ item.item.name }}"
+        path: 'HKCU:\Software\Admin Arsenal\{{ item.item.subkey }}'
+        state: 'present'
+        type: "{{ item.item.type }}"
+
+    #endregion --- [ Process: Seed The Console Defaults For New Users ] ------------------------ #
+
+    #region ------ [ Process: Record The Product Registration ] ------------------------------- #
+    # A licensed server still greets the first console with a registration popup asking for an
+    # email address, and stores the answer as three database rows. This records them ahead of any
+    # console, from the address the playbook declares -- which the script proves EQUALS the one
+    # inside the licence blob, so the input cannot drift from what the vendor issued. Runs after
+    # the settings region for the same reason that region runs last: the database this writes is
+    # only guaranteed once the service has started. No become: the row write is a file write and
+    # the one command-line call is SystemInfo, a local read needing no console authorisation. The
+    # referenced .ps1 is MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the
+    # role tracks only files/Set-PdqInventoryRegistration.ps1.stub); run it before this role.
+
+    - name: 'PROCESS | Record The Product Registration'
+      ansible.windows.win_powershell:
+        depth: 2
+        error_action: 'stop'
+        parameters:
+          Email: "{{ pdq_inventory_running.license.email }}"
+        remote_src: false
+        script: "{{ lookup('ansible.builtin.file', 'Set-PdqInventoryRegistration.ps1') }}"
+
+    #endregion --- [ Process: Record The Product Registration ] ------------------------------- #
+
+#endregion --- [ Process: Install PDQ Inventory on Windows ] ---------------------------------- #
+
+
+#region ------ [ Always: Apply Any Pending Restart ] ------------------------------------------ #
+# The flush above is reached only when PROCESS runs to completion. A converge that changed the
+# service's configuration and then failed before it would leave the product running its old
+# settings -- and the NEXT converge would write nothing, because the values are already correct,
+# so it would notify nothing and never restart either. The service would stay stale for good,
+# under a run that reports success. This closes that: an 'always' runs even when the block above
+# failed, and a handler that already ran is not run again, so a successful converge still
+# restarts exactly once. Restart only -- cleanup stays under END.
+
+  # Begin the 'Always' block
+  always:
+
+    - name: 'PROCESS | Apply Any Pending Restart Even After A Failure'
+      ansible.builtin.meta: 'flush_handlers'
+
+#endregion --- [ Always: Apply Any Pending Restart ] ------------------------------------------ #
+
+
+#region ------ [ End: Install PDQ Inventory on Windows ] -------------------------------------- #
+
+- name: 'END | Prove The Result And Clean Up'
+
+  # Begin The 'End' Block
+  block:
+
+    #region ------ [ End: Re-Read The Installed Product ] ------------------------------------- #
+    # Ungated, so a converged host proves the same state as a freshly built one. This is the same
+    # read BEGIN performed, against the same script, so the two cannot disagree about what counts
+    # as installed.
+
+    - name: 'END | Re-Read The Installed Product From Add/Remove Programs'
+      register: '__pdq_inventory_final_arp__'
+
+      ansible.windows.win_powershell:
+        depth: 3
+        error_action: 'stop'
+        parameters:
+          DisplayName: "{{ pdq_inventory_running.arp.display_name }}"
+          Version: "{{ pdq_inventory_running.installer.version }}"
+        remote_src: false
+        script: "{{ lookup('ansible.builtin.file', 'Get-InstalledSoftware.ps1') }}"
+
+    #endregion --- [ End: Re-Read The Installed Product ] ------------------------------------- #
+
+    #region ------ [ End: Prove The Product Is Registered ] ----------------------------------- #
+    # Zero entries means the installer reported success without registering the product, which is
+    # the failure this postcondition exists to catch: an exit code is the installer's opinion,
+    # Add/Remove Programs is the machine's.
+
+    - name: 'END | Prove The Product Is Registered Exactly Once At Or Above The Pin'
+      ansible.builtin.assert:
+        fail_msg: >-
+          Expected '{{ pdq_inventory_running.arp.display_name }}' registered at
+          {{ pdq_inventory_running.installer.version }} or above; found
+          '{{ __pdq_inventory_final_arp__.result.installed_version }}'. An empty version means
+          the installer reported success without registering the product.
+        quiet: true
+        that: [ not __pdq_inventory_final_arp__.result.action_required ]
+
+    #endregion --- [ End: Prove The Product Is Registered ] ----------------------------------- #
+
+    #region ------ [ End: Prove The Server Is Licensed For Enterprise ] ----------------------- #
+    # The registry write is a means, not the goal -- the product either accepts the payload or
+    # stays in Free mode, and only the product can say which. SystemInfo is a local read that
+    # needs no console authorisation, unlike the commands that talk to the background service.
+    # Enterprise also gates Server mode and the console users, so a console silently left in Free
+    # mode is a broken build, not a lesser one.
+
+    - name: 'END | Read The Licence Mode From The Product'
+      changed_when: false
+      check_mode: false
+      register: '__pdq_inventory_systeminfo__'
+
+      ansible.windows.win_command:
+        argv:
+          - "{{ pdq_inventory_running.cli_path }}"
+          - 'SystemInfo'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'END | Prove The Server Is Licensed For Enterprise'
+      ansible.builtin.assert:
+        fail_msg: >-
+          The console is not licensed for Enterprise. SystemInfo reported:
+          {{ __pdq_inventory_systeminfo__.stdout | trim }}
+        quiet: true
+        that: [ __pdq_inventory_systeminfo__.stdout is search('LicenseMode\s*:\s*Enterprise') ]
+
+    #endregion --- [ End: Prove The Server Is Licensed For Enterprise ] ----------------------- #
+
+    #region ------ [ End: Prove The Background Service Exists ] ------------------------------- #
+    # The product registers, then its service must exist: a registration without the service is a
+    # broken install that would otherwise pass unnoticed until the console failed to start.
+
+    - name: 'END | Prove The Background Service Exists'
+      failed_when: (__pdq_inventory_service__.services | default([]) | length) != 1
+      register: '__pdq_inventory_service__'
+
+      ansible.windows.win_service_info:
+        name: "{{ pdq_inventory_running.service_name }}"
+
+    #endregion --- [ End: Prove The Background Service Exists ] ------------------------------- #
+
+    #region ------ [ End: Prove The Service Runs As The Service Account ] --------------------- #
+    # Existing is not enough: the identity is what reads the licence and what runs the scans, so a
+    # service left on its installation default is both unlicensed and unable to work while looking
+    # perfectly healthy. SCM reports the account in resolved form, MACHINE\name, so the machine
+    # half is dropped and the account compared -- that is the half this role sets, and it is what
+    # separates svc-pdq from the LocalSystem the installer chose.
+
+    - name: 'END | Prove The Background Service Runs As The Service Account'
+      ansible.builtin.assert:
+        fail_msg: >-
+          '{{ pdq_inventory_running.service_name }}' is running as
+          '{{ __pdq_inventory_service__.services[0].username }}', not
+          '{{ pdq_inventory_running.service_account.name }}'. The service picks up a new logon
+          account only when it restarts, so either the restart was skipped or the account was
+          rejected at start.
+        quiet: true
+        that:
+          - __pdq_inventory_service__.services[0].username | lower | split('\\') | last
+            == pdq_inventory_running.service_account.name | lower
+
+    #endregion --- [ End: Prove The Service Runs As The Service Account ] --------------------- #
+
+    #region ------ [ End: Prove The Firewall Admits The Running Binary ] ---------------------- #
+    # The firewall exception is scoped to the executable service_path names, and nothing else
+    # ties that input to reality: point it at the wrong binary and the rule is still written,
+    # the service keeps listening, and every console is refused with no error anywhere. The
+    # service's own record of its binary is already fetched above, so the input is proven
+    # against what is actually running.
+
+    - name: 'END | Prove The Firewall Admits The Running Binary'
+      ansible.builtin.assert:
+        fail_msg: >-
+          The firewall exception admits '{{ pdq_inventory_running.service_path }}' but the
+          service runs '{{ __pdq_inventory_service__.services[0].path }}'. Consoles would be
+          silently refused: the rule matches a binary that is not the one listening.
+        quiet: true
+        that:
+          - pdq_inventory_running.service_path | lower
+            in __pdq_inventory_service__.services[0].path | lower
+
+    #endregion --- [ End: Prove The Firewall Admits The Running Binary ] ---------------------- #
+
+#endregion --- [ End: Install PDQ Inventory on Windows ] -------------------------------------- #
+
+
+#region ------ [ Always: Install PDQ Inventory on Windows ] ----------------------------------- #
+
+  # Begin the 'Always' block
+  always:
+
+    #region ------ [ Always: Remove The Staged Installer From The Guest ] --------------------- #
+    # Gated on the copy having been attempted, so a run that never staged deletes nothing while a
+    # partial copy is still cleaned up.
+
+    - name: 'END | Remove The Staged Installer From The Guest'
+      when: __pdq_inventory_copied__ is defined and not (__pdq_inventory_copied__ is skipped)
+
+      ansible.windows.win_file:
+        access_time: 'preserve'
+        access_time_format: 'yyyy-MM-dd HH:mm:ss'
+        modification_time: 'preserve'
+        modification_time_format: 'yyyy-MM-dd HH:mm:ss'
+        path: "{{ pdq_inventory_running.install.staging_dir }}"
+        state: 'absent'
+
+    #endregion --- [ Always: Remove The Staged Installer From The Guest ] --------------------- #
+
+    #region ------ [ Always: Remove The Controller Staging Directory ] ------------------------ #
+
+    - name: 'END | Remove The Controller Staging Directory'
+      changed_when: false
+      delegate_to: 'localhost'
+      when: __pdq_inventory_stage__ is defined and not (__pdq_inventory_stage__ is skipped)
+
+      ansible.builtin.file:
+        access_time_format: '%Y%m%d%H%M.%S'
+        follow: true
+        force: false
+        modification_time_format: '%Y%m%d%H%M.%S'
+        path: "{{ __pdq_inventory_stage__.path }}"
+        recurse: false
+        state: 'absent'
+        unsafe_writes: false
+
+    #endregion --- [ Always: Remove The Controller Staging Directory ] ------------------------ #
+
+#endregion --- [ Always: Install PDQ Inventory on Windows ] ----------------------------------- #

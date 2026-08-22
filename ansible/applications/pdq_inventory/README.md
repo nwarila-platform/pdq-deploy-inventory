@@ -1,161 +1,79 @@
 # `pdq_inventory` role
 
-Ensures the shared PDQ Background Service User and installs the pinned PDQ Inventory bundle on
-Windows. It does not create or publish the PDQ Deploy repository/App Share. The application
-operations in scope are installation and writing the supplied licence value; the role does not
-select Inventory's operating mode, configure its service credentials, start it, or verify
-Enterprise mode.
+Installs PDQ Inventory at a pinned version and brings it up as an all-in-one **Central Server** on
+Windows. In one converge it installs the product, applies the licence, runs the background service
+under the shared PDQ service account, places the database on its dedicated drive, sets Central
+Server mode and the console port, applies the product's preferences, seeds the per-user console
+defaults, authorises the console users, chooses the event-log severities, and records the
+registration that would otherwise stop the first console with a popup. PDQ Inventory is a scanner, so — unlike `pdq_deploy` — it publishes **no
+package repository and no network share**.
+
+Everything moves through the controller: it fetches each artifact from S3 and hands it to the
+target, so the guest never receives cloud credentials. Every artifact (installer, licence, the
+service-account password) is verified against a pinned SHA-256 before it is used, the installer on
+the guest itself because that is the copy that runs.
 
 ## Composition and prerequisites
 
-The role is overlaid into the pinned `nwarila-platform/ansible-framework` checkout at run time; it
-is not run directly from this repository. **It is not currently wired into a play** — the shipped
-`ansible/playbooks/pdq-aws.yml` composes `windows_disk_manager` and `pdq_deploy` only. Inventory
-returns to a play when its own rebuild region runs.
+The role is overlaid into a version-pinned checkout of `nwarila-platform/ansible-framework` at run
+time; it is not run directly from this repository. The shipped `ansible/playbooks/pdq-aws.yml`
+composes `windows_disk_manager`, `pdq_deploy`, and `pdq_inventory` onto one host.
 
-`windows_disk_manager` plus `pdq_inventory` is a supported independent composition: it produces
-the complete Inventory result currently implemented without relying on `pdq_deploy`. In
-particular, it ensures the Background Service User and installs Inventory, but creates no Deploy
-repository directory or SMB share.
+`windows_disk_manager` plus `pdq_inventory` alone is a supported composition: it produces a
+complete Inventory Central Server without `pdq_deploy`. Both application roles share ONE Background
+Service User (`svc-pdq`), so each ensures it idempotently and neither strips the other's work.
 
-The target must be Windows and support the `ansible.windows` modules used for account management,
-registry and service observation, file transfer and removal, and package installation. The caller
-must supply the local service-account mapping and, for `state: present`,
-`inventory_installer.artifact_bucket`.
+The target must be Windows Server with the `ansible.windows` and `community.windows` modules the
+role uses. The controller's Ansible environment needs the `amazon.aws` collection with supported
+`boto3`/`botocore` for the S3 fetch.
 
-The shipped inventory pins the controller host to `ansible_playbook_python`, so delegated modules
-run under the playbook Python. The Ansible environment must include the `amazon.aws` collection,
-and that Python environment must contain supported versions of `boto3` and `botocore`. The role
-uses `amazon.aws.s3_object`; the shipped playbook also uses `amazon.aws.aws_caller_info`. The
-currently installed `amazon.aws` 10.3.2 modules require `boto3 >= 1.34.0` and
-`botocore >= 1.34.0`.
+## What the caller supplies
+
+Deployment-specific inputs carry an account id or change with every version and every site, so the
+playbook states them where a reader can see them; the role does not default them. See
+`meta/main.yml` for the full list — the installer (bucket, four-part version, digest), the licence
+(bucket, object, digest, and the email it was issued to), the service-account password (bucket,
+object, digest) and its name, the database drive letter, and optionally the addresses the server
+answers on. `tasks/validate.yml` enforces them on the controller before anything touches the guest.
 
 ## Configuration
 
-Role-specific overrides are supplied in the `pdq_inventory` dictionary and exposed to role tasks
-as `config.*` after the loader merge. The installer settings have pinned defaults:
+Universally safe values — product identity, the silent switch, the console port, and the full
+preference surface — live in `defaults/main.yml`. Preferences are organised as the console's
+Preferences window is: a map of pages, each holding its settings under readable labels. The values
+are the product's own measured defaults, with two deliberate exceptions that harden data egress
+(anonymous exception reporting and usage analytics are off). The surface is declared in full so a
+vendor changing a default surfaces as a reported change rather than silent drift.
 
-| Key | Required | Default / notes |
-|---|---|---|
-| `service_account.name` | yes | Name of the local PDQ Background Service User; validation rejects an empty name for `state: present` |
-| `service_account.password` | yes for account creation | Secret used by `win_user`; it has no default and must be supplied through vault or a protected extra-vars file |
-| `license` | yes for `state: present` | Licence text containing exactly one whole-line start marker, body content with at least one alphanumeric character (an ASCII letter or digit), and exactly one later whole-line end marker; it has no default and must be supplied through vault or a protected extra-vars file; written to the native 64-bit registry |
-| `inventory_installer.version` | no | `20.1.8.0`; the required installed `DisplayVersion` |
-| `inventory_installer.artifact_bucket` | yes for `state: present` | S3 bucket containing the installer; it has no default, and validation rejects undefined, non-string, empty and whitespace-only values |
-| `inventory_installer.object_key` | no | `applications/pdq/Inventory_20.1.8.0.exe`; installer object key in the caller-supplied artifact bucket |
-| `inventory_installer.sha256` | no | `48a486f3682cc01218993e72a8006163616166dd5f0fdcd1fab36724710fdbbf`; verified on the controller before transfer |
-| `inventory_installer.region` | no | `us-east-1`; region used for the object download |
-| `inventory_installer.staging_path` | no | `C:\Windows\Temp\Inventory_20.1.8.0.exe`; temporary path on the Windows target |
-| `inventory_installer.product_id` | no | `{47D90CDF-2CE4-4B71-87DD-1223B1DA0AB2}`; uninstall-registration key and package identity |
-| `temp_dir` | no | Generic loader control; the shipped playbook sets it to `false` because this Windows role does not use the loader's POSIX staging directory |
+## State
 
-The role does not accept disk IDs, Deploy repository settings, or Deploy disk settings. Disk
-identity belongs to `windows_disk_manager.disks[].unique_id`.
+- `present` (default) — install and configure to the declared state.
+- `clean` — uninstall the product, reading the ProductCode from the machine. The licence and
+  secure key survive by the vendor's design.
 
-## Artifact delivery and caller identity
+## Design invariants
 
-The shipped playbook resolves the AWS account of the controller's ambient credentials in a
-`pre_tasks` call, composes `<account-id>-ansible`, and maps that value to
-`pdq_inventory.inventory_installer.artifact_bucket`. The current play has one batch, so its
-`run_once` account lookup executes once and shares the registered result with all hosts in that
-batch. The role itself neither resolves an AWS account nor composes a bucket name; another
-composition must provide the required bucket input explicitly.
+- **All-in-one Central Server only.** PDQ Deploy and Inventory integrate only co-located, in the
+  same operating mode, under one service account; the mode is written literally, never offered.
+- **No package repository.** Inventory scans; it does not deploy, so it publishes no share.
+- The console port defaults to the product's own **7337**.
 
-The account lookup is unconditional after fact gathering. It runs before any role in normal and
-check mode, for `state: clean`, and when every target is already converged. A lookup failure is
-reported directly from the pre-task: it does not enter the role's delivery `rescue` or `always`
-sections. The lookup also precedes creation of the controller and guest temporary artifacts, so
-there is no delivery artifact for those sections to clean up on that failure path.
+## First-class PowerShell
 
-For each host that needs installation, delivery remains controller-mediated. The role creates a
-unique controller temporary directory, downloads the pinned object from the supplied bucket, and
-verifies its SHA-256 before copying or executing anything on Windows. The target receives the
-verified bundle, never an AWS credential.
+Guest-side logic that a task cannot express cleanly is a first-class PowerShell script, developed
+and Pester-tested once under `scripts/` and materialized into the role by
+`scripts/materialize-role-scripts.sh` (the role tracks only the `.ps1.stub` markers). The role uses
+`Get-InstalledSoftware.ps1` (shared with `pdq_deploy` — reading Add/Remove Programs is
+product-neutral), `Set-PdqInventorySetting.ps1` (applies the preference tree and proves each
+setting read back), and `Set-PdqInventoryRegistration.ps1` (records the registration against the
+licence).
 
-No component in this path performs an identity transition. The caller's ambient credentials must
-themselves hold the artifact grant. In the shipped playbook, credentials from another account
-derive that other account's bucket. An identity that can only assume the granting role is
-unsupported because neither the playbook nor the role performs that assumption.
+## Verification
 
-The controller AWS calls have this access contract:
-
-- The shipped playbook's `amazon.aws.aws_caller_info` pre-task calls `sts:GetCallerIdentity`; the
-  optional `iam:ListAccountAliases` result is not consumed.
-- `amazon.aws.s3_object` needs `s3:GetObject` on
-  `arn:aws:s3:::<artifact-bucket>/applications/pdq/*`. For the shipped playbook's composed bucket,
-  the narrow grant also allows `s3:ListBucket` on `arn:aws:s3:::<account-id>-ansible` only when
-  `s3:prefix` matches `applications/pdq/*`.
-
-The download sets `ignore_nonexistent_bucket: true` because the module's initial bucket-root
-probe is denied by that prefix-bounded grant. Suppressing the convenience probe preserves the
-narrow object and prefix permissions; the grant is not widened merely to satisfy a preliminary
-lookup.
-
-## Background Service User and one-identity contract
-
-For `state: present`, the role ensures a local account with password updates limited to account
-creation, adds it to `Administrators`, prevents password expiry and user-initiated password
-changes, and grants `SeServiceLogonRight`. The account task is protected with `no_log: true`.
-Changing the configured password does not rotate an existing account because
-`update_password: on_create` is used.
-
-PDQ Deploy and PDQ Inventory remain co-located in the shipped topology, in the same operating
-mode, under one Background Service User. The playbook defines `pdq_service_account` once and maps
-that whole mapping into both `pdq_inventory.service_account` and
-`pdq_deploy.service_account`. Each role nevertheless validates and consumes its own namespace so
-it can run independently.
-
-This one-identity invariant is structural in the shipped playbook, not an Ansible-enforced
-impossibility. A caller that replaces either complete role dictionary through extra-vars must map
-the same whole service-account value into both namespaces when composing both roles.
-
-## Installation state contract
-
-Exactly two starting states are supported:
-
-1. Clean absence: both the product's uninstall registration and the `PDQInventory` service are
-   absent. A normal run enters delivery and installs the pinned bundle.
-2. Full convergence: the uninstall registration has `DisplayName` equal to `PDQ Inventory` and
-   `DisplayVersion` equal to `inventory_installer.version`, and the `PDQInventory` service exists.
-   Delivery is skipped and the final identity check still runs.
-
-Every other starting state fails closed, including a missing or incorrect display property, an
-unexpected version, or disagreement between the registration and service. Upgrade, downgrade and
-partial-install repair are outside the role's scope. Installation from clean absence is not
-supported in check mode; after the shipped playbook's account lookup, the role refuses it without
-beginning delivery.
-
-This role installs Inventory and writes the supplied licence value. It does not select
-Local/Client/Server mode, configure the service account in Inventory, start the service, or verify
-Enterprise mode. The service is left exactly as the installer delivers it, measured for this
-bundle as Stopped and Disabled.
-
-## Cleanup limits
-
-While a host remains active, the delivery unit attempts to remove both its controller temporary
-directory and its guest staging file after success or failure. On a delivery failure, the delivery
-error is reported first without cleanup projections, and cleanup runs afterward. If cleanup also
-fails, the run produces two failure records: the delivery error followed by the cleanup-specific
-report. A cleanup failure following a successful installation also fails the run with that report;
-it is not mislabeled as an installation failure.
-
-The cleanup report is status-neutral about the installation because it can follow either a
-successful or a failed delivery. It claims neither outcome and reports only the cleanup results:
-
-```yaml
-PDQ Inventory artifact cleanup failed. Cleanup results: controller cleanup failed={{
-__inventory_controller_cleanup__.failed | default(false) }}; guest cleanup failed={{
-__inventory_guest_cleanup__.failed | default(false) }}.
+```bash
+export PATH="$PATH:/root/.local/bin"
+yamllint -c .yamllint.yml ansible
+scripts/materialize-role-scripts.sh
+(cd .compose/ansible-framework && ansible-lint applications/pdq_inventory)
+# Pester runs in CI (the powershell-template pester-matrix), one leg per scripts/ pair.
 ```
-
-An unreachable host triggers neither `rescue` nor `always`. The controller cleanup is delegated
-from that now-inactive host, so losing the target strands both the guest staging file and the
-controller temporary directory. A later run creates a fresh controller directory and does not
-remove the older one; controller residue can therefore accumulate until separately removed.
-
-## State support
-
-`present` ensures the Background Service User and the install state described above. Within the
-role, `clean` is intentionally a supported no-op and does not require `artifact_bucket`; no
-absent-state teardown is implemented. The shipped playbook still performs its unconditional
-controller account lookup before the role on a `clean` run.

@@ -2,73 +2,77 @@
 # File: '{{ role_path }}/tasks/validate.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# Validates load-bearing PDQ Inventory configuration after the v3 loader merge.
+# Validates load-bearing PDQ Inventory configuration after the v3 loader merge, on the CONTROLLER,
+# before anything touches the guest. The artifact inputs are supplied by the playbook rather than
+# defaulted, so this is where a missing or malformed one is caught — in a second, rather than
+# mid-converge at the cost of an instance.
+#
+# meta/main.yml describes these inputs; this file is what enforces them.
 #
 # =========================================================================================== #
 ---
-- name: 'BEGIN | Assert PDQ Inventory Background Service User Provided'
-  when: (state | default('present') | string | lower | trim) == 'present'
+- name: 'VALIDATE | Require The Artifact Source And Its Pinned Digests'
   ansible.builtin.assert:
     that:
-      - (config.service_account.name | default('') | string | trim) | length > 0
+      - pdq_inventory_running.installer.bucket | default('') | length > 0
+      - pdq_inventory_running.installer.path | default('') | length > 0
+      - pdq_inventory_running.installer.version | default('') is match('^[0-9]+(\\.[0-9]+){3}$')
+      - pdq_inventory_running.installer.sha256 | default('') is match('^[0-9a-f]{64}$')
+      - pdq_inventory_running.license.bucket | default('') | length > 0
+      - pdq_inventory_running.license.object | default('') | length > 0
+      - pdq_inventory_running.license.sha256 | default('') is match('^[0-9a-f]{64}$')
+      - pdq_inventory_running.license.email | default('') | length > 0
+      - pdq_inventory_running.service_account.name | default('') | length > 0
+      - pdq_inventory_running.database.drive | default('') is match('^[A-Za-z]$')
+      - pdq_inventory_running.service_account.bucket | default('') | length > 0
+      - pdq_inventory_running.service_account.object | default('') | length > 0
+      - pdq_inventory_running.service_account.sha256 | default('') is match('^[0-9a-f]{64}$')
     fail_msg: >-
-      pdq_inventory.service_account.name is REQUIRED. Declare service_account.name in the
-      pdq_inventory override dict.
+      Refusing to deploy: a required input is missing or malformed. The playbook must supply the
+      installer (bucket, path, four-part version, lowercase 64-char sha256); the licence (bucket,
+      object, sha256, and the email it was issued to); the service-account password (bucket,
+      object, sha256) and its name; and one drive letter for the database. Every artifact is
+      verified against its pinned digest before it is used. See meta/main.yml.
     quiet: true
 
-- name: 'BEGIN | Assert PDQ Inventory Artifact Bucket Provided'
-  when: (state | default('present') | string | lower | trim) == 'present'
+- name: 'VALIDATE | Require An Absolute Staging Directory'
   ansible.builtin.assert:
     that:
-      - (config.inventory_installer.artifact_bucket | default(none)) is string
-      - >-
-        (config.inventory_installer.artifact_bucket | default('', true) | string | trim)
-        | length > 0
+      - pdq_inventory_running.install.staging_dir is match('^[A-Za-z]:\\\\')
     fail_msg: >-
-      pdq_inventory.inventory_installer.artifact_bucket is REQUIRED. Declare it in the
-      pdq_inventory override dict.
+      Refusing to deploy: install.staging_dir must be an absolute, drive-letter-rooted Windows
+      path -- the installer is copied there on the guest before it runs.
     quiet: true
 
-- name: 'BEGIN | Assert PDQ Inventory License Valid'
-  when: (state | default('present') | string | lower | trim) == 'present'
-  vars:
-    __inventory_license_start_marker__: '--- START LICENSE ---'
-    __inventory_license_end_marker__: '--- END LICENSE ---'
-    __inventory_license_crlf__: "\r\n"
-    __inventory_license_cr__: "\r"
-    __inventory_license_lf__: "\n"
-    __inventory_license_lines__: >-
-      {{
-        (config.license | default('', true) | string)
-        .replace(__inventory_license_crlf__, __inventory_license_lf__)
-        .replace(__inventory_license_cr__, __inventory_license_lf__)
-        .split(__inventory_license_lf__)
-      }}
-    __inventory_license_valid__: >-
-      {{
-        (config.license | default(none)) is string
-        and (__inventory_license_lines__
-        | select('equalto', __inventory_license_start_marker__) | list | length) == 1
-        and (__inventory_license_lines__
-        | select('equalto', __inventory_license_end_marker__) | list | length) == 1
-        and (__inventory_license_lines__ + [__inventory_license_end_marker__]
-        ).index(__inventory_license_end_marker__)
-        > (__inventory_license_lines__ + [__inventory_license_start_marker__]
-        ).index(__inventory_license_start_marker__) + 1
-        and ((__inventory_license_lines__ | list)[
-          (((__inventory_license_lines__ | list)
-          + [__inventory_license_start_marker__]).index(
-          __inventory_license_start_marker__) | int) + 1:
-          (((__inventory_license_lines__ | list)
-          + [__inventory_license_end_marker__]).index(
-          __inventory_license_end_marker__) | int)
-        ] | join('') | regex_search('[A-Za-z0-9]')) is not none
-      }}
+- name: 'VALIDATE | Require The Product Identity Probes'
   ansible.builtin.assert:
     that:
-      - __inventory_license_valid__
+      - pdq_inventory_running.arp.display_name | default('') | length > 0
+      - pdq_inventory_running.service_name | default('') | length > 0
+      - pdq_inventory_running.rbac_enabled is boolean
+      - pdq_inventory_running.preferences.logging.record_error is boolean
+      - pdq_inventory_running.preferences.logging.record_warning is boolean
+      - pdq_inventory_running.preferences.logging.record_informational is boolean
+      - pdq_inventory_running.preferences.logging.record_debug is boolean
+      - pdq_inventory_running.server.port | int > 0
+      - pdq_inventory_running.server.port | int < 65536
+      - pdq_inventory_running.server.listen_addresses is none
+        or pdq_inventory_running.server.listen_addresses is sequence
+      - pdq_inventory_running.cli_path | default('') is match('^[A-Za-z]:\\\\')
+      - pdq_inventory_running.service_path | default('') is match('^[A-Za-z]:\\\\')
+      - pdq_inventory_running.preferences is mapping
+      - pdq_inventory_running.preferences | dict2items | rejectattr('value', 'mapping')
+        | list | length == 0
+      - pdq_inventory_running.install.timeout_seconds | int > 0
+      - pdq_inventory_running.database.directory | default('') is match('^[^\\\\/:]+$')
+      - (pdq_inventory_running.server.listen_addresses or [])
+        | reject('match', '.+') | list | length == 0
+      - pdq_inventory_running.console_users is sequence
+      - pdq_inventory_running.console_users is not string
     fail_msg: >-
-      pdq_inventory.license is required and must be a string containing exactly one whole-line
-      --- START LICENSE --- marker, body content with at least one alphanumeric character, and
-      exactly one later whole-line --- END LICENSE --- marker.
+      Refusing to deploy: an identity, layout, or preference input is missing or malformed. The
+      product's display and service names, its command-line and service paths, the install timeout,
+      the database directory name, and the server port must all be present and well formed.
+      Preferences must be a map of pages; its logging severity booleans must hold the shapes the
+      role writes; and console_users must be a list of names. See meta/main.yml.
     quiet: true

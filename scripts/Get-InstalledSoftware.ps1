@@ -133,6 +133,11 @@ Param (
 #region ------ [ Initialization ] ------------------------------------------------------------ #
 Write-Debug -Message:'Entering Stage: Initialization'
 
+# The module runs this script in check mode because it declares SupportsShouldProcess, and injects
+# -WhatIf when it does. This script decides check mode from $Ansible.CheckMode, so -WhatIf is
+# neutralised here; left on, it would suppress the New-Variable setup below and the cleanups.
+$WhatIfPreference = $false
+
 # Initialize STATIC log level names, indexed by LogLevel digit position.
 New-Variable -Force -Name:'LOG_LEVELS' -Option:('Private', 'ReadOnly') -Value:(
   [System.String[]]@('Verbose', 'Debug', 'Information', 'Warning', 'Error', 'Fatal')
@@ -232,9 +237,10 @@ Write-Debug -Message:'Entering Stage: Main'
 
 # Walk each root that exists and collect every registration whose display name
 # matches exactly. A missing root is skipped: a 32-bit-only machine has no
-# Wow6432Node hive, which is a fact about the machine and not a failure. An
-# unreadable subkey is likewise skipped rather than fatal, because one
-# permission-denied neighbour must not hide an otherwise healthy registration.
+# Wow6432Node hive, which is a fact about the machine, not a failure. A root that
+# exists but cannot be READ is fatal, not skipped -- a denied or truncated read
+# could hide the installed product and report it absent, authorising a reinstall
+# over a working copy. That is why the reads below carry no error suppression.
 $Entries = @(
   ForEach ($Root In $UNINSTALL_ROOTS) {
     If (-Not (Test-Path -LiteralPath:$Root)) {
@@ -260,18 +266,15 @@ $Entries = @(
         Continue
       }
 
-      # The ProductCode an MSI registers under is embedded in its uninstall string, and is what
-      # ansible.windows.win_package needs to remove the product. Read from the machine, never
-      # pinned: the GUID changes with every release. Empty for a non-MSI product.
-      #
-      # No derived uninstall COMMAND is published. The module owns the uninstall, and the raw
-      # UninstallString is already in the registration below for anything that wants it.
-      # The ProductCode is the uninstall SUBKEY NAME -- Windows Installer's own contract -- not a
-      # value reverse-parsed from an uninstall string a tampered registration could redirect.
-      # Empty for a non-MSI product, whose key name is not a GUID.
+      # The ProductCode ansible.windows.win_package needs to remove the product is the uninstall
+      # SUBKEY NAME -- Windows Installer's own contract -- read from the machine, never pinned (the
+      # GUID changes with every release) and never reverse-parsed from an uninstall string a
+      # tampered registration could redirect. Matched only in the braced {GUID} form the installer
+      # writes, so an ordinary key whose name merely looks like a GUID is not mistaken for one;
+      # empty for a non-MSI product. The raw UninstallString stays in the registration for callers.
       $ProductId = [System.String]::Empty
       $Guid = [System.Guid]::Empty
-      If ([System.Guid]::TryParse($Key.PSChildName, [Ref]$Guid)) {
+      If ([System.Guid]::TryParseExact($Key.PSChildName, 'B', [Ref]$Guid)) {
         $ProductId = $Key.PSChildName
       }
 
@@ -341,7 +344,6 @@ $Result = [PSCustomObject]@{
   check_mode        = $Ansible.CheckMode
   count             = $Entries.Count
   entries           = $Entries
-  product_ids       = @($Entries | ForEach-Object { $_.product_id } | Where-Object { $_ })
   installed_version = $InstalledVersion
   msg               = $Message
 }

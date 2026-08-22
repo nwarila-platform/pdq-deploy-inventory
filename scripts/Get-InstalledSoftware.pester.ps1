@@ -218,7 +218,15 @@ Describe 'Get-InstalledSoftware' {
       }
       $Result = & $script:ScriptPath -DisplayName 'PDQ Deploy' -Version '20.1.8.0' | ConvertFrom-Json
       $Result.entries[0].product_id | Should -Be '{4E9FA177-A200-4DFC-9DC6-9D0290FCAAC2}'
-      $Result.product_ids | Should -Contain '{4E9FA177-A200-4DFC-9DC6-9D0290FCAAC2}'
+    }
+
+    It 'treats only the braced {GUID} key name as a ProductCode, not a bare GUID' {
+      $global:FakeRegistry[$script:Native] += @{
+        DisplayName = 'PDQ Deploy'; DisplayVersion = '20.1.8.0'
+        PSChildName = '4E9FA177-A200-4DFC-9DC6-9D0290FCAAC2'
+      }
+      $Result = & $script:ScriptPath -DisplayName 'PDQ Deploy' -Version '20.1.8.0' | ConvertFrom-Json
+      $Result.entries[0].product_id | Should -BeNullOrEmpty
     }
 
     It 'reports ambiguity without crashing when a duplicate lacks a version' {
@@ -403,9 +411,11 @@ Describe 'Get-InstalledSoftware' {
     }
 
     It 'reports NoChange in check mode too, and carries the mode through' {
+      # -WhatIf reproduces the transport: win_powershell injects it for a SupportsShouldProcess
+      # script in check mode, and the script must survive it rather than lose its New-Variable setup.
       $Context = New-AnsibleContext -CheckMode
 
-      & $script:ScriptPath -DisplayName 'PDQ Deploy' -Version '20.1.8.0' | Out-Null
+      & $script:ScriptPath -DisplayName 'PDQ Deploy' -Version '20.1.8.0' -WhatIf | Out-Null
 
       $Context.Changed | Should -BeFalse
       $Context.Result.check_mode | Should -BeTrue

@@ -238,7 +238,7 @@ Describe 'Set-PdqRegistration' {
 
     It 'reports the would-be change in check mode and writes nothing' {
       $Null = New-AnsibleContext -CheckMode
-      & $script:ScriptPath -Email 'someone@example.com'
+      & $script:ScriptPath -Email 'someone@example.com' -WhatIf
       $global:Ansible.Changed | Should -BeTrue
       $global:WriteCalls | Should -Be 0
       $global:FakeRegistrations.Count | Should -Be 0

@@ -14,13 +14,13 @@
         convention.
 
         The descriptor is handled as its SDDL string from end to end. The desired form is
-        supplied by the caller: protected (no inheritance from the volume root), SYSTEM and Administrators at
-        full control, Users at modify, everything inheriting to children. Windows normalises an
-        applied descriptor -- P comes back as PAI -- so the constant is the NORMALISED form, read
-        back from a host after application, and a converged directory therefore compares equal
-        byte for byte. Apply-and-verify: after a write the descriptor is read again and must equal
-        the constant exactly, so a write that did not take fails the run instead of reporting a
-        change that did not happen.
+        supplied by the caller: protected (no inheritance from the volume root), SYSTEM and
+        Administrators at full control, Users at read and execute, everything inheriting to
+        children. Windows normalises an applied descriptor -- P comes back as PAI -- so the caller
+        supplies the NORMALISED form, read back from a host after application, and a converged
+        directory therefore compares equal byte for byte. Apply-and-verify: after a write the
+        descriptor is read again and must equal the desired form exactly, so a write that did not
+        take fails the run instead of reporting a change that did not happen.
 
         The OWNER is deliberately untouched: only the DACL section of the descriptor is read,
         compared and written.
@@ -116,11 +116,15 @@ Param (
 #region ------ [ Initialization ] ------------------------------------------------------------ #
 Write-Debug -Message:'Entering Stage: Initialization'
 
+# The module runs this script in check mode because it declares SupportsShouldProcess, and injects
+# -WhatIf when it does. This script decides check mode from $Ansible.CheckMode, so -WhatIf is
+# neutralised here; left on, it would suppress the New-Variable setup below and the cleanups.
+$WhatIfPreference = $false
+
 # Initialize STATIC log level names, indexed by LogLevel digit position.
 New-Variable -Force -Name:'LOG_LEVELS' -Option:('Private', 'ReadOnly') -Value:(
   [System.String[]]@('Verbose', 'Debug', 'Information', 'Warning', 'Error', 'Fatal')
 )
-
 
 # Initialize the custom stream preferences; the built-in ones already exist.
 New-Variable -Verbose:$False -Force -Name:'ErrorPreference' -Value:(
@@ -191,14 +195,12 @@ If ($StandaloneRun) {
   }
 }
 
-
-
 #endregion --- [ Initialization ] ------------------------------------------------------------ #
 
 #region ------ [ Main ] ---------------------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Main'
 
-# The descriptor travels as a string: read the DACL section, compare to the constant, and only
+# The descriptor travels as a string: read the DACL section, compare to the desired form, and only
 # touch the directory when they differ. Everything platform-bound goes through Get-Acl/Set-Acl,
 # which is also what lets the spec exercise this file on a build host with no NTFS.
 # No change is the default: a throw in the read below must not inherit the transport's true.

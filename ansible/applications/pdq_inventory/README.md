@@ -5,8 +5,8 @@ Windows. In one converge it installs the product, applies the licence, runs the 
 under the shared PDQ service account, places the database on its dedicated drive, sets Central
 Server mode and the console port, applies the product's preferences, seeds the per-user console
 defaults, authorises the console users, chooses the event-log severities, and records the
-registration that would otherwise stop the first console with a popup. PDQ Inventory is a scanner, so — unlike `pdq_deploy` — it publishes **no
-package repository and no network share**.
+registration that would otherwise stop the first console with a popup. PDQ Inventory is a
+scanner, so — unlike `pdq_deploy` — it publishes **no package repository and no network share**.
 
 Everything moves through the controller: it fetches each artifact from S3 and hands it to the
 target, so the guest never receives cloud credentials. Every artifact (installer, licence, the

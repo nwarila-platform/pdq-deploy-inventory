@@ -63,6 +63,14 @@ pdq_deploy_defaults:
   # input is a boolean; the dword the registry stores is the role's business, not the caller's.
   rbac_enabled: false
 
+  # Who may open the console. A silent install authorises no one, and RBAC being off does not change
+  # that -- the product still requires an explicit Console User, not merely local administrator
+  # rights. Defaults to the built-in Administrators group so any local administrator can open the
+  # console; a site models finer access by naming individual accounts instead. Local accounts take
+  # the bare name.
+  console_users:
+    - 'Administrators'
+
   server:
     port: 6336
 

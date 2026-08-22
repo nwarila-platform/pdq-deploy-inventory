@@ -821,6 +821,48 @@
 
     #endregion --- [ Process: Apply The Product Settings ] ------------------------------------ #
 
+    #region ------ [ Process: Authorize The Console Users ] ----------------------------------- #
+    # Who may open the console. A silent install authorises no one, and RBAC being off leaves it
+    # that way -- the product requires each account or group to be an explicit Console User, not
+    # merely a local administrator (PDQ documents this, and it is why an un-listed host opens to no
+    # one). Applied through the command line as the service account, the only identity the product
+    # answers. -Add reports success whether or not the name was already authorised, so the current
+    # list is read first and only missing names are added, keeping the run idempotent. Runs in the
+    # command-line zone because the service must be up -- the same reason the settings above do.
+
+    - name: 'PROCESS | Authorize The Console Users'
+      become: true
+      become_method: 'ansible.builtin.runas'
+      become_user: "{{ pdq_deploy_running.service_account.name }}"
+      vars:
+        ansible_become_flags: 'logon_type=batch'
+        ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
+        __pdq_cli__: 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
+
+      block:
+        - name: 'PROCESS | Read The Authorized Console Users'
+          ansible.windows.win_command:
+            argv:
+              - "{{ __pdq_cli__ }}"
+              - 'ConsoleUsers'
+          changed_when: false
+          register: '__pdq_deploy_console_users__'
+
+        - name: 'PROCESS | Add The Console Users The Product Does Not Yet Carry'
+          ansible.windows.win_command:
+            argv:
+              - "{{ __pdq_cli__ }}"
+              - 'ConsoleUsers'
+              - '-Add'
+              - "{{ item }}"
+          loop: "{{ pdq_deploy_running.console_users }}"
+          loop_control:
+            label: "{{ item }}"
+          when: item not in __pdq_deploy_console_users__.stdout
+          changed_when: true
+
+    #endregion --- [ Process: Authorize The Console Users ] ----------------------------------- #
+
     #region ------ [ Process: Choose The Event Log Severities ] ------------------------------- #
     # Which severities reach the Windows Application event log. The product keeps these under its
     # own Logging key and only creates that key when a console saves the preferences page

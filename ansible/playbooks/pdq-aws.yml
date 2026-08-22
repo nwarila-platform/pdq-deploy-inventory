@@ -3,7 +3,7 @@
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
 # Provisions the declared Windows data disks on the EPHEMERAL EC2 instance, then applies the PDQ
-# Deploy role. Runs from the COMPOSED tree only — in CI, .github/workflows/aws-deploy.yml
+# Deploy and PDQ Inventory roles. Runs from the COMPOSED tree only — in CI, .github/workflows/aws-deploy.yml
 # overlays this repository's roles into the pinned ansible-framework checkout and executes this
 # playbook against a dynamic EC2 inventory filtered to this run and verified against live EC2
 # tags, reached by direct SSH to the instance's public IPv4.
@@ -125,9 +125,9 @@
 
 #endregion --- [ Play: Windows Readiness ] ---------------------------------------------------- #
 
-#region ------ [ Play: PDQ Deploy ] ----------------------------------------------------------- #
+#region ------ [ Play: PDQ Deploy And Inventory ] ------------------------------------------- #
 
-- name: 'PLAY | PDQ Deploy (all-in-one Central Server, ephemeral AWS)'
+- name: 'PLAY | PDQ Deploy And Inventory (all-in-one Central Server, ephemeral AWS)'
   hosts: 'pdq_servers'
   gather_facts: false
   become: false
@@ -244,6 +244,53 @@
 
     #endregion --- [ Roles: PDQ Deploy ] ------------------------------------------------------ #
 
+    #region ------ [ Roles: PDQ Inventory ] --------------------------------------------------- #
+    - role: 'pdq_inventory'
+      vars:
+        pdq_inventory:
+
+          # Inventory ships its own installer from the application repository, verified on the
+          # GUEST against this digest immediately before it runs. Same layout as Deploy: the role
+          # composes <vendor>/<application>/<version>/<file> from this version, so only a version
+          # and a digest belong here.
+          installer:
+            bucket: "{{ aws_account_id }}-apprepo"
+            version: '20.1.8.0'
+            sha256: '48a486f3682cc01218993e72a8006163616166dd5f0fdcd1fab36724710fdbbf'
+
+          # The ONE Background Service User both products share. The password never appears here:
+          # only the object that holds it and the digest that pins it, the same object Deploy uses.
+          service_account:
+            bucket: "{{ aws_account_id }}-ansible"
+            object: 'applications/pdq/svc-pdq-password.txt'
+            sha256: 'd522139ebd26b7729f781d88aa9b41fcf189c6e59719ab3c46be32cd003ea729'
+
+          # Inventory has its OWN licence, distinct from Deploy's, in the -ansible bucket beside
+          # the other deployment material. Fetched as a string and written straight to the
+          # registry. The email is the address the licence was issued to: the role records it with
+          # the product (killing the first-console popup) and fails if it differs from the E-Mail
+          # inside the licence blob itself.
+          license:
+            bucket: "{{ aws_account_id }}-ansible"
+            object: 'applications/pdq/pdq-inventory-license.lic'
+            sha256: '2c6ef523580c2cfb4ee9c423ca2ae204091544e97322d2dd95cdfd6a99d7c2a5'
+            email: 'nicholas.warila@gmail.com'
+
+          # Inventory's database grows without bound, so it goes on its own volume (D) rather than
+          # the system disk. Only the letter belongs here; the folder beneath it is the role's
+          # business. Inventory publishes no repository -- it is a scanner, not a deployer.
+          database:
+            drive: 'D'
+
+          # The server answers consoles on the private address this host actually holds, assigned
+          # at launch. The public address is not usable: AWS translates it, so the interface only
+          # ever sees the private one, and binding to an address the host does not own fails at
+          # service start.
+          server:
+            listen_addresses: [ "{{ aws_private_ip_address }}" ]
+
+    #endregion --- [ Roles: PDQ Inventory ] --------------------------------------------------- #
+
   #endregion --- [ Roles ] -------------------------------------------------------------------- #
 
-#endregion --- [ Play: PDQ Deploy ] ----------------------------------------------------------- #
+#endregion --- [ Play: PDQ Deploy And Inventory ] ------------------------------------------- #

@@ -29,6 +29,8 @@
 !/ansible/applications/pdq_deploy/vars/
 !/ansible/applications/pdq_inventory/
 !/ansible/applications/pdq_inventory/defaults/
+!/ansible/applications/pdq_inventory/files/
+!/ansible/applications/pdq_inventory/handlers/
 !/ansible/applications/pdq_inventory/meta/
 !/ansible/applications/pdq_inventory/tasks/
 !/ansible/applications/pdq_inventory/vars/
@@ -83,6 +85,12 @@
 !/ansible/applications/pdq_deploy/vars/windows.yml
 !/ansible/applications/pdq_inventory/README.md
 !/ansible/applications/pdq_inventory/defaults/main.yml
+# The stubs name their source scripts under scripts/; the materialized files/*.ps1 are build
+# artifacts, deliberately NEVER allowlisted, so they cannot be committed.
+!/ansible/applications/pdq_inventory/files/Get-InstalledSoftware.ps1.stub
+!/ansible/applications/pdq_inventory/files/Set-PdqInventorySetting.ps1.stub
+!/ansible/applications/pdq_inventory/files/Set-PdqInventoryRegistration.ps1.stub
+!/ansible/applications/pdq_inventory/handlers/main.yml
 !/ansible/applications/pdq_inventory/meta/main.yml
 !/ansible/applications/pdq_inventory/tasks/clean_windows.yml
 !/ansible/applications/pdq_inventory/tasks/main.yml
@@ -123,6 +131,10 @@
 !/scripts/Set-PdqSetting.ps1
 !/scripts/Set-PdqRegistration.ps1
 !/scripts/Set-PdqRegistration.pester.ps1
+!/scripts/Set-PdqInventorySetting.ps1
+!/scripts/Set-PdqInventorySetting.pester.ps1
+!/scripts/Set-PdqInventoryRegistration.ps1
+!/scripts/Set-PdqInventoryRegistration.pester.ps1
 !/scripts/compose-and-run.sh
 !/scripts/materialize-role-scripts.sh
 

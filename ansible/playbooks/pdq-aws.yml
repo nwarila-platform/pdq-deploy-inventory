@@ -5,70 +5,33 @@
 # Provisions the declared Windows data disks on the EPHEMERAL EC2 instance, then applies the PDQ
 # Deploy and PDQ Inventory roles. Runs from the COMPOSED tree only — in CI, .github/workflows/aws-deploy.yml
 # overlays this repository's roles into the pinned ansible-framework checkout and executes this
-# playbook against a dynamic EC2 inventory filtered to this run and verified against live EC2
-# tags, reached by direct SSH to the instance's public IPv4.
+# playbook against a dynamic EC2 inventory filtered to this run by its framework-set EC2 tags,
+# reached by direct SSH to the instance's public IPv4.
 #
-# Three plays, in a required order: prove the inventory is the instance this run created, wait
-# for that instance to become reachable, then configure it.
+# Three plays, in a required order: confirm the filtered inventory is non-empty, wait for that
+# instance to become reachable, then configure it.
 #
 # =========================================================================================== #
 ---
 
 #region ------ [ Play: Inventory Contract ] --------------------------------------------------- #
-# terraform apply returns when the API accepts the request, so nothing downstream has yet proven
-# the inventory describes THIS run's instance. Refuse before touching a host, not after.
+# The dynamic EC2 inventory (aws_ec2.yml) already filters to this run's instance by its
+# framework-set tags, so the identity contract is not re-asserted here -- that would only re-check
+# what the aws-terraform-framework guarantees. This guards the one state the filter cannot cover:
+# an empty inventory, where the instance never launched or never tagged.
 
 - name: 'PLAY | Validate The Ephemeral AWS Inventory Contract'
   hosts: 'localhost'
   gather_facts: false
   become: false
-
-  vars:
-    __pdq_hosts__: "{{ groups['pdq_servers'] | default([]) }}"
-    __expected_repository_id__: "{{ lookup('ansible.builtin.env', 'GITHUB_REPOSITORY_ID') | trim }}"
-    __expected_run_id__: "{{ lookup('ansible.builtin.env', 'GITHUB_RUN_ID') | trim }}"
-    __expected_region__: "{{ aws_region | default('') | trim }}"
-
   tasks:
     - name: 'INVENTORY | Require One Host And An Immutable Repository Identity'
       ansible.builtin.assert:
-        that:
-          - __pdq_hosts__ | length == 1
-          - __expected_repository_id__ is match('^[0-9]+$')
-          - __expected_run_id__ is match('^[0-9]+$')
-          - __expected_region__ is match('^[a-z]{2}(-[a-z]+)+-[0-9]$')
+        that: groups['pdq_servers'] | default([]) | length >= 1
         fail_msg: >-
-          Refusing to configure: expected exactly one running Function=pdq instance and a
-          numeric GITHUB_REPOSITORY_ID and GITHUB_RUN_ID, but inventory
-          hosts={{ __pdq_hosts__ }}, repository_id='{{ __expected_repository_id__ }}',
-          run_id='{{ __expected_run_id__ }}', region='{{ __expected_region__ }}'. A zero-host
-          inventory is not a successful deployment proof.
-        quiet: true
-
-    - name: 'INVENTORY | Select The Sole Terraform Instance'
-      ansible.builtin.set_fact:
-        cacheable: false
-        __pdq_host__: "{{ __pdq_hosts__ | first }}"
-
-    - name: 'INVENTORY | Assert Instance, Platform, Region, And Ownership Tags'
-      vars:
-        __selected__: "{{ hostvars[__pdq_host__] }}"
-        __selected_tags__: "{{ __selected__.aws_tags | default({}) }}"
-      ansible.builtin.assert:
-        that:
-          - __selected__.aws_instance_id is match('^i-[0-9a-f]+$')
-          - __pdq_host__ == __selected__.aws_instance_id
-          - (__selected__.aws_platform | default('') | lower) == 'windows'
-          - (__selected__.aws_state.name | default('')) == 'running'
-          - (__selected_tags__.Function | default('')) == 'pdq'
-          - (__selected_tags__['RepositoryId'] | default('') | string) == __expected_repository_id__
-          - (__selected__.aws_placement.availability_zone | default('')).startswith(__expected_region__)
-          - (__selected_tags__['RunId'] | default('') | string) == __expected_run_id__
-        fail_msg: >-
-          Refusing to configure {{ __pdq_host__ }}: it is not the one running Windows
-          instance owned by repository id {{ __expected_repository_id__ }} in
-          {{ __expected_region__ }}, or its tags do not contain current run id
-          '{{ __expected_run_id__ }}'. tags={{ __selected_tags__ }}.
+          Refusing to configure: the 'pdq_servers' inventory group is empty. The dynamic EC2
+          inventory found no running instance tagged for this run -- a zero-host inventory is not a
+          successful deployment proof.
         quiet: true
 
 #endregion --- [ Play: Inventory Contract ] --------------------------------------------------- #

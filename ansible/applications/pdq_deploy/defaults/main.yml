@@ -98,8 +98,11 @@ pdq_deploy_defaults:
   # registry values, and the alerts/interface pages are per-user, seeded into the Default profile
   # (and the connection account's own, where the product has never written) so consoles start as
   # declared. Values are the product's own measured defaults (ExportSettings, v20.1.8.0,
-  # 2026-08-20), declared in full so a vendor moving one shows up as a reported change instead of
-  # silent drift. A playbook overrides individual keys; the loader merges recursively.
+  # 2026-08-20) -- which, for the settings the vendor publishes guidance on, ARE its best
+  # practices: automatic backups on, ten compressed backups kept, and 30-day deployment cleanup all
+  # match PDQ's own recommendations. Settings the vendor gives no published guidance on stay at the
+  # measured default rather than an invented preference. Declared in full so a vendor moving one
+  # shows up as a reported change instead of silent drift. A playbook overrides keys; loader merges.
   #
   # Two locations follow a declared-or-derived rule: the database backup location and the
   # verbose audit log directory are null by default, meaning the role places them beside the
@@ -145,7 +148,10 @@ pdq_deploy_defaults:
       allowed_retries: 72
       retry_interval: '01:00:00'
     logging:
-      send_anonymous_exception_data: true
+      # Off by deliberate choice -- data-egress hardening, NOT the product default (true) and not a
+      # PDQ recommendation; this deployment minimises what leaves the host. (usage_data.collect is
+      # already off by product default.)
+      send_anonymous_exception_data: false
       record_error: true
       record_warning: true
       record_informational: true

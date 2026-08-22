@@ -158,17 +158,17 @@ Describe 'Set-RepositoryAcl' {
       $Context.Result.msg | Should -Match 'already exact'
     }
 
-  It 'writes only the DACL section, never touching the audit descriptor' {
-    $global:FakeSddl = $script:Drifted
-    & $script:ScriptPath -Path 'F:\PDQ Repository' -Sddl $script:Desired | Out-Null
-    $global:FakeSetSection | Should -Be 'Access'
-  }
+    It 'writes only the DACL section, never touching the audit descriptor' {
+      $global:FakeSddl = $script:Drifted
+      & $script:ScriptPath -Path 'F:\PDQ Repository' -Sddl $script:Desired | Out-Null
+      $global:FakeSetSection | Should -Be 'Access'
+    }
 
     It 'reports the would-be change in check mode without writing' {
       $global:FakeSddl = $script:Drifted
       $Context = New-AnsibleContext -CheckMode
 
-      & $script:ScriptPath -Path 'F:\PDQ Repository' -Sddl $script:Desired | Out-Null
+      & $script:ScriptPath -Path 'F:\PDQ Repository' -Sddl $script:Desired -WhatIf | Out-Null
 
       $Context.Changed | Should -BeTrue
       $Context.Result.check_mode | Should -BeTrue

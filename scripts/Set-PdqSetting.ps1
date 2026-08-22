@@ -83,6 +83,11 @@ Param (
 #region ------ [ Initialization ] ------------------------------------------------------------ #
 Write-Debug -Message:'Entering Stage: Initialization'
 
+# The module runs this script in check mode because it declares SupportsShouldProcess, and injects
+# -WhatIf when it does. This script decides check mode from $Ansible.CheckMode, so -WhatIf is
+# neutralised here; left on, it would suppress the New-Variable setup below and the cleanups.
+$WhatIfPreference = $false
+
 # Log level names, by LogLevel digit position.
 New-Variable -Force -Name:'LOG_LEVELS' -Option:('Private', 'ReadOnly') -Value:(
   [System.String[]]@('Verbose', 'Debug', 'Information', 'Warning', 'Error', 'Fatal')
@@ -520,7 +525,7 @@ Try {
               If ($CliWritten[$PSItem] -eq [System.String]::Empty) {
                 $Persisted.ContainsKey($PSItem)
               } Else {
-                $Persisted[$PSItem] -ne $CliWritten[$PSItem]
+                $Persisted[$PSItem] -cne $CliWritten[$PSItem]
               }
             })
           If ($Draining.Count -eq 0) {

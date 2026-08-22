@@ -97,10 +97,10 @@ pdq_deploy_defaults:
   # verbose audit log directory are null by default, meaning the role places them beside the
   # database on its dedicated drive; declaring a path overrides that. Not offered at all:
   # repository.path (derived from the share the role publishes, so folder, share and product
-  # cannot disagree); the five read-only audit-log names (spinner bounds and a fixed label --
-  # FIND-18, dropped from the script's table entirely so declaring one fails as an unknown name);
-  # the deployments page's Inventory scan profile (it names an object inside PDQ
-  # Inventory).
+  # cannot disagree) and the five read-only audit-log names (spinner bounds and a fixed label --
+  # FIND-18, dropped from the script's table entirely so declaring one fails as an unknown name).
+  # The deployments page's Inventory scan profile is accepted but left undefaulted here: it names
+  # an object inside PDQ Inventory that only the caller can know.
   preferences:
     alerts:
       auto_update_check_enabled: true

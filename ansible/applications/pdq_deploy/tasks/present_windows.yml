@@ -499,7 +499,7 @@
     # by entry: the native module never removes an entry it did not write, so a hand-added
     # grant -- Everyone at full control was the measured case, 2026-08-20 -- survived every
     # converge. The script owns the whole list: inheritance from the volume root severed,
-    # SYSTEM and Administrators full control, Users modify, and ANY other entry removed. The
+    # SYSTEM and Administrators full control, Users read and execute, and ANY other entry removed. The
     # service account is named nowhere: it is an Administrator by vendor requirement, and
     # repeating that would be a second place to maintain one fact. The referenced .ps1 is
     # MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role tracks only
@@ -884,10 +884,11 @@
     # are seeded only when declared -- an undeclared one is dropped by the reject filter, leaving
     # the product's own first-run choice.
     #
-    # vars is a list because each row is the same shape; the reject drops undeclared strings.
+    # The seed rows are composed once below; each of the three tasks derives from that one list,
+    # dropping the string rows left undeclared so the product's own first-run choice stands.
 
-    - name: 'PROCESS | Seed The Console Defaults For New Users'
-      vars:
+    - name: 'PROCESS | Compose The Per-User Console Seed'
+      ansible.builtin.set_fact:
         __console_seed__:
           - name: 'Disable Splash Screen'
             subkey: 'PDQ Deploy Console\Settings\Startup'
@@ -909,6 +910,11 @@
             subkey: 'PDQ Deploy\AutoUpdateChecker'
             data: "{{ pdq_deploy_running.preferences.alerts.release_channel | default('', true) }}"
             type: 'string'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Seed The Console Defaults For New Users'
+      vars:
         __console_declared__: "{{ __console_seed__ | rejectattr('data', 'equalto', '') | list }}"
 
       ansible.windows.win_regedit:
@@ -926,12 +932,6 @@
 
     - name: 'PROCESS | Read The Connection Account Console Defaults'
       vars:
-        __console_seed__:
-          - { name: 'Disable Splash Screen', subkey: 'PDQ Deploy Console\Settings\Startup', data: "{{ pdq_deploy_running.preferences.interface.disable_splash_screen | int }}", type: 'dword' }
-          - { name: 'Auto Check Enabled', subkey: 'PDQ Deploy\AutoUpdateChecker', data: "{{ pdq_deploy_running.preferences.alerts.auto_update_check_enabled | int }}", type: 'dword' }
-          - { name: 'Show Webcast Alerts', subkey: 'PDQ Deploy\AutoUpdateChecker', data: "{{ pdq_deploy_running.preferences.alerts.show_webcast_alerts | int }}", type: 'dword' }
-          - { name: 'Color Theme', subkey: 'PDQ Deploy Console\Settings\Startup', data: "{{ pdq_deploy_running.preferences.interface.color_theme | default('', true) }}", type: 'string' }
-          - { name: 'ReleaseChannel', subkey: 'PDQ Deploy\AutoUpdateChecker', data: "{{ pdq_deploy_running.preferences.alerts.release_channel | default('', true) }}", type: 'string' }
         __console_declared__: "{{ __console_seed__ | rejectattr('data', 'equalto', '') | list }}"
       register: '__pdq_deploy_own_console__'
 

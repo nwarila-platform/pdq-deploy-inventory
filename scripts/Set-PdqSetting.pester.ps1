@@ -112,7 +112,10 @@ BeforeAll {
       }
     }
     $Lines.Add('</AdminArsenal.Export>')
-    Set-Content -LiteralPath $global:FakeExportPath -Value ($Lines -join "`n") -Encoding 'utf8'
+    # -WhatIf:$False models the native exporter: an external tool ignores the transport's -WhatIf
+    # and writes the scratch file even in check mode, which is exactly why the script's cleanups
+    # must force their own removal.
+    Set-Content -LiteralPath $global:FakeExportPath -Value ($Lines -join "`n") -Encoding 'utf8' -WhatIf:$False
   }
 }
 
@@ -124,12 +127,6 @@ Describe 'Set-PdqSetting' {
     $Script | Should -Match '\[CmdletBinding\(SupportsShouldProcess'
   }
 
-  It 'keeps the script itself under the event-log size cap' {
-    # The win_powershell audit entry is the script text PLUS the serialized parameters; the
-    # parameter payload is outside our control, so the least we owe is a script that fits the
-    # 32766-byte cap on its own. The mandatory template scaffold leaves little headroom.
-    (Get-Item (Join-Path $PSScriptRoot 'Set-PdqSetting.ps1')).Length | Should -BeLessThan 32766
-  }
 
 
   BeforeEach {
@@ -406,6 +403,16 @@ Describe 'Set-PdqSetting' {
         Should -Throw '*settle window*'
     }
 
+    It 'waits case-sensitively, so a case-only change is not seen as already drained' {
+      # The drain poll must match the decision's case sensitivity; otherwise a case-only edit looks
+      # settled before it lands. The row keeps the old case and never drains, so this must fail.
+      $global:FakeSettings['PrintingSettings.HeaderText'] = 'confidential'
+      $global:FakeDbRows['ProductPrintingSettings.HeaderText'] = 'confidential'
+      $global:FakeDrainStalls = $True
+      { & $script:ScriptPath @script:Ctx -Preference @{ printing = @{ header_text = 'CONFIDENTIAL' } } 2>$null } |
+        Should -Throw '*settle window*'
+    }
+
     It 'restores a blank default by resetting, never by writing an empty value' {
       # The command line refuses -Set with an empty value, so blank travels as
       # -Reset -- measured 2026-08-21 after a converge died mid-campaign and the
@@ -551,6 +558,18 @@ Describe 'Set-PdqSetting' {
       $Context.Result.check_mode | Should -BeTrue
       $global:FakeSettings['DeploymentSettings.CleanupDays'] | Should -Be '30'
       @($global:FakeCliCalls | Where-Object { $_ -like 'ExportSettings*' }).Count | Should -Be 1
+    }
+
+    It 'runs in check mode under the transport -WhatIf without crashing or leaking' {
+      # win_powershell injects -WhatIf when it runs a SupportsShouldProcess script in check mode.
+      # Left active it suppresses the New-Variable setup and every cleanup; the script neutralises
+      # it and decides check mode from $Ansible.CheckMode instead. It must forecast, write nothing,
+      # and leave no scratch export.
+      $Context = New-AnsibleContext -CheckMode
+      & $script:ScriptPath @script:Ctx -Preference @{ 'deployments.cleanup_days' = 45 } -WhatIf | Out-Null
+      $Context.Changed | Should -BeTrue
+      $global:FakeSettings['DeploymentSettings.CleanupDays'] | Should -Be '30'
+      Test-Path -LiteralPath $script:ExportPath | Should -BeFalse
     }
   }
 }

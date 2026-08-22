@@ -54,6 +54,9 @@
       - pdq_inventory_running.preferences.logging.record_warning is boolean
       - pdq_inventory_running.preferences.logging.record_informational is boolean
       - pdq_inventory_running.preferences.logging.record_debug is boolean
+      - pdq_inventory_running.preferences.interface.disable_splash_screen is boolean
+      - pdq_inventory_running.preferences.alerts.auto_update_check_enabled is boolean
+      - pdq_inventory_running.preferences.alerts.show_webcast_alerts is boolean
       - pdq_inventory_running.server.port | int > 0
       - pdq_inventory_running.server.port | int < 65536
       - pdq_inventory_running.server.listen_addresses is none
@@ -73,6 +76,6 @@
       Refusing to deploy: an identity, layout, or preference input is missing or malformed. The
       product's display and service names, its command-line and service paths, the install timeout,
       the database directory name, and the server port must all be present and well formed.
-      Preferences must be a map of pages; its logging severity booleans must hold the shapes the
-      role writes; and console_users must be a list of names. See meta/main.yml.
+      Preferences must be a map of pages; its logging-severity and per-user seed booleans must hold
+      the shapes the role writes; and console_users must be a list of names. See meta/main.yml.
     quiet: true

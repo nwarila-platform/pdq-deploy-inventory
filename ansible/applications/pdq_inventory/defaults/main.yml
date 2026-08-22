@@ -143,6 +143,9 @@ pdq_inventory_defaults:
       wake_on_lan: false
       cleanup_log_days: 14
       max_stored_scan_output_size: 268435456
+    # Unlike PDQ Deploy, the Inventory console exposes no machine-wide service-manager TCP control
+    # (measured 2026-08-22: absent from Inventory's settings surface). In the co-located all-in-one
+    # the Deploy role owns that one machine-wide value, so Inventory neither sets nor offers it.
     performance:
       total_concurrent_targets: 32
       scan_timeout_minutes: 10

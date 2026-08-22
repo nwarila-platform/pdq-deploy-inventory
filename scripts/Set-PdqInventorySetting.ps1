@@ -332,11 +332,7 @@ ForEach ($Given In @($Flat.Keys)) {
     $StoreName[$Entry.Name] = $Entry.Store
   }
   If ($Entry.ContainsKey('Unexported')) {
-    If ([System.String]::IsNullOrEmpty([System.String]$Setting[$Entry.Name])) {
-      # Verified against its database ROW, an export-invisible setting stored as no row has
-      # nothing to read back, so blank would fail verification forever.
-      Throw ('{0} cannot be set blank: it is not published by the export' -f $Given)
-    }
+    # Verified against its database row rather than the export, which never publishes it.
     $Unexported[$Entry.Name] = $True
   }
 }

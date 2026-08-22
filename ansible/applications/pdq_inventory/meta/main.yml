@@ -20,6 +20,14 @@
 #                                   compares it against the installed console to stay idempotent.
 #   pdq_inventory.installer.sha256  Lowercase 64-character digest of that object. Verified on the
 #                                   GUEST immediately before execution — the copy that actually runs.
+#   pdq_inventory.license.email     Address the licence was issued to; recorded with the product to
+#                                   kill the first-console popup, and proven to equal the E-Mail
+#                                   inside the licence blob before it is written.
+#   pdq_inventory.service_account.bucket  S3 bucket holding the shared service-account password.
+#   pdq_inventory.service_account.object  Object key of that password object.
+#   pdq_inventory.service_account.sha256  Lowercase 64-character digest of that object.
+#   pdq_inventory.database.drive    Drive letter the dedicated database volume is mounted at on the
+#                                   guest; the role consumes the letter, it does not provision the disk.
 # The role fetches every object through the CONTROLLER. The guest is never given cloud
 # credentials.
 # =========================================================================================== #
@@ -32,7 +40,7 @@ galaxy_info:
     PDQ Inventory installation for Windows Server. Fetches the pinned installer from S3 through the
     controller, verifies its digest on the guest before executing it, and installs silently.
     Idempotent on the install marker the vendor removes at uninstall, paired with the installed
-    console version. Licensing is a separate capability.
+    console version. Applies the pinned licence and proves Enterprise mode as part of the converge.
   license: 'MIT'
   min_ansible_version: '2.17'
   platforms:

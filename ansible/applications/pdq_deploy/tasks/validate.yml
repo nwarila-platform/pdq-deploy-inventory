@@ -21,6 +21,7 @@
       - pdq_deploy_running.license.bucket | default('') | length > 0
       - pdq_deploy_running.license.object | default('') | length > 0
       - pdq_deploy_running.license.sha256 | default('') is match('^[0-9a-f]{64}$')
+      - pdq_deploy_running.license.email | default('') | length > 0
       - pdq_deploy_running.service_account.name | default('') | length > 0
       - pdq_deploy_running.database.drive | default('') is match('^[A-Za-z]$')
       - pdq_deploy_running.repository.drive | default('') is match('^[A-Za-z]$')
@@ -28,25 +29,20 @@
       - pdq_deploy_running.service_account.object | default('') | length > 0
       - pdq_deploy_running.service_account.sha256 | default('') is match('^[0-9a-f]{64}$')
     fail_msg: >-
-      Refusing to deploy: the artifact source is incomplete. The playbook must supply
-      an installer declaring its bucket, a path, a four-part version, and a
-      lowercase 64-character sha256, because the object is verified against its digest before it
-      executes. The licence names its own object in the same bucket and the registry key the
-      product reads it from.
-      See meta/main.yml for the full input contract.
+      Refusing to deploy: a required input is missing or malformed. The playbook must supply the
+      installer (bucket, path, four-part version, lowercase 64-char sha256); the licence (bucket,
+      object, sha256, and the email it was issued to); the service-account password (bucket,
+      object, sha256) and its name; and one drive letter each for the database and the repository.
+      Every artifact is verified against its pinned digest before it is used. See meta/main.yml.
     quiet: true
 
-- name: 'VALIDATE | Require A Usable Install Contract'
+- name: 'VALIDATE | Require An Absolute Staging Directory'
   ansible.builtin.assert:
     that:
       - pdq_deploy_running.install.staging_dir is match('^[A-Za-z]:\\\\')
     fail_msg: >-
-      Refusing to deploy: the install contract is malformed. staging_dir must be an absolute
-      Windows path, the install timeout a positive number, the database and repository
-      directories plain folder NAMES on their dedicated drives, the share name a legal SMB name,
-      every listen address a non-empty string, and preferences a map of PAGES exactly as the
-      console groups them. The repository path is never declared: the role derives it from
-      the share it publishes, so the product cannot be aimed somewhere the role never built.
+      Refusing to deploy: install.staging_dir must be an absolute, drive-letter-rooted Windows
+      path -- the installer is copied there on the guest before it runs.
     quiet: true
 
 - name: 'VALIDATE | Require The Product Identity Probes'
@@ -80,8 +76,13 @@
       - pdq_deploy_running.repository.share_name | default('') is match('^[A-Za-z0-9_$. -]+$')
       - (pdq_deploy_running.server.listen_addresses or [])
         | reject('match', '.+') | list | length == 0
+      - pdq_deploy_running.console_users is sequence
+      - pdq_deploy_running.console_users is not string
     fail_msg: >-
-      Refusing to deploy: the product identity probes are incomplete. Install state is read from
-      Add/Remove Programs, so a display name is required, and the service name is required as a
-      postcondition. The uninstall roots are not settings — the read script owns them.
+      Refusing to deploy: an identity, layout, or preference input is missing or malformed. The
+      product's display and service names, its command-line and service paths, the install timeout,
+      the database and repository directory names, the share name, and the server port must all be
+      present and well formed. Preferences must be a map of pages that never declares a derived
+      repository path; its booleans and the service-manager mode must hold the shapes the role
+      writes; and console_users must be a list of names. See meta/main.yml.
     quiet: true

@@ -79,9 +79,11 @@
         PS> ./Get-InstalledSoftware.ps1 -DisplayName 'PDQ Deploy' -Version '20.1.8.0'
 
     .OUTPUTS
-        System.String
+        One object carrying action_required, changed, check_mode, count, entries,
+        installed_version and msg.
     #>
 [CmdletBinding(SupportsShouldProcess)]
+[OutputType([System.Void])]
 Param (
   [Parameter(
     DontShow = $False,

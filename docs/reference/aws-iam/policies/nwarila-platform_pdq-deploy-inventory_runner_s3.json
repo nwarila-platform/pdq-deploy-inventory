@@ -43,12 +43,12 @@
       }
     },
     {
-      "Sid": "ReadOnlyTheDeployInstaller",
+      "Sid": "ReadOnlyThePDQInstaller",
       "Effect": "Allow",
       "Action": "s3:GetObject",
       "Resource": [
-        "arn:aws:s3:::<account-id>-apprepo/PDQ/Deploy/*/*.exe",
-        "arn:aws:s3:::<account-id>-apprepo/PDQ/Inventory/*/*.exe"
+        "arn:aws:s3:::<account-id>-apprepo/PDQ.com/PDQ Deploy/*/*.exe",
+        "arn:aws:s3:::<account-id>-apprepo/PDQ.com/PDQ Inventory/*/*.exe"
       ],
       "Condition": {
         "StringEquals": {

@@ -63,7 +63,7 @@ esac
 COMPOSE_PLAYBOOK_PATH="${target}"
 
 # --- 0b. Inventory selection (optional override, fail closed before any side effect) --------- #
-COMPOSE_INVENTORY_PATH="${REPO_ROOT}/ansible/inventory/vmware.yml"
+COMPOSE_INVENTORY_PATH="${REPO_ROOT}/ansible/inventory/aws_ec2.yml"
 if [[ -v COMPOSE_INVENTORY ]]; then
     if [ -z "${COMPOSE_INVENTORY}" ]; then
         printf '!! COMPOSE_INVENTORY resolved path is empty: %q\n' "${COMPOSE_INVENTORY}" >&2

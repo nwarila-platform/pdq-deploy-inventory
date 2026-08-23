@@ -62,7 +62,6 @@
 !/.github/workflows/aws-deploy.yml
 !/.github/workflows/powershell.yml
 !/.github/terraform-framework-pin
-!/.github/ansible-framework-pin
 
 # --- [ allowed: the ansible tree ] ---------------------------------------------------------- #
 !/ansible/applications/pdq_deploy/README.md
@@ -74,6 +73,7 @@
 !/ansible/applications/pdq_deploy/files/Set-RepositoryAcl.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqSetting.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqRegistration.ps1.stub
+!/ansible/applications/pdq_deploy/files/Set-PdqVariable.ps1.stub
 !/ansible/applications/pdq_deploy/handlers/
 !/ansible/applications/pdq_deploy/handlers/main.yml
 !/ansible/applications/pdq_deploy/meta/main.yml
@@ -90,6 +90,7 @@
 !/ansible/applications/pdq_inventory/files/Get-InstalledSoftware.ps1.stub
 !/ansible/applications/pdq_inventory/files/Set-PdqInventorySetting.ps1.stub
 !/ansible/applications/pdq_inventory/files/Set-PdqInventoryRegistration.ps1.stub
+!/ansible/applications/pdq_inventory/files/Set-PdqVariable.ps1.stub
 !/ansible/applications/pdq_inventory/handlers/main.yml
 !/ansible/applications/pdq_inventory/meta/main.yml
 !/ansible/applications/pdq_inventory/tasks/clean_windows.yml
@@ -135,6 +136,8 @@
 !/scripts/Set-PdqInventorySetting.pester.ps1
 !/scripts/Set-PdqInventoryRegistration.ps1
 !/scripts/Set-PdqInventoryRegistration.pester.ps1
+!/scripts/Set-PdqVariable.ps1
+!/scripts/Set-PdqVariable.pester.ps1
 !/scripts/compose-and-run.sh
 !/scripts/materialize-role-scripts.sh
 

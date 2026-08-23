@@ -33,6 +33,6 @@ compose:
   ansible_shell_type: "'cmd'"
   ansible_ssh_private_key_file: "lookup('ansible.builtin.env', 'CI_PRIVATE_KEY')"
   # Keepalive: the settings settle poll waits minutes for the product to persist a fresh install's
-  # edits, running quiet with no SSH traffic. Without this the idle SSH-over-SSM connection times
+  # edits, running quiet with no SSH traffic. Without this the idle direct-SSH connection times
   # out and the result is lost as UNREACHABLE. 30s x 20 keeps it alive past the 600s settle deadline.
   ansible_ssh_common_args: "'-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=20'"

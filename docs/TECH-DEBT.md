@@ -48,3 +48,16 @@
   never as command-line literals.
 - **Fix:** add `no_log: true` to the shared loader's override-merge task under the
   loader-change policy, then refresh both local copies from an updated framework pin.
+
+## TD-006 — framework pin is a minimal fix commit off the old pin, not a released mainline
+
+- **Recorded:** 2026-08-23.
+- **What:** `.framework-pin` points at `9fc6cba`, the previous pin `24a8ec74` plus only the
+  `windows_disk_manager` adopted-drive-letter fix (cherry-picked onto that base). The canonical
+  fix is PR #68 on the framework's `main`; `9fc6cba` lives on the branch
+  `windisk-adopted-letter-on-pin`.
+- **Debt:** the pin is deliberately off the mainline release track — a minimal, tested delta chosen
+  so enabling OS-drive replacement did not also pull in unrelated `main` changes (RedHat/Rocky
+  hardening) that our Windows composition has not exercised.
+- **Exit criteria:** once PR #68 merges and the framework releases, re-pin to a mainline commit that
+  includes the fix and verify the composition still converges and stays idempotent.

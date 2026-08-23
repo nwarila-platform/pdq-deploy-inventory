@@ -43,6 +43,10 @@ name: AWS Deploy
         description: Optional bare public IPv4 for operator SSH during the hold
         type: string
         default: ''
+      os_swap:
+        description: After converge, replace the OS drive and prove the data volumes reattach
+        type: boolean
+        default: false
   push:
     branches: [main]
   schedule:
@@ -367,6 +371,70 @@ jobs:
             exit 1
           fi
           echo "idempotent: the second converge reported no changes"
+
+      # OS-DRIVE REPLACEMENT proof (opt-in). Bumping refresh_serial replaces the OS instance in
+      # place while the STANDALONE data volumes detach and re-attach to the replacement; the guest
+      # must then resume on its existing databases and repository. The re-converge adopts the
+      # reattached data (the disk role leaves a labelled volume untouched and re-letters it), and a
+      # second post-swap converge must report no changes -- the same idempotency proof, on a host
+      # whose OS was rebuilt. The framework's user_data reinstalls the launch key on the fresh OS,
+      # so no key handling is needed here.
+      - name: Replace the OS drive, keeping the data volumes (refresh_serial bump)
+        if: inputs.os_swap
+        timeout-minutes: 15
+        working-directory: .frameworks/aws-terraform-framework/terraform
+        run: |
+          set -euo pipefail
+          terraform apply -input=false -auto-approve -lock-timeout=120s \
+            -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars" \
+            -var "runner_ip=${RUNNER_IP}" \
+            -var "environment=test" \
+            -var "repository=${GITHUB_REPOSITORY}" \
+            -var "repository_id=${GITHUB_REPOSITORY_ID}" \
+            -var "commit_sha=$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)" \
+            -var "run_id=${GITHUB_RUN_ID}" \
+            -var "refresh_serial=1"
+
+      - name: Re-converge onto the reattached data (adopt the existing databases)
+        if: inputs.os_swap
+        timeout-minutes: 30
+        working-directory: .frameworks/ansible-framework
+        env:
+          ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          ansible-playbook "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
+            --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"    \
+            --extra-vars env=test                                              \
+            --extra-vars aws_account_id="${AWS_ACCOUNT_ID}"                    \
+            --extra-vars aws_region="${AWS_REGION}"                            \
+            --extra-vars state=present
+
+      - name: Prove the rebuilt host is idempotent (second post-swap converge is a no-op)
+        if: inputs.os_swap
+        timeout-minutes: 30
+        working-directory: .frameworks/ansible-framework
+        env:
+          ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          recap="$(ansible-playbook "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
+            --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"    \
+            --extra-vars env=test                                              \
+            --extra-vars aws_account_id="${AWS_ACCOUNT_ID}"                    \
+            --extra-vars aws_region="${AWS_REGION}"                            \
+            --extra-vars state=present 2>&1 | tee /dev/stderr)"
+          if printf '%s\n' "${recap}" | grep -Eq ': +ok=[0-9]+ +changed=[1-9]'; then
+            echo "::error::post-swap converge reported changes -- adoption is not idempotent" >&2
+            exit 1
+          fi
+          echo "idempotent after OS replacement: the rebuilt host reported no changes"
 
       - name: Hold the converged guest for interactive work
         if: >-

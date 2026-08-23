@@ -808,6 +808,35 @@
 
     #endregion --- [ Process: Apply The Product Settings ] ------------------------------------ #
 
+    #region ------ [ Process: Import The Pinned Variables ] ----------------------------------- #
+    # The pinned application versions cross as ONE map, keyed by each application's Add/Remove
+    # Programs identity (<Publisher>_<DisplayName>) with the value being its version. The shared
+    # script creates or updates only the ones that differ and proves each reads back through its
+    # export-verify pass, so a value the command line silently drops fails the run rather than
+    # passing as applied. Skipped when none are declared, so the disk role plus this role alone
+    # still converges. Runs AS the background service user, whose command line the product answers,
+    # after the service is up. The .ps1 is MATERIALIZED from scripts/ by
+    # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqVariable.ps1.stub).
+    - name: 'PROCESS | Import The Pinned Variables'
+      become: true
+      become_method: 'ansible.builtin.runas'
+      become_user: "{{ pdq_deploy_running.service_account.name }}"
+      vars:
+        ansible_become_flags: 'logon_type=batch'
+        ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
+      when: pdq_deploy_running.variables | length > 0
+
+      ansible.windows.win_powershell:
+        depth: 3
+        error_action: 'stop'
+        parameters:
+          Variable: "{{ pdq_deploy_running.variables }}"
+          CliPath: "{{ pdq_deploy_running.cli_path }}"
+        remote_src: false
+        script: "{{ lookup('ansible.builtin.file', 'Set-PdqVariable.ps1') }}"
+
+    #endregion --- [ Process: Import The Pinned Variables ] ----------------------------------- #
+
     #region ------ [ Process: Authorize The Console Users ] ----------------------------------- #
     # Who may open the console. A silent install authorises no one, and RBAC being off leaves it
     # that way -- the product requires each account or group to be an explicit Console User, not

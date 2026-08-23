@@ -70,6 +70,9 @@
       - "'path' not in pdq_deploy_running.preferences.repository"
       - pdq_deploy_running.preferences | dict2items | rejectattr('value', 'mapping')
         | list | length == 0
+      - pdq_deploy_running.variables is mapping
+      - pdq_deploy_running.variables | dict2items | rejectattr('value', 'string')
+        | list | length == 0
       - pdq_deploy_running.install.timeout_seconds | int > 0
       - pdq_deploy_running.database.directory | default('') is match('^[^\\\\/:]+$')
       - pdq_deploy_running.repository.directory | default('') is match('^[^\\\\/:]+$')
@@ -84,5 +87,6 @@
       the database and repository directory names, the share name, and the server port must all be
       present and well formed. Preferences must be a map of pages that never declares a derived
       repository path; its booleans and the service-manager mode must hold the shapes the role
-      writes; and console_users must be a list of names. See meta/main.yml.
+      writes; the pinned variables must be a map of string values; and console_users must be a list
+      of names. See meta/main.yml.
     quiet: true

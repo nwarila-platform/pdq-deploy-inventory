@@ -66,6 +66,9 @@
       - pdq_inventory_running.preferences is mapping
       - pdq_inventory_running.preferences | dict2items | rejectattr('value', 'mapping')
         | list | length == 0
+      - pdq_inventory_running.variables is mapping
+      - pdq_inventory_running.variables | dict2items | rejectattr('value', 'string')
+        | list | length == 0
       - pdq_inventory_running.install.timeout_seconds | int > 0
       - pdq_inventory_running.database.directory | default('') is match('^[^\\\\/:]+$')
       - (pdq_inventory_running.server.listen_addresses or [])
@@ -77,5 +80,6 @@
       product's display and service names, its command-line and service paths, the install timeout,
       the database directory name, and the server port must all be present and well formed.
       Preferences must be a map of pages; its logging-severity and per-user seed booleans must hold
-      the shapes the role writes; and console_users must be a list of names. See meta/main.yml.
+      the shapes the role writes; the pinned variables must be a map of string values; and
+      console_users must be a list of names. See meta/main.yml.
     quiet: true

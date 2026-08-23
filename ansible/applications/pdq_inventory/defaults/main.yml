@@ -92,6 +92,13 @@ pdq_inventory_defaults:
   # fixed location as the command line above, and fixed for the same reason.
   service_path: 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventoryService.exe'
 
+  # The pinned custom variables to import, keyed by each application's Add/Remove Programs identity
+  # (<Publisher>_<DisplayName>, Title Case, special characters spelled out) with the value being its
+  # version. Empty by default -- so the disk role plus this role alone still converges -- and
+  # supplied by the playbook, which hands the SAME map to both products. The import task creates or
+  # updates only what differs and proves each reads back.
+  variables: {}
+
   # Every preference the console shows, organised as its Preferences pages are: a map of PAGES,
   # each holding that page's settings under readable labels. The reader tunes what they can SEE;
   # the role owns where each value actually lives -- most flow through the product's own command

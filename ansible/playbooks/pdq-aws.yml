@@ -114,6 +114,24 @@
         label: 'PDQREPO'
         allocation_unit: 65536
 
+    # The pinned application versions, defined ONCE here and handed to BOTH products below (they
+    # share one custom-variable model). Each key is the application's Add/Remove Programs identity
+    # -- <Publisher>_<DisplayName>, Title Case, special characters spelled out, matching the AppRepo
+    # layout -- and each value is the version to pin. A deployment package references one as
+    # $(Name). The import is idempotent: only a name that is absent, or whose value differs, is
+    # written, and each is proved to read back.
+    pdq_variables:
+      NodeJsFoundation_NodeJs18: '18.20.4'
+      NodeJsFoundation_NodeJs20: '20.17.0'
+      NodeJsFoundation_NodeJs22: '22.9.0'
+      PythonSoftwareFoundation_Python311: '3.11.9'
+      PythonSoftwareFoundation_Python312: '3.12.7'
+      PythonSoftwareFoundation_Python313: '3.13.0'
+      GoogleLlc_GoogleChrome: '129.0.6668.90'
+      Mozilla_MozillaFirefox: '131.0'
+      NotepadPlusPlusTeam_NotepadPlusPlus: '8.7.1'
+      MicrosoftCorporation_MicrosoftVisualStudioCode: '1.94.2'
+
   #region ------ [ Pre-Tasks ] ---------------------------------------------------------------- #
   pre_tasks:
 
@@ -154,6 +172,10 @@
     - role: 'pdq_deploy'
       vars:
         pdq_deploy:
+
+          # The pinned application versions, defined once in the play vars above and shared with
+          # pdq_inventory: both products import the SAME map into their own variable stores.
+          variables: "{{ pdq_variables }}"
 
           # What is actually being installed, stated where a reader can see it. The digest is
           # verified on the GUEST immediately before the installer executes, so a changed object
@@ -211,6 +233,10 @@
     - role: 'pdq_inventory'
       vars:
         pdq_inventory:
+
+          # The pinned application versions, defined once in the play vars above and shared with
+          # pdq_deploy: both products import the SAME map into their own variable stores.
+          variables: "{{ pdq_variables }}"
 
           # Inventory ships its own installer from the application repository, verified on the
           # GUEST against this digest immediately before it runs. Same layout as Deploy: the role

@@ -179,6 +179,27 @@ all_systems = [
             cidr_ipv4                    = "128.0.0.0/1"
             prefix_list_id               = null
             referenced_security_group_id = null
+          },
+          # PDQ Inventory Central Server. Client consoles connect to the background service on this
+          # port; the play sets it independently, so the two move together by hand. Split and opened
+          # like the Deploy console above, under the same temporary development-cycle allowance.
+          {
+            description                  = "PDQ Inventory console from first half of IPv4"
+            ip_protocol                  = "tcp"
+            from_port                    = 7337
+            to_port                      = 7337
+            cidr_ipv4                    = "0.0.0.0/1"
+            prefix_list_id               = null
+            referenced_security_group_id = null
+          },
+          {
+            description                  = "PDQ Inventory console from second half of IPv4"
+            ip_protocol                  = "tcp"
+            from_port                    = 7337
+            to_port                      = 7337
+            cidr_ipv4                    = "128.0.0.0/1"
+            prefix_list_id               = null
+            referenced_security_group_id = null
           }
         ]
         egress = [

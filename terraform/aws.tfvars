@@ -44,8 +44,14 @@ all_systems = [
     aws_kms_alias        = "aws/ebs"
     # Windows_Server-2025-English-STIG-Full, owner 801119661308 — accepted from the
     # framework's vendor allowlist, the same hardened base the sibling deploy uses.
-    ami     = "ami-04807a1de3f592cc5"
-    refresh = false
+    ami = "ami-04807a1de3f592cc5"
+    # OS-DRIVE REPLACEMENT (immutable-OS pattern). refresh=true makes this host's OS instance
+    # swap-eligible: bumping the framework's refresh_serial variable (0 -> 1 -> ...) replaces the
+    # OS instance in place while the standalone data volumes below detach and re-attach to the
+    # replacement, so the databases (D:, E:) and repository (F:) survive an OS rebuild and PDQ
+    # resumes on them. It is a no-op until refresh_serial actually changes, so the ephemeral
+    # apply -> converge -> destroy path is unaffected.
+    refresh = true
     # PDQ Deploy and PDQ Inventory are co-located on ONE Central Server host with their own
     # database engine; 4 GiB is not enough headroom for an all-in-one install.
     instance_type = "t3.large"
@@ -81,7 +87,11 @@ all_systems = [
     # repository. The deploy layer owns the hardware; the composed play's windows_disk_manager
     # formats each and assigns its drive letter. The Function tag is the identity the disk role
     # resolves a volume by (resolve_aws.yml), because a volume id only exists after apply, so
-    # each tag here must be unique and must match the play's disk layout.
+    # each tag here must be unique and must match the play's disk layout. Each is a STANDALONE
+    # volume whose lifecycle is independent of the OS instance, so an OS replacement (refresh
+    # above) detaches and re-attaches the SAME volume instead of recreating it. skip_destroy=false
+    # tears them down with the ephemeral showcase; a persistent production deployment sets
+    # skip_destroy=true so the data survives a full `terraform destroy`.
     ebs_block_devices = [
       {
         resource_key = "pdqinventory"

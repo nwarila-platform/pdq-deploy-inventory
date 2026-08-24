@@ -48,8 +48,10 @@ vendor changing a default surfaces as a reported change rather than silent drift
 ## State
 
 - `present` (default) — install and configure to the declared state.
-- `clean` — uninstall the product, reading the ProductCode from the machine. The licence and
+- `absent` — uninstall the product, reading the ProductCode from the machine. The licence and
   secure key survive by the vendor's design.
+- `clean` — remove only the staged-installer cache. The product, its database, and its
+  configuration are untouched.
 
 ## Design invariants
 

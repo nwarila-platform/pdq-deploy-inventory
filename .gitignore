@@ -76,6 +76,7 @@
 !/ansible/applications/pdq_deploy/handlers/
 !/ansible/applications/pdq_deploy/handlers/main.yml
 !/ansible/applications/pdq_deploy/meta/main.yml
+!/ansible/applications/pdq_deploy/tasks/absent_windows.yml
 !/ansible/applications/pdq_deploy/tasks/clean_windows.yml
 !/ansible/applications/pdq_deploy/tasks/main.yml
 !/ansible/applications/pdq_deploy/tasks/present_windows.yml
@@ -91,6 +92,7 @@
 !/ansible/applications/pdq_inventory/files/Set-PdqVariable.ps1.stub
 !/ansible/applications/pdq_inventory/handlers/main.yml
 !/ansible/applications/pdq_inventory/meta/main.yml
+!/ansible/applications/pdq_inventory/tasks/absent_windows.yml
 !/ansible/applications/pdq_inventory/tasks/clean_windows.yml
 !/ansible/applications/pdq_inventory/tasks/main.yml
 !/ansible/applications/pdq_inventory/tasks/present_windows.yml

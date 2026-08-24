@@ -61,7 +61,6 @@
         parameters:
           DisplayName: "{{ pdq_deploy_running.arp.display_name }}"
           Version: "{{ pdq_deploy_running.installer.version }}"
-        remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Get-InstalledSoftware.ps1') }}"
 
     #endregion --- [ Begin: Read The Installed Product ] -------------------------------------- #
@@ -433,7 +432,6 @@
 
       ansible.windows.win_regedit:
         data: "{{ __licence__ }}"
-        delete_key: true
         name: 'License'
         path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy'
         state: 'present'
@@ -471,7 +469,6 @@
              }}\Database.db
       ansible.windows.win_regedit:
         data: "{{ __database_file__ }}"
-        delete_key: true
         name: 'FileName'
         path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy\Settings\Database'
         state: 'present'
@@ -512,7 +509,6 @@
           # SYSTEM and Administrators full, Users read-and-execute so privileged operators
           # can navigate but never alter packages the product runs as SYSTEM; inheritance off.
           Sddl: 'D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'
-        remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Set-RepositoryAcl.ps1') }}"
 
     #endregion --- [ Process: Prepare The Repository Directory ] ------------------------------ #
@@ -554,7 +550,6 @@
 
       ansible.windows.win_regedit:
         data: 'Server'
-        delete_key: true
         name: 'Mode'
         path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy\Protocol'
         state: 'present'
@@ -575,7 +570,6 @@
 
       ansible.windows.win_regedit:
         data: "{{ pdq_deploy_running.server.port }}"
-        delete_key: true
         name: 'ServerPort'
         path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy\Protocol'
         state: 'present'
@@ -598,7 +592,6 @@
         data: >-
           {{ 0 if pdq_deploy_running.server.listen_addresses | default([], true) | length > 0
              else 1 }}
-        delete_key: true
         name: 'ServerListenAllAddresses'
         path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy\Protocol'
         state: 'present'
@@ -612,7 +605,6 @@
 
       ansible.windows.win_regedit:
         data: "{{ pdq_deploy_running.server.listen_addresses }}"
-        delete_key: true
         name: 'ServerListenAddresses'
         path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy\Protocol'
         state: 'present'
@@ -633,7 +625,6 @@
 
       ansible.windows.win_regedit:
         data: "{{ pdq_deploy_running.rbac_enabled | int }}"
-        delete_key: true
         name: 'RBAC Enabled'
         path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy'
         state: 'present'
@@ -803,7 +794,6 @@
           DatabaseDrive: "{{ pdq_deploy_running.database.drive }}"
           DatabaseDirectory: "{{ pdq_deploy_running.database.directory }}"
           RepositoryShareName: "{{ pdq_deploy_running.repository.share_name }}"
-        remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqSetting.ps1') }}"
 
     #endregion --- [ Process: Apply The Product Settings ] ------------------------------------ #
@@ -817,6 +807,7 @@
     # still converges. Runs AS the background service user, whose command line the product answers,
     # after the service is up. The .ps1 is MATERIALIZED from scripts/ by
     # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqVariable.ps1.stub).
+
     - name: 'PROCESS | Import The Pinned Variables'
       become: true
       become_method: 'ansible.builtin.runas'
@@ -832,7 +823,6 @@
         parameters:
           Variable: "{{ pdq_deploy_running.variables }}"
           CliPath: "{{ pdq_deploy_running.cli_path }}"
-        remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqVariable.ps1') }}"
 
     #endregion --- [ Process: Import The Pinned Variables ] ----------------------------------- #
@@ -906,7 +896,6 @@
 
       ansible.windows.win_regedit:
         data: "{{ item.value | int }}"
-        delete_key: true
         name: "{{ item.name }}"
         path: 'HKLM:\SOFTWARE\Admin Arsenal\Logging\PDQ Deploy'
         state: 'present'
@@ -1041,7 +1030,6 @@
         error_action: 'stop'
         parameters:
           Email: "{{ pdq_deploy_running.license.email }}"
-        remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqRegistration.ps1') }}"
 
     #endregion --- [ Process: Record The Product Registration ] ------------------------------- #
@@ -1088,7 +1076,6 @@
         parameters:
           DisplayName: "{{ pdq_deploy_running.arp.display_name }}"
           Version: "{{ pdq_deploy_running.installer.version }}"
-        remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Get-InstalledSoftware.ps1') }}"
 
     #endregion --- [ End: Re-Read The Installed Product ] ------------------------------------- #

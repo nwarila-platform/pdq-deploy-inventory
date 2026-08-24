@@ -28,6 +28,10 @@ ANSIBLE_PLAYBOOK="${ANSIBLE_PLAYBOOK:-/root/.local/bin/ansible-playbook}"
 
 [ -f "${PIN_FILE}" ] || { echo "!! missing ${PIN_FILE}" >&2; exit 1; }
 PIN="$(tr -d '[:space:]' < "${PIN_FILE}")"
+if ! [[ "${PIN}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "!! .framework-pin must be a full 40-character lowercase git commit SHA, not a tag/branch: '${PIN}'" >&2
+    exit 1
+fi
 COMPOSE_PLAYBOOK_VALUE="${COMPOSE_PLAYBOOK-pdq-aws.yml}"
 
 # --- 0a. Playbook selection (fail closed before any side effect) ---------------------------- #

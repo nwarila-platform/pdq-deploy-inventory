@@ -56,7 +56,6 @@
         parameters:
           DisplayName: "{{ pdq_inventory_running.arp.display_name }}"
           Version: "{{ pdq_inventory_running.installer.version }}"
-        remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Get-InstalledSoftware.ps1') }}"
 
     #endregion --- [ Begin: Read The Installed Product ] -------------------------------------- #
@@ -426,7 +425,6 @@
 
       ansible.windows.win_regedit:
         data: "{{ __licence__ }}"
-        delete_key: true
         name: 'License'
         path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory'
         state: 'present'
@@ -464,7 +462,6 @@
              }}\Database.db
       ansible.windows.win_regedit:
         data: "{{ __database_file__ }}"
-        delete_key: true
         name: 'FileName'
         path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory\Settings\Database'
         state: 'present'
@@ -488,7 +485,6 @@
 
       ansible.windows.win_regedit:
         data: 'Server'
-        delete_key: true
         name: 'Mode'
         path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory\Protocol'
         state: 'present'
@@ -508,7 +504,6 @@
 
       ansible.windows.win_regedit:
         data: "{{ pdq_inventory_running.server.port }}"
-        delete_key: true
         name: 'ServerPort'
         path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory\Protocol'
         state: 'present'
@@ -531,7 +526,6 @@
         data: >-
           {{ 0 if pdq_inventory_running.server.listen_addresses | default([], true) | length > 0
              else 1 }}
-        delete_key: true
         name: 'ServerListenAllAddresses'
         path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory\Protocol'
         state: 'present'
@@ -545,7 +539,6 @@
 
       ansible.windows.win_regedit:
         data: "{{ pdq_inventory_running.server.listen_addresses }}"
-        delete_key: true
         name: 'ServerListenAddresses'
         path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory\Protocol'
         state: 'present'
@@ -566,7 +559,6 @@
 
       ansible.windows.win_regedit:
         data: "{{ pdq_inventory_running.rbac_enabled | int }}"
-        delete_key: true
         name: 'RBAC Enabled'
         path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory'
         state: 'present'
@@ -729,7 +721,6 @@
           Preference: "{{ pdq_inventory_running.preferences }}"
           DatabaseDrive: "{{ pdq_inventory_running.database.drive }}"
           DatabaseDirectory: "{{ pdq_inventory_running.database.directory }}"
-        remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqInventorySetting.ps1') }}"
 
     #endregion --- [ Process: Apply The Product Settings ] ------------------------------------ #
@@ -743,6 +734,7 @@
     # still converges. Runs AS the background service user, whose command line the product answers,
     # after the service is up. The .ps1 is MATERIALIZED from scripts/ by
     # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqVariable.ps1.stub).
+
     - name: 'PROCESS | Import The Pinned Variables'
       become: true
       become_method: 'ansible.builtin.runas'
@@ -758,7 +750,6 @@
         parameters:
           Variable: "{{ pdq_inventory_running.variables }}"
           CliPath: "{{ pdq_inventory_running.cli_path }}"
-        remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqVariable.ps1') }}"
 
     #endregion --- [ Process: Import The Pinned Variables ] ----------------------------------- #
@@ -834,7 +825,6 @@
 
       ansible.windows.win_regedit:
         data: "{{ item.value | int }}"
-        delete_key: true
         name: "{{ item.name }}"
         path: 'HKLM:\SOFTWARE\Admin Arsenal\Logging\PDQ Inventory'
         state: 'present'
@@ -945,7 +935,6 @@
         error_action: 'stop'
         parameters:
           Email: "{{ pdq_inventory_running.license.email }}"
-        remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqInventoryRegistration.ps1') }}"
 
     #endregion --- [ Process: Record The Product Registration ] ------------------------------- #
@@ -992,7 +981,6 @@
         parameters:
           DisplayName: "{{ pdq_inventory_running.arp.display_name }}"
           Version: "{{ pdq_inventory_running.installer.version }}"
-        remote_src: false
         script: "{{ lookup('ansible.builtin.file', 'Get-InstalledSoftware.ps1') }}"
 
     #endregion --- [ End: Re-Read The Installed Product ] ------------------------------------- #

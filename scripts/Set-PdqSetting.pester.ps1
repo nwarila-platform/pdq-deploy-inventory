@@ -7,7 +7,7 @@
     per pair).
 
     Runs anywhere, Linux CI included. The script drives two external programs
-    at fixed paths, so this file registers FUNCTIONS named with those exact
+    at caller-selected and derived paths, so this file registers FUNCTIONS named with those
     path strings: PowerShell's call operator resolves a path-shaped command to
     a function of that name before it looks for a file on disk, which is what
     lets the whole flow -- export, compare, write, re-export, verify -- run
@@ -53,15 +53,17 @@ BeforeAll {
     RepositoryShareName = 'AppRepo$'
   }
 
-  # The three constants the script owns. Named here so a drift between the two
-  # files fails the spec rather than silently testing nothing.
+  # The selected command line and the two product-specific paths.
   $script:CliPath = 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
-  $script:SqlitePath = 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\sqlite3.exe'
+  $script:WindowsSqlitePath = 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\sqlite3.exe'
   $script:ExportPath = 'C:\Windows\Temp\pdq-settings-export.xml'
+  $script:Ctx.Product = 'Deploy'
+  $script:Ctx.CliPath = $script:CliPath
   # Also global: Write-FakeExport runs inside a stub invoked from the child
   # script, where $script: resolves to that script's scope, not this file's.
   $global:FakeExportPath = $script:ExportPath
   $script:DatabasePath = 'E:\PDQ Deploy\Database.db'
+  $global:FakeDatabasePath = $script:DatabasePath
 
   # Inline $Ansible stand-in (org contract: pairs are self-contained, no
   # imports). Faithful to win_powershell: Changed defaults to $True, and only
@@ -141,6 +143,7 @@ Describe 'Set-PdqSetting' {
       $script:MountedDrive = 'C'
     }
     New-Item -ItemType Directory -Path 'C:\Windows\Temp' -Force | Out-Null
+    $script:SqlitePath = Join-Path (Split-Path $script:CliPath -Parent) 'sqlite3.exe'
 
     $env:COMPUTERNAME = 'TESTBOX'
     $global:FakeSettings = @{
@@ -176,7 +179,7 @@ Describe 'Set-PdqSetting' {
         'SystemInfo' {
           $global:LASTEXITCODE = 0
           If ($global:FakeSystemInfoBlank) { Return 'Version      : 20.1.8.0' }
-          Return @('Database     : E:\PDQ Deploy\Database.db', 'Version      : 20.1.8.0')
+          Return @(('Database     : {0}' -f $global:FakeDatabasePath), 'Version      : 20.1.8.0')
         }
         'Settings' {
           # -Name <n> -Set <v>, or -Name <n> -Reset, which deletes the override
@@ -245,17 +248,20 @@ Describe 'Set-PdqSetting' {
 
   AfterAll {
     Remove-Variable -Name 'FakeSettings', 'FakeIgnored', 'FakeCliCalls', 'FakeSqliteCalls',
-      'FakeExportFails', 'FakeSystemInfoBlank', 'FakeExportPath' -Scope 'Global' -Force `
+      'FakeExportFails', 'FakeSystemInfoBlank', 'FakeExportPath', 'FakeDatabasePath' `
+      -Scope 'Global' -Force `
       -ErrorAction 'SilentlyContinue'
   }
 
-  Context 'the constants it owns' {
+  Context 'the paths it selects' {
 
-    It 'still names the paths this spec stubs' {
+    It 'uses the caller-selected CLI, derives sqlite beside it, and selects the Deploy export' {
       $Source = Get-Content -LiteralPath $script:ScriptPath -Raw
 
-      $Source | Should -BeLike ('*' + $script:CliPath + '*')
-      $Source | Should -BeLike ('*' + $script:SqlitePath + '*')
+      $script:WindowsSqlitePath | Should -Be 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\sqlite3.exe'
+      ($script:SqlitePath -replace '/', '\') | Should -Be $script:WindowsSqlitePath
+      $Source | Should -Match '(?s)Name:''CLI_PATH''.*?\$CliPath'
+      $Source | Should -Match 'Join-Path \(Split-Path \$CliPath -Parent\) ''sqlite3.exe'''
       $Source | Should -BeLike ('*' + $script:ExportPath + '*')
     }
   }
@@ -279,6 +285,20 @@ Describe 'Set-PdqSetting' {
     It 'refuses a value outside an enumerated setting' {
       { & $script:ScriptPath @script:Ctx -Preference @{ 'performance.copy_mode' = 'Sideways' } } |
         Should -Throw -ExpectedMessage '*takes one of: Push, Pull*'
+    }
+
+    It 'does not expose an Inventory-only setting through the Deploy table' {
+      { & $script:ScriptPath @script:Ctx -Preference @{ 'scanning.cleanup_log_days' = 14 } } |
+        Should -Throw -ExpectedMessage '*not a setting this script can apply*'
+    }
+
+    It 'requires a repository share for Deploy before initialization starts' {
+      $NoShare = $script:Ctx.Clone()
+      $NoShare.Remove('RepositoryShareName')
+
+      { & $script:ScriptPath @NoShare -Preference @{} 3>$null } |
+        Should -Throw -ExpectedMessage '*RepositoryShareName is required*'
+      @($global:FakeCliCalls).Count | Should -Be 0
     }
 
     It 'treats a declared-but-null value as unmanaged' {
@@ -332,6 +352,11 @@ Describe 'Set-PdqSetting' {
 
     It 'sets a correctly spelled routed key aside instead of failing it as unknown' {
       { & $script:ScriptPath @script:Ctx -Preference @{ alerts = @{ release_channel = 'Beta' } } } |
+        Should -Not -Throw
+    }
+
+    It 'sets aside the Deploy-only performance route' {
+      { & $script:ScriptPath @script:Ctx -Preference @{ performance = @{ service_manager_tcp = $True } } } |
         Should -Not -Throw
     }
 
@@ -570,6 +595,84 @@ Describe 'Set-PdqSetting' {
       $Context.Changed | Should -BeTrue
       $global:FakeSettings['DeploymentSettings.CleanupDays'] | Should -Be '30'
       Test-Path -LiteralPath $script:ExportPath | Should -BeFalse
+    }
+  }
+
+  Context 'Inventory product selection' {
+
+    BeforeEach {
+      # Reuse the proven tool behavior under Inventory's caller-selected paths.
+      $CliStub = (Get-Command -Name $script:CliPath -CommandType Function).ScriptBlock
+      $SqliteStub = (Get-Command -Name $script:SqlitePath -CommandType Function).ScriptBlock
+      Remove-Item -LiteralPath ('function:global:' + $script:CliPath) -Force
+      Remove-Item -LiteralPath ('function:global:' + $script:SqlitePath) -Force
+
+      $script:CliPath = 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
+      $script:WindowsSqlitePath = 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\sqlite3.exe'
+      $script:SqlitePath = Join-Path (Split-Path $script:CliPath -Parent) 'sqlite3.exe'
+      $script:ExportPath = 'C:\Windows\Temp\pdq-inventory-settings-export.xml'
+      $script:DatabasePath = 'D:\PDQ Inventory\Database.db'
+      $script:Ctx = @{
+        Product           = 'Inventory'
+        CliPath           = $script:CliPath
+        DatabaseDrive     = 'D'
+        DatabaseDirectory = 'PDQ Inventory'
+      }
+      $global:FakeExportPath = $script:ExportPath
+      $global:FakeDatabasePath = $script:DatabasePath
+      $global:FakeSettings = @{
+        'ScanSettings.CleanupLogDays'             = '14'
+        'DatabaseBackupSettings.BackupDirectory'  = 'D:\PDQ Inventory\Backups'
+        'AuditLogSettings.VerboseFileDirectory'   = 'D:\PDQ Inventory\Logs'
+        'InterfaceSettings.ShowCollectionItemCounts' = 'true'
+      }
+
+      New-Item -Force -Path ('function:global:' + $script:CliPath) -Value $CliStub | Out-Null
+      New-Item -Force -Path ('function:global:' + $script:SqlitePath) -Value $SqliteStub | Out-Null
+    }
+
+    It 'uses the Inventory table and its exact derived paths without a repository parameter' {
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{ scanning = @{ cleanup_log_days = 15 } } |
+        ConvertFrom-Json
+
+      $Result.applied | Should -Be @('ScanSettings.CleanupLogDays')
+      $script:WindowsSqlitePath | Should -Be 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\sqlite3.exe'
+      ($script:SqlitePath -replace '/', '\') | Should -Be $script:WindowsSqlitePath
+      ($global:FakeCliCalls -join '; ') | Should -Match 'SystemInfo.*Settings.*ExportSettings'
+      @($global:FakeSqliteCalls | Where-Object { $_ -match 'SystemVariables' }).Count | Should -Be 0
+      Test-Path -LiteralPath $script:ExportPath | Should -BeFalse
+    }
+
+    It 'derives only the two shared locations and never a repository path' {
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{} | ConvertFrom-Json
+
+      $Result.requested | Should -Be 2
+      $global:FakeSettings.ContainsKey('RepositorySettings.Path') | Should -BeFalse
+      @($global:FakeSqliteCalls | Where-Object { $_ -match 'SystemVariables' }).Count | Should -Be 0
+    }
+
+    It 'does not expose a Deploy-only setting through the Inventory table' {
+      { & $script:ScriptPath @script:Ctx -Preference @{ 'deployments.cleanup_days' = 30 } } |
+        Should -Throw -ExpectedMessage '*not a setting this script can apply*'
+      @($global:FakeCliCalls).Count | Should -Be 0
+    }
+
+    It 'selects Inventory routed names rather than the Deploy superset' {
+      { & $script:ScriptPath @script:Ctx -Preference @{ alerts = @{ release_channel = 'Beta' } } } |
+        Should -Not -Throw
+      { & $script:ScriptPath @script:Ctx -Preference @{ performance = @{ service_manager_tcp = $True } } } |
+        Should -Throw -ExpectedMessage '*not a setting this script can apply*'
+    }
+
+    It 'proves the Inventory export-invisible setting against its database row' {
+      $global:FakeIgnored = @('InterfaceSettings.ShowCollectionItemCounts')
+      $Result = & $script:ScriptPath @script:Ctx -Preference @{
+        interface = @{ show_collection_item_counts = $False }
+      } | ConvertFrom-Json
+
+      $Result.applied | Should -Contain 'InterfaceSettings.ShowCollectionItemCounts'
+      $Result.changed | Should -BeTrue
+      @($global:FakeSqliteCalls | Where-Object { $_ -match 'SystemVariables' }).Count | Should -Be 0
     }
   }
 }

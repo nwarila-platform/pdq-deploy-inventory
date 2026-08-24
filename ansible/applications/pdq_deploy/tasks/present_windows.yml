@@ -793,6 +793,8 @@
         depth: 3
         error_action: 'stop'
         parameters:
+          Product: 'Deploy'
+          CliPath: "{{ pdq_deploy_running.cli_path }}"
           Preference: "{{ pdq_deploy_running.preferences }}"
           DatabaseDrive: "{{ pdq_deploy_running.database.drive }}"
           DatabaseDirectory: "{{ pdq_deploy_running.database.directory }}"

@@ -86,7 +86,7 @@
 # The stubs name their source scripts under scripts/; the materialized files/*.ps1 are build
 # artifacts, deliberately NEVER allowlisted, so they cannot be committed.
 !/ansible/applications/pdq_inventory/files/Get-InstalledSoftware.ps1.stub
-!/ansible/applications/pdq_inventory/files/Set-PdqInventorySetting.ps1.stub
+!/ansible/applications/pdq_inventory/files/Set-PdqSetting.ps1.stub
 !/ansible/applications/pdq_inventory/files/Set-PdqRegistration.ps1.stub
 !/ansible/applications/pdq_inventory/files/Set-PdqVariable.ps1.stub
 !/ansible/applications/pdq_inventory/handlers/main.yml
@@ -130,8 +130,6 @@
 !/scripts/Set-PdqSetting.ps1
 !/scripts/Set-PdqRegistration.ps1
 !/scripts/Set-PdqRegistration.pester.ps1
-!/scripts/Set-PdqInventorySetting.ps1
-!/scripts/Set-PdqInventorySetting.pester.ps1
 !/scripts/Set-PdqVariable.ps1
 !/scripts/Set-PdqVariable.pester.ps1
 !/scripts/compose-and-run.sh

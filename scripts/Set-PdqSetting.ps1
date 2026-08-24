@@ -41,11 +41,17 @@
     .PARAMETER DatabaseDirectory
         Database folder on that drive; the derived locations sit beside it.
 
+    .PARAMETER Product
+        Product whose settings table, routed names and export path apply.
+
+    .PARAMETER CliPath
+        Full path to the selected product's command line.
+
     .PARAMETER RepositoryShareName
-        Share this machine publishes; the repository path is composed from it.
+        Share this machine publishes; required for Deploy and unused for Inventory.
 
     .EXAMPLE
-        .\Set-PdqSetting.ps1 -Preference @{ deployments = @{ cleanup_days = 45 } } -DatabaseDrive 'E' -DatabaseDirectory 'PDQ Deploy' -RepositoryShareName 'AppRepo$'
+        .\Set-PdqSetting.ps1 -Product 'Deploy' -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe' -Preference @{ deployments = @{ cleanup_days = 45 } } -DatabaseDrive 'E' -DatabaseDirectory 'PDQ Deploy' -RepositoryShareName 'AppRepo$'
 
     .OUTPUTS
         One object carrying applied, unchanged, ignored, requested, changed, check_mode,
@@ -75,9 +81,20 @@ Param (
   [System.String] $DatabaseDirectory,
 
   [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
+  [ValidateSet('Deploy', 'Inventory')]
+  [System.String] $Product,
+
+  [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
   [ValidateNotNullOrEmpty()]
+  [System.String] $CliPath,
+
+  [Parameter(DontShow = $False, Mandatory = $False, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
   [System.String] $RepositoryShareName
 )
+
+If ($Product -eq 'Deploy' -and [System.String]::IsNullOrEmpty($RepositoryShareName)) {
+  Throw 'RepositoryShareName is required when Product is Deploy'
+}
 
 #region ------ [ Script ] -------------------------------------------------------------------- #
 
@@ -94,23 +111,26 @@ New-Variable -Force -Name:'LOG_LEVELS' -Option:('Private', 'ReadOnly') -Value:(
   [System.String[]]@('Verbose', 'Debug', 'Information', 'Warning', 'Error', 'Fatal')
 )
 
-# The product's tools and export staging. Fixed: the installer ignores every documented
-# relocation switch (measured 2026-08-18).
+# The selected product's tools and product-specific export staging.
 New-Variable -Force -Name:'CLI_PATH' -Option:('Private', 'ReadOnly') -Value:(
-  [System.String]'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
+  [System.String]$CliPath
 )
 New-Variable -Force -Name:'SQLITE_PATH' -Option:('Private', 'ReadOnly') -Value:(
-  [System.String]'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\sqlite3.exe'
+  [System.String](Join-Path (Split-Path $CliPath -Parent) 'sqlite3.exe')
 )
 New-Variable -Force -Name:'EXPORT_PATH' -Option:('Private', 'ReadOnly') -Value:(
-  [System.String]'C:\Windows\Temp\pdq-settings-export.xml'
+  [System.String]$(If ($Product -eq 'Deploy') {
+      'C:\Windows\Temp\pdq-settings-export.xml'
+    } Else {
+      'C:\Windows\Temp\pdq-inventory-settings-export.xml'
+    })
 )
 
 # The settable surface, as data. Param is the caller's name; Name is the product's own, as the
 # export publishes it. Type and Allowed gate the value. Variable marks the ones the command line
 # cannot reach -- system variables, written into the database directly (measured 2026-08-20).
 # Every name was proven by a live write-and-read-back campaign, 2026-08-21.
-New-Variable -Force -Name:'SETTINGS' -Option:('Private', 'ReadOnly') -Value:(
+New-Variable -Force -Name:'SETTINGS_DEPLOY' -Option:('Private', 'ReadOnly') -Value:(
   [System.Collections.Hashtable[]]@(
     @{ Param = 'auto_download.approval'; Name = 'AutoDeployDefaultSettings.ApprovalMode'; Type = 'String' }
     @{ Param = 'auto_download.automatic_approval_delay'; Name = 'AutoDeployDefaultSettings.DelayedApprovalTimeSpan'; Type = 'String' }
@@ -193,6 +213,94 @@ New-Variable -Force -Name:'SETTINGS' -Option:('Private', 'ReadOnly') -Value:(
   )
 )
 
+# Inventory's complete settable surface, kept in its proven order.
+New-Variable -Force -Name:'SETTINGS_INVENTORY' -Option:('Private', 'ReadOnly') -Value:(
+  [System.Collections.Hashtable[]]@(
+    @{ Param = 'database.enable_automatic_backups'; Name = 'DatabaseBackupSettings.IsEnabled'; Type = 'Boolean' }
+    @{ Param = 'database.backups_to_keep'; Name = 'DatabaseBackupSettings.Keep'; Type = 'Int32' }
+    @{ Param = 'database.compress_backups'; Name = 'DatabaseBackupSettings.Compress'; Type = 'Boolean' }
+    @{ Param = 'database.backup_location'; Name = 'DatabaseBackupSettings.BackupDirectory'; Type = 'String' }
+    # An interface toggle the product stores in its database but does NOT publish in its export
+    # (measured 2026-08-22): the export is no oracle for it, so Unexported marks it verified against
+    # its database ROW instead. The command line reaches it under the InterfaceSettings name.
+    @{ Param = 'interface.show_collection_item_counts'; Name = 'InterfaceSettings.ShowCollectionItemCounts'; Type = 'Boolean'; Unexported = $True }
+    @{ Param = 'active_directory.create_ad_collections'; Name = 'ActiveDirectorySettings.CreateADCollections'; Type = 'Boolean' }
+    @{ Param = 'active_directory.create_group_collections'; Name = 'ActiveDirectorySettings.CreateGroupCollections'; Type = 'Boolean' }
+    @{ Param = 'active_directory.delete_mode'; Name = 'ActiveDirectorySettings.DeleteMode'; Type = 'String' }
+    @{ Param = 'active_directory.sync_interval'; Name = 'ActiveDirectorySettings.Interval'; Type = 'String' }
+    @{ Param = 'active_directory.enable_sync'; Name = 'ActiveDirectorySettings.IsEnabled'; Type = 'Boolean' }
+    @{ Param = 'active_directory.sync_disabled'; Name = 'ActiveDirectorySettings.SyncDisabled'; Type = 'Boolean' }
+    @{ Param = 'scanning.ping_before_scan'; Name = 'ScanSettings.UsePing'; Type = 'Boolean' }
+    @{ Param = 'scanning.wake_on_lan'; Name = 'ScanSettings.TryWol'; Type = 'Boolean' }
+    @{ Param = 'scanning.cleanup_log_days'; Name = 'ScanSettings.CleanupLogDays'; Type = 'Int32' }
+    @{ Param = 'scanning.max_stored_scan_output_size'; Name = 'ScanSettings.MaxStoredScanOutputSize'; Type = 'Int32' }
+    @{ Param = 'performance.total_concurrent_targets'; Name = 'PerformanceSettings.MaxServerThreads'; Type = 'Int32' }
+    @{ Param = 'performance.scan_timeout_minutes'; Name = 'PerformanceSettings.ScanTimeoutMinutes'; Type = 'Int32' }
+    @{ Param = 'performance.wmi_timeout_seconds'; Name = 'PerformanceSettings.WmiTimeoutSeconds'; Type = 'Int32' }
+    @{ Param = 'logging.send_anonymous_exception_data'; Name = 'SentrySettings.CanSendAnonymousExceptionData'; Type = 'Boolean' }
+    @{ Param = 'logging.audit_keep_days'; Name = 'AuditLogSettings.DaysRecordsKept'; Type = 'Int32' }
+    @{ Param = 'logging.verbose_log_to_file'; Name = 'AuditLogSettings.WriteVerboseFile'; Type = 'Boolean' }
+    @{ Param = 'logging.verbose_log_directory'; Name = 'AuditLogSettings.VerboseFileDirectory'; Type = 'String' }
+    @{ Param = 'logging.archive_log_every'; Name = 'AuditLogSettings.ArchiveSchedule'; Type = 'String' }
+    @{ Param = 'logging.archived_logs_to_keep'; Name = 'AuditLogSettings.NumArchivedFiles'; Type = 'Int32' }
+    @{ Param = 'logging.use_logging_configuration_file'; Name = 'AuditLogSettings.LoadCustomConfig'; Type = 'Boolean' }
+    @{ Param = 'logging.logging_configuration_file'; Name = 'AuditLogSettings.CustomConfigPath'; Type = 'String' }
+    @{ Param = 'pdq_deploy.cleanup_history'; Name = 'PDQDeploySettings.Cleanup'; Type = 'Boolean' }
+    @{ Param = 'pdq_deploy.cleanup_history_days'; Name = 'PDQDeploySettings.CleanupDays'; Type = 'Int32' }
+    @{ Param = 'heartbeat.auto_heartbeat_enabled'; Name = 'NetworkSettings.AutoHeartbeatEnabled'; Type = 'Boolean' }
+    @{ Param = 'heartbeat.heartbeat_interval_seconds'; Name = 'NetworkSettings.HeartbeatIntervalSeconds'; Type = 'Int32' }
+    @{ Param = 'mail_server.enable_ssl'; Name = 'MailServerSettings.EnableSSL'; Type = 'Boolean' }
+    @{ Param = 'mail_server.smtp_server'; Name = 'MailServerSettings.Host'; Type = 'String' }
+    @{ Param = 'mail_server.sender_address'; Name = 'MailServerSettings.Sender'; Type = 'String' }
+    @{ Param = 'mail_server.smtp_user'; Name = 'MailServerSettings.User'; Type = 'String' }
+    @{ Param = 'mail_server.oauth2_client_id'; Name = 'MailServerSettings.OAuth2ClientId'; Type = 'String' }
+    @{ Param = 'mail_server.oauth2_tenant_id'; Name = 'MailServerSettings.OAuth2TenantId'; Type = 'String' }
+    @{ Param = 'mail_server.oauth2_redirect_uri'; Name = 'MailServerSettings.OAuth2RedirectUri'; Type = 'String' }
+    @{ Param = 'mail_server.oauth2_provider'; Name = 'MailServerSettings.OAuth2Provider'; Type = 'String' }
+    @{ Param = 'mail_server.oauth2_sender'; Name = 'MailServerSettings.OAuth2Sender'; Type = 'String' }
+    @{ Param = 'mail_server.graph_client_id'; Name = 'MailServerSettings.MSGraphAPIClientId'; Type = 'String' }
+    @{ Param = 'mail_server.graph_tenant_id'; Name = 'MailServerSettings.MSGraphAPITenantId'; Type = 'String' }
+    @{ Param = 'mail_server.graph_cloud'; Name = 'MailServerSettings.MSGraphAPICloudHostUrl'; Type = 'String' }
+    @{ Param = 'mail_server.graph_sender'; Name = 'MailServerSettings.MSGraphAPISender'; Type = 'String' }
+    # Printing stores under ProductPrintingSettings.* while the export publishes PrintingSettings.*
+    # -- the Store field carries the difference (measured 2026-08-22, the same quirk as PDQ Deploy).
+    @{ Param = 'printing.footer_alignment'; Name = 'PrintingSettings.FooterAlignment'; Type = 'String'; Store = 'ProductPrintingSettings.FooterAlignment' }
+    @{ Param = 'printing.footer_text'; Name = 'PrintingSettings.FooterText'; Type = 'String'; Store = 'ProductPrintingSettings.FooterText' }
+    @{ Param = 'printing.header_alignment'; Name = 'PrintingSettings.HeaderAlignment'; Type = 'String'; Store = 'ProductPrintingSettings.HeaderAlignment' }
+    @{ Param = 'printing.header_text'; Name = 'PrintingSettings.HeaderText'; Type = 'String'; Store = 'ProductPrintingSettings.HeaderText' }
+    @{ Param = 'printing.in_color'; Name = 'PrintingSettings.IsInColor'; Type = 'Boolean'; Store = 'ProductPrintingSettings.IsInColor' }
+    @{ Param = 'printing.margin_bottom'; Name = 'PrintingSettings.MarginBottom'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginBottom' }
+    @{ Param = 'printing.margin_left'; Name = 'PrintingSettings.MarginLeft'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginLeft' }
+    @{ Param = 'printing.margin_right'; Name = 'PrintingSettings.MarginRight'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginRight' }
+    @{ Param = 'printing.margin_top'; Name = 'PrintingSettings.MarginTop'; Type = 'Int32'; Store = 'ProductPrintingSettings.MarginTop' }
+    @{ Param = 'proxy_server.host_name'; Name = 'ProxySettings.HostName'; Type = 'String' }
+    @{ Param = 'proxy_server.port'; Name = 'ProxySettings.Port'; Type = 'Int32' }
+    @{ Param = 'proxy_server.username'; Name = 'ProxySettings.UserName'; Type = 'String' }
+    @{ Param = 'proxy_server.use_system_proxy'; Name = 'ProxySettings.UseSystemHost'; Type = 'Boolean' }
+    @{ Param = 'remote_control.rdp_full_screen'; Name = 'RemoteDesktopSettings.FullScreen'; Type = 'Boolean' }
+    @{ Param = 'remote_control.rdp_height'; Name = 'RemoteDesktopSettings.Height'; Type = 'Int32' }
+    @{ Param = 'remote_control.rdp_width'; Name = 'RemoteDesktopSettings.Width'; Type = 'Int32' }
+    @{ Param = 'remote_control.rdp_port'; Name = 'RemoteDesktopSettings.Port'; Type = 'Int32' }
+    @{ Param = 'remote_control.vnc_display_number'; Name = 'VncSettings.DisplayNumber'; Type = 'Int32' }
+    @{ Param = 'remote_control.vnc_viewer_path'; Name = 'VncSettings.ViewerPath'; Type = 'String' }
+    @{ Param = 'target_service.unc_path'; Name = 'TargetServiceSettings.RemoteDirectory'; Type = 'String' }
+    @{ Param = 'target_service.local_path_of_shared_directory'; Name = 'TargetServiceSettings.SharePath'; Type = 'String' }
+    @{ Param = 'software_deployment.install_dotnet_automatically'; Name = 'DotNetSettings.InstallAutomatically'; Type = 'Boolean' }
+    @{ Param = 'software_deployment.dotnet_installer_path'; Name = 'DotNetSettings.InstallerPath'; Type = 'String' }
+    @{ Param = 'software_deployment.dotnet_install_timeout'; Name = 'DotNetSettings.InstallTimeout'; Type = 'String' }
+    @{ Param = 'usage_data.collect_usage_data'; Name = 'AnalyticsSettings.CollectAnalyticsUsage'; Type = 'Boolean' }
+    @{ Param = 'usage_data.alert_first_time_analytics_dialog'; Name = 'AnalyticsSettings.AlertFirstTimeAnalyticsDialog'; Type = 'Boolean' }
+  )
+)
+
+New-Variable -Force -Name:'SETTINGS' -Option:('Private', 'ReadOnly') -Value:(
+  [System.Collections.Hashtable[]]$(If ($Product -eq 'Deploy') {
+      $SETTINGS_DEPLOY
+    } Else {
+      $SETTINGS_INVENTORY
+    })
+)
+
 # Custom stream preferences; built-ins already exist.
 New-Variable -Verbose:$False -Force -Name:'ErrorPreference' -Value:(
   [System.Management.Automation.ActionPreference]::Stop
@@ -271,10 +379,9 @@ New-Variable -Force -Name:'SETTLE_POLL_MILLISECONDS' -Option:('Private', 'ReadOn
 #region ------ [ Main ] ---------------------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Main'
 
-# Names other tasks own -- the per-user alerts/interface pages, the logging record_* switches, the
-# performance service_manager_tcp pair -- set aside by EXACT name so a misspelled routed key fails
-# as an unknown setting instead of silently reverting to its default.
-New-Variable -Force -Name:'ROUTED_NAMES' -Option:('Private', 'ReadOnly') -Value:(
+# Names other tasks own -- set aside by EXACT name so a misspelled routed key fails as an unknown
+# setting instead of silently reverting to its default.
+New-Variable -Force -Name:'ROUTED_NAMES_DEPLOY' -Option:('Private', 'ReadOnly') -Value:(
   [System.Collections.Generic.HashSet[System.String]]@(
     'alerts.auto_update_check_enabled', 'alerts.show_webcast_alerts', 'alerts.release_channel',
     'interface.color_theme', 'interface.disable_splash_screen',
@@ -282,6 +389,21 @@ New-Variable -Force -Name:'ROUTED_NAMES' -Option:('Private', 'ReadOnly') -Value:
     'logging.record_debug', 'performance.service_manager_tcp',
     'performance.service_manager_tcp_timeout_seconds'
   )
+)
+New-Variable -Force -Name:'ROUTED_NAMES_INVENTORY' -Option:('Private', 'ReadOnly') -Value:(
+  [System.Collections.Generic.HashSet[System.String]]@(
+    'alerts.auto_update_check_enabled', 'alerts.show_webcast_alerts', 'alerts.release_channel',
+    'interface.color_theme', 'interface.disable_splash_screen',
+    'logging.record_error', 'logging.record_warning', 'logging.record_informational',
+    'logging.record_debug'
+  )
+)
+New-Variable -Force -Name:'ROUTED_NAMES' -Option:('Private', 'ReadOnly') -Value:(
+  [System.Collections.Generic.HashSet[System.String]]$(If ($Product -eq 'Deploy') {
+      $ROUTED_NAMES_DEPLOY
+    } Else {
+      $ROUTED_NAMES_INVENTORY
+    })
 )
 $Flat = @{}
 ForEach ($PageName In @($PSBoundParameters['Preference'].Keys)) {
@@ -299,14 +421,15 @@ ForEach ($PageName In @($PSBoundParameters['Preference'].Keys)) {
   }
 }
 
-# Three values are the role's to place, not the caller's to guess. The repository is the share
-# this machine publishes, so its path is composed from this machine's own name; the backup and
-# verbose-log locations default to sitting beside the database on its dedicated drive, because
-# both grow the way the database does, and a caller may still name somewhere else.
-If ($Flat.ContainsKey('repository.path')) {
-  Throw 'repository.path is derived from the share the role publishes; it cannot be declared'
+# The Deploy repository is the share this machine publishes, so its path is composed from this
+# machine's own name. Both products place the backup and verbose-log locations beside the database
+# on its dedicated drive unless the caller names somewhere else.
+If ($Product -eq 'Deploy') {
+  If ($Flat.ContainsKey('repository.path')) {
+    Throw 'repository.path is derived from the share the role publishes; it cannot be declared'
+  }
+  $Flat['repository.path'] = '\\{0}\{1}' -f $env:COMPUTERNAME, $RepositoryShareName
 }
-$Flat['repository.path'] = '\\{0}\{1}' -f $env:COMPUTERNAME, $RepositoryShareName
 If ([System.String]::IsNullOrEmpty([System.String]$Flat['database.backup_location'])) {
   $Flat['database.backup_location'] = '{0}:\{1}\Backups' -f $DatabaseDrive, $DatabaseDirectory
 }
@@ -482,7 +605,7 @@ Try {
         # ProductPrintingSettings vs the export's PrintingSettings, measured 2026-08-21 -- the
         # command line answers only to the STORED name, while the export stays verify oracle.
         $WriteName = If ($StoreName.ContainsKey($Name)) { $StoreName[$Name] } Else { $Name }
-        If ($DatabaseVariable.ContainsKey($Name)) {
+        If ($Product -eq 'Deploy' -and $DatabaseVariable.ContainsKey($Name)) {
           $Statement = "UPDATE SystemVariables SET Value = '{0}', Modified = datetime('now') WHERE Name = '{1}';" -f @(
             $Desired.Replace("'", "''")
             $DatabaseVariable[$Name].Replace("'", "''")

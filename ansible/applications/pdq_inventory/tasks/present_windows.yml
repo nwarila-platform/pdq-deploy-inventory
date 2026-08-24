@@ -707,7 +707,7 @@
     # whose batch logon the STIG deny rights deliberately leave open. Runs last because the
     # command line needs the service up, which the regions above guarantee. The referenced .ps1
     # is MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role tracks only
-    # files/Set-PdqInventorySetting.ps1.stub); run it before this role.
+    # files/Set-PdqSetting.ps1.stub); run it before this role.
 
     - name: 'PROCESS | Apply The Product Settings'
       become: true
@@ -721,10 +721,12 @@
         depth: 3
         error_action: 'stop'
         parameters:
+          Product: 'Inventory'
+          CliPath: "{{ pdq_inventory_running.cli_path }}"
           Preference: "{{ pdq_inventory_running.preferences }}"
           DatabaseDrive: "{{ pdq_inventory_running.database.drive }}"
           DatabaseDirectory: "{{ pdq_inventory_running.database.directory }}"
-        script: "{{ lookup('ansible.builtin.file', 'Set-PdqInventorySetting.ps1') }}"
+        script: "{{ lookup('ansible.builtin.file', 'Set-PdqSetting.ps1') }}"
 
     #endregion --- [ Process: Apply The Product Settings ] ------------------------------------ #
 

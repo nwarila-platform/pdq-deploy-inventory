@@ -11,12 +11,24 @@
 #
 # =========================================================================================== #
 ---
+- name: 'VALIDATE | Require The Inputs Every State Uses'
+  ansible.builtin.assert:
+    that:
+      - pdq_deploy_running.arp.display_name | default('') | length > 0
+      - pdq_deploy_running.installer.version | default('') is match('^[0-9]+(\\.[0-9]+){3}$')
+      - pdq_deploy_running.install.staging_dir is match('^[A-Za-z]:\\\\')
+    fail_msg: >-
+      Refusing to continue: arp.display_name, a four-part installer.version, and an absolute,
+      drive-letter-rooted Windows install.staging_dir are required for every state. See
+      meta/main.yml.
+    quiet: true
+
 - name: 'VALIDATE | Require The Artifact Source And Its Pinned Digests'
+  when: (state | default('present') | string | lower | trim) == 'present'
   ansible.builtin.assert:
     that:
       - pdq_deploy_running.installer.bucket | default('') | length > 0
       - pdq_deploy_running.installer.path | default('') | length > 0
-      - pdq_deploy_running.installer.version | default('') is match('^[0-9]+(\\.[0-9]+){3}$')
       - pdq_deploy_running.installer.sha256 | default('') is match('^[0-9a-f]{64}$')
       - pdq_deploy_running.license.bucket | default('') | length > 0
       - pdq_deploy_running.license.object | default('') | length > 0
@@ -36,19 +48,10 @@
       Every artifact is verified against its pinned digest before it is used. See meta/main.yml.
     quiet: true
 
-- name: 'VALIDATE | Require An Absolute Staging Directory'
-  ansible.builtin.assert:
-    that:
-      - pdq_deploy_running.install.staging_dir is match('^[A-Za-z]:\\\\')
-    fail_msg: >-
-      Refusing to deploy: install.staging_dir must be an absolute, drive-letter-rooted Windows
-      path -- the installer is copied there on the guest before it runs.
-    quiet: true
-
 - name: 'VALIDATE | Require The Product Identity Probes'
+  when: (state | default('present') | string | lower | trim) == 'present'
   ansible.builtin.assert:
     that:
-      - pdq_deploy_running.arp.display_name | default('') | length > 0
       - pdq_deploy_running.service_name | default('') | length > 0
       - pdq_deploy_running.rbac_enabled is boolean
       - pdq_deploy_running.preferences.performance.service_manager_tcp in ['Default', 'Disabled', 'Timeout']
@@ -63,7 +66,8 @@
       - pdq_deploy_running.server.port | int > 0
       - pdq_deploy_running.server.port | int < 65536
       - pdq_deploy_running.server.listen_addresses is none
-        or pdq_deploy_running.server.listen_addresses is sequence
+        or (pdq_deploy_running.server.listen_addresses is sequence
+            and pdq_deploy_running.server.listen_addresses is not string)
       - pdq_deploy_running.cli_path | default('') is match('^[A-Za-z]:\\\\')
       - pdq_deploy_running.service_path | default('') is match('^[A-Za-z]:\\\\')
       - pdq_deploy_running.preferences is mapping

@@ -396,12 +396,12 @@
 
     #region ------ [ Process: Apply The Product Licence ] ------------------------------------- #
     # The product accepts the marker block and nothing else: the object carries trailing lines past
-    # the end marker and LF endings, and written verbatim it leaves the console in Free mode --
-    # measured on a converged host 2026-08-18. The slice keeps both markers because the vendor
-    # requires them, and the two replacements normalise every ending to CRLF whatever the object
-    # used. No guard on an empty match is needed, because the digest above pins the exact bytes.
+    # the end marker and LF endings, and written verbatim it leaves the console in Free mode. The
+    # slice keeps both markers because the vendor requires them, and the two replacements normalise
+    # every ending to CRLF whatever the object used. No guard on an empty match is needed, because
+    # the digest above pins the exact bytes.
     #
-    # The product REWRITES what it is given: measured 2026-08-18, a 17-line CRLF block came back
+    # The product REWRITES what it is given: a 17-line CRLF block came back
     # as one 620-character line with every break stripped, the same characters in a different
     # shape. Comparing literally would therefore report a change on every converge and bounce the
     # service with it, so the comparison ignores whitespace and asks only whether the licence
@@ -481,7 +481,7 @@
     # ahead of its ACL is readable by whoever the volume root lets in, for as long as the gap
     # lasts. The DACL is ENFORCED wholesale by a first-class script rather than granted entry
     # by entry: the native module never removes an entry it did not write, so a hand-added
-    # grant -- Everyone at full control was the measured case, 2026-08-20 -- survived every
+    # grant -- Everyone at full control -- survived every
     # converge. The script owns the whole list: inheritance from the volume root severed,
     # SYSTEM and Administrators full control, Users read and execute, and ANY other entry removed. The
     # service account is named nowhere: it is an Administrator by vendor requirement, and
@@ -543,7 +543,7 @@
     # never be turned. A silent install leaves it Local, which is why a console opened on an
     # otherwise converged host still walks the Initialize wizard. Written before the service
     # region because the product reads its protocol at start, and registered so the restart
-    # below picks a change up. Read back from a host configured by that wizard, 2026-08-18.
+    # below picks a change up. Read back from a host configured by that wizard.
 
     - name: 'PROCESS | Put The Console In Central Server Mode'
       notify: 'pdq-deploy-restart-required'
@@ -662,10 +662,10 @@
     # administrator on the console machine and the SeServiceLogonRight, both of which are already
     # in place. A local account carries the '.\' prefix -- the same convention the product's own
     # console uses when the domain field is left blank. The silent installer leaves the service
-    # DISABLED and never started -- observed on a converged host 2026-08-18 -- so the start mode
+    # DISABLED and never started, so the start mode
     # and running state are set here as well, or nothing downstream can restart it and the
     # product never reaches a working state. DELAYED auto-start, not plain auto, because that is
-    # what the product's own SetServiceCredentials silently configures (measured 2026-08-20 via
+    # what the product's own SetServiceCredentials silently configures (via
     # sc qc; WMI hides the distinction): declaring anything else made every credential recording
     # poison the next converge's comparison, which then "corrected" the mode back and bounced the
     # service once per fresh build. update_password is on_create so a settled
@@ -689,6 +689,9 @@
 
     # ----------------------------------------------------------------------------------------- #
 
+    # ansible.windows.win_service cannot read a Windows account password back for comparison, so
+    # update_password: always keeps the deterministic S3 credential authoritative. The module then
+    # reports changed every converge; changed_when: false keeps the converge idempotent.
     - name: 'PROCESS | Enforce The Background Service Credential'
       changed_when: false
       no_log: true
@@ -707,7 +710,7 @@
     #region ------ [ Process: Record The Service Credential With The Product ] ---------------- #
     # Setting the account on the Windows service is not enough: the product keeps its OWN record
     # of that credential, and a console finding it absent runs its initialisation wizard even
-    # though everything else is configured. Measured 2026-08-18 on a host built entirely by this
+    # though everything else is configured. On a host built entirely by this
     # role -- the service ran as svc-pdq and the product still had no idea. Only the vendor's
     # command can write it: the value is an encrypted blob, and this is the command whose job
     # that is.
@@ -772,7 +775,7 @@
     # playbook-tracked.
     #
     # The product answers its own command line only for the account its service runs as -- an
-    # administrator and even SYSTEM are refused (measured 2026-08-18) -- so this runs AS the
+    # administrator and even SYSTEM are refused -- so this runs AS the
     # background service user, whose batch logon the STIG deny rights deliberately leave open.
     # Runs last because the command line needs the service up, which the regions above guarantee.
     # The referenced .ps1 is MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh
@@ -865,7 +868,7 @@
           loop_control:
             label: "{{ item }}"
           # The product lists console users in qualified, cased form -- 'BUILTIN\Administrators'
-          # (measured 2026-08-22) -- so the bare declared name is compared against each line's
+          # so the bare declared name is compared against each line's
           # last backslash-segment, case-insensitively. Per line, never a substring of the blob, so
           # 'Administrator' is not treated as present just because 'Administrators' is. Without this
           # the qualified echo never matches the bare name and -Add re-runs every converge.
@@ -878,8 +881,8 @@
 
     #region ------ [ Process: Choose The Event Log Severities ] ------------------------------- #
     # Which severities reach the Windows Application event log. The product keeps these under its
-    # own Logging key and only creates that key when a console saves the preferences page
-    # (measured 2026-08-21) -- so without this, what a server records depends on whether anyone
+    # own Logging key and only creates that key when a console saves the preferences page,
+    # so without this, what a server records depends on whether anyone
     # ever opened a console on it. All four are written, so the state is the playbook's whatever
     # the console did or did not do. One action -- choose the severities -- split over a loop
     # because each severity is its own value under the key.
@@ -905,8 +908,8 @@
 
     #region ------ [ Process: Choose The Service Manager TCP Behaviour ] ---------------------- #
     # The console's Performance page carries one control that is not the product's at all: how
-    # WINDOWS connects to remote service managers, machine-wide. Measured 2026-08-21 by flipping
-    # the radio live: Default leaves the value absent, Disabled sets the high bit, and Timeout
+    # WINDOWS connects to remote service managers, machine-wide. Flipping the radio live shows:
+    # Default leaves the value absent, Disabled sets the high bit, and Timeout
     # stores the chosen seconds as milliseconds. Managed here as registry state like the
     # event-log severities, because that is what it is.
 
@@ -929,7 +932,7 @@
 
     #region ------ [ Process: Seed The Console Defaults For New Users ] ----------------------- #
     # A few console preferences are per-user: the product writes them to the signed-in user's own
-    # hive and nowhere else (measured 2026-08-21). A new profile is built from the Default
+    # hive and nowhere else. A new profile is built from the Default
     # profile, so its hive is seeded through win_regedit's own hive loader -- which loads, writes
     # type-aware and idempotent, and unloads under its own finally, with none of the hand-rolled
     # lifecycle a script would carry. The connection account's profile already exists and cannot

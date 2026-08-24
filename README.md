@@ -1,11 +1,22 @@
 # pdq-deploy-inventory
 
-A `nwarila-platform` application repository carrying separate **`pdq_inventory`** and
-**`pdq_deploy`** Ansible roles that compose into a single all-in-one **PDQ Deploy and Inventory
-Central Server** on Windows Server. At execution time the roles overlay onto a version-pinned
+This repository automates the full Windows host and **PDQ Deploy and Inventory Central Server**
+configuration lifecycle in an ephemeral AWS environment. Terraform separates the replaceable
+Windows OS disk from three encrypted data volumes that persist across OS replacement. Ansible
+installs and licences both products, runs their services under one account, places their databases,
+publishes the Deploy repository, and converges preferences, variables, registration, and console
+users. GitHub Actions provisions the host, can replace it while reattaching the same data volumes,
+reconverges the applications, proves the bounded idempotency result, and destroys the environment.
+
+At execution time the two application roles overlay onto a version-pinned
 [`ansible-framework`](https://github.com/nwarila-platform/ansible-framework) checkout, whose
-`windows_disk_manager` provisions the disks; the host is deployed on ephemeral AWS through GitHub
-Actions and torn down on the same run.
+`windows_disk_manager` provisions the disks.
+
+## Scope: domainless lab profile
+
+The current defaults target a standalone, non-domain Windows host. They create a local service
+account and authorise local console users. Domain integration — a domain service account,
+group-based console authorisation, and RBAC hardening — is future work once a directory exists.
 
 ## What it deploys
 
@@ -17,15 +28,17 @@ Actions and torn down on the same run.
 
 Both products run co-located in **Central Server** mode under one shared Background Service User
 (`svc-pdq`). Client consoles connect to PDQ Inventory on TCP **7337** and to PDQ Deploy on TCP
-**6336**. Every artifact — each product's installer, its licence, and the service-account password —
-is fetched from the account's S3 buckets and verified against a pinned SHA-256 before use; no
-secret is ever committed.
+**6336**. The controller fetches each product's installer, licence, and the service-account password
+from S3 without giving the guest cloud credentials. Installer and licence content is verified
+against pinned SHA-256 values; the password is held in memory, rejected if empty, and represented in
+the repository only by its object location.
 
 ## How it runs
 
 The `aws-deploy` workflow owns the lifecycle: terraform provisions the Windows host, the composed
 `pdq-aws.yml` play installs and configures both products, an **idempotency gate** proves the second
-converge is a no-op, and terraform destroys the host. A push to `main` proves it immediately;
+converge reports only the two expected service-credential reassertions, and terraform destroys the
+host. A push to `main` proves it immediately;
 `workflow_dispatch` adds `hold_minutes` (keep the converged host up for interactive work) and
 `os_swap` (below).
 
@@ -38,8 +51,9 @@ The data volumes (D:, E:, F:) are standalone and independent of the OS disk. Bum
 `refresh_serial` — or dispatching `aws-deploy` with `os_swap=true` — **replaces the OS instance in
 place while the same data volumes detach and re-attach**, and PDQ resumes on its existing databases
 and repository. The disk role adopts an already-labelled volume without reformatting and re-asserts
-its drive letter; the server's only machine-tied state is credentials, which the roles re-establish
-from S3 each converge. Proven idempotent across repeated OS replacements with the data preserved.
+its drive letter; the roles reinstall the applications and reapply their machine-local
+configuration and credentials. The opt-in workflow then runs the same bounded idempotency gate on
+the rebuilt host with the data preserved.
 
 ## Layout
 

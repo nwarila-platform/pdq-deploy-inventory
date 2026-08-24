@@ -7,8 +7,8 @@
   copies and their playbook compatibility settings could be retired.
 - **Correction:** the pinned framework loader v3.3.0 is Windows-aware; no future framework
   version is needed to supply that support.
-- **Result:** the remaining work is the local-loader refresh and deployment proof tracked
-  only in TD-003. That proof determines which compatibility settings can be retired.
+- **Result:** the local-loader refresh was completed under TD-003. No loader Windows-support debt
+  remains.
 
 ## TD-002 — CLOSED — chassis lint treatment of region banners
 
@@ -23,41 +23,34 @@
   warning override; banner findings were warnings only.
 - **Result:** no repository-side workaround remains necessary.
 
-## TD-003 — local v3.1.0 loader differs from framework v3.3.0
+## TD-003 — CLOSED — local loaders match framework v3.3.0
 
-- **Recorded:** 2026-07-15. **Version comparison verified:** 2026-08-10.
-- **What:** both local role loaders are v3.1.0 and provide the generic
-  `INIT | Validating Merged Configuration` hook. The pinned framework loader is v3.3.0.
-- **Debt:** the local copies are not byte-identical to the pinned shared loader.
-- **Rollout:** review the intervening generic loader changes, refresh both role copies
-  atomically from the pin, verify byte equality, and run the deployment-level proof that
-  is required for a playbook/loader change.
-- **Exit criteria:** both local loaders match the pinned framework loader and retain the
-  merged-config validation contract.
+- **Recorded:** 2026-07-15. **Closed:** 2026-08-12.
+- **Original issue:** both local roles carried a v3.1.0 loader that differed from the framework's
+  v3.3.0 loader.
+- **Closure evidence:** commit `954f3a5` adopted the framework loader verbatim in both roles. The
+  current files declare v3.3.0, are byte-identical to each other and to the loader at the framework
+  base commit, and retain `INIT | Validating Merged Configuration`.
+- **Result:** the local loader fork and its Windows package-fact failure are resolved.
 
-## TD-005 — v3 loader exposes merged secret-bearing config at verbose output
+## TD-005 — CLOSED — merged configuration is redacted from verbose output
 
-- **Recorded and proven:** 2026-07-28.
-- **What:** the loader persists each merged `<role>_running` dictionary with `set_fact`.
-  The playbook maps `pdq_service_account.password` into both
-  `pdq_inventory.service_account.password` and `pdq_deploy.service_account.password`, so
-  verbose runs can print the merged values.
-- **Scope:** every secret-bearing role using this loader. Default-verbosity runs did not
-  print the sentinel value in the 2026-07-28 proof, and consuming tasks use `no_log`.
-- **Existing mitigation:** provide secrets through a protected extra-vars file or vault,
-  never as command-line literals.
-- **Fix:** add `no_log: true` to the shared loader's override-merge task under the
-  loader-change policy, then refresh both local copies from an updated framework pin.
+- **Recorded:** 2026-07-28. **Closed:** 2026-08-12.
+- **Original issue:** the loader's `set_fact` tasks could print the merged
+  `<role>_running` dictionary, including caller-supplied secrets, at verbose output.
+- **Closure evidence:** the v3.3.0 loader sets `no_log: true` on all three tasks that seed or merge
+  the running configuration: defaults, OS overlays, and caller overrides. Both local loaders carry
+  those guards and remain byte-identical.
+- **Result:** ordinary verbose runs no longer expose the merged dictionaries; consuming secret
+  tasks retain their own `no_log` guards.
 
 ## TD-006 — framework pin is a minimal fix commit off the old pin, not a released mainline
 
 - **Recorded:** 2026-08-23.
-- **What:** `.framework-pin` points at `9fc6cba`, the previous pin `24a8ec74` plus only the
-  `windows_disk_manager` adopted-drive-letter fix (cherry-picked onto that base). The canonical
-  fix is PR #68 on the framework's `main`; `9fc6cba` lives on the branch
-  `windisk-adopted-letter-on-pin`.
+- **What:** `.framework-pin` points at `9fc6cba`, a single commit above the previous pin
+  `24a8ec74`. Its only file change is the `windows_disk_manager` adopted-drive-letter fix.
 - **Debt:** the pin is deliberately off the mainline release track — a minimal, tested delta chosen
   so enabling OS-drive replacement did not also pull in unrelated `main` changes (RedHat/Rocky
   hardening) that our Windows composition has not exercised.
-- **Exit criteria:** once PR #68 merges and the framework releases, re-pin to a mainline commit that
-  includes the fix and verify the composition still converges and stays idempotent.
+- **Exit criteria:** re-pin to a released mainline commit that includes the fix and verify the
+  composition still converges and stays idempotent.

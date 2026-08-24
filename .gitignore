@@ -60,6 +60,7 @@
 !/.github/CODEOWNERS
 !/.github/workflows/aws-deploy.yml
 !/.github/workflows/powershell.yml
+!/.github/workflows/quality.yml
 !/.github/terraform-framework-pin
 
 # --- [ allowed: the ansible tree ] ---------------------------------------------------------- #

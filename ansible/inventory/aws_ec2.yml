@@ -18,8 +18,11 @@ plugin: amazon.aws.aws_ec2
 
 regions: [ us-east-1 ]
 
+# The play addresses a group, not a run. Terraform stamps each system with a Function tag, so the
+# group is the set of functions whose hosts this playbook configures -- add a function to the list
+# to have its hosts join, and give a second group its own list to split a deployment by role.
 groups:
-  pdq_servers: 'true'
+  pdq_servers: "(aws_tags.Function | default('', true)) in ['pdq']"
 
 #endregion --- [ This Repository ] ------------------------------------------------------------ #
 

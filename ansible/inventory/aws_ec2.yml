@@ -1,3 +1,16 @@
+# =========================================================================================== #
+# File: 'ansible/inventory/aws_ec2.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# The dynamic EC2 inventory, and the only one: every phase of .github/workflows/aws-deploy.yml
+# passes it with --inventory, and scripts/compose-and-run.sh defaults to it. There is no static
+# inventory because the deployment is ephemeral -- an instance id written into a file here would
+# be wrong the moment the run that produced it ended.
+#
+# It selects the one instance this run created and derives every connection setting from that
+# instance, so the playbook declares no connection variables of its own.
+#
+# =========================================================================================== #
 ---
 plugin: amazon.aws.aws_ec2
 
@@ -26,8 +39,8 @@ groups:
 
 #region ------ [ Boilerplate: the host describes itself ] ------------------------------------- #
 # Identity, transport and shell are READ FROM THE INSTANCE rather than declared per repository: the
-# tags Terraform already stamps say what the machine is and how to reach it, so a clone changes the
-# region above and nothing here.
+# tags Terraform already stamps say what the machine is and how to reach it, so a clone edits only
+# the section above -- nothing below it.
 
 # The host IS its declared name: Terraform sets the hostname, that value becomes the Name tag, and
 # naming the inventory host after it makes inventory_hostname the system's own name -- so nothing
@@ -61,8 +74,8 @@ compose:
   # terraform/aws.tfvars, and every entry below derives from that one tag. Four values, a protocol
   # and a path:
   #
-  #   ssh-direct     SSH to the routable address on 22. Both platforms; Windows Server ships OpenSSH.
-  #   ssh-ssm        SSH tunnelled through 'aws ssm start-session' -- dials the INSTANCE ID and needs
+  #   ssh-direct     SSH to the routable address on 22. Both platforms; Windows ships OpenSSH.
+  #   ssh-ssm        SSH tunnelled through aws ssm start-session -- dials the INSTANCE ID and needs
   #                  no inbound rule at all. The ProxyCommand below is what makes an id dialable.
   #   winrm-direct   WinRM over HTTPS to the routable address on 5986. Windows only.
   #   winrm-ssm      WinRM over HTTPS to a LOCAL port that an SSM port-forwarding session already
@@ -71,12 +84,13 @@ compose:
   #
   # Absent, the tag means ssh-direct, which is what this repository's pipeline uses.
   #
-  # A WinRM leg also needs a PASSWORD -- WinRM has no key authentication -- which the playbook must
-  # supply; the SSH legs authenticate with the key pair. No variable is published for it here
-  # because nothing in this repository consumes one yet.
+  # The SSH legs are what this repository deploys over and what its proofs cover. A WinRM leg needs
+  # three things this repository does not supply: pywinrm on the controller, a password (WinRM has
+  # no key authentication), and a listener on the target. The settings below are what it would
+  # connect with; no password variable is published because nothing here consumes one.
   #
-  # SSM dials the instance id and needs no inbound rule; a direct connection needs a real address,
-  # public first for a controller outside the VPC and private for one inside it. The final
+  # A direct connection needs a real address: public first for a controller outside the VPC,
+  # private for one inside it. The final
   # instance-id operand is deliberately NOT dialable: it surfaces an address-less topology as a
   # connection error rather than as a missing variable. Written as an 'or' chain because Jinja
   # evaluates filter ARGUMENTS eagerly, so a nested default() still raises on an absent address.
@@ -96,22 +110,26 @@ compose:
     ((aws_tags.Connection | default('ssh-direct', true)) is search('^winrm'))
     | ternary(5986, 22)
   ansible_user: >-
-    (aws_platform_details | default('', true) | lower is search('windows'))
+    (aws_platform_details | lower is search('windows'))
     | ternary('Administrator', 'ec2-user')
-  # The shell the target serves. On Windows the bootstrap flips OpenSSH's DefaultShell to PowerShell
-  # on first contact and every module after it is a PowerShell module. It is also correct BEFORE
-  # that flip: only raw tasks run then, and the registry reads the bootstrap uses to detect and
-  # perform the flip parse under either shell. Inert under WinRM, which always selects PowerShell.
+  # The shell the target serves. Over SSH on Windows the bootstrap flips OpenSSH's DefaultShell to
+  # PowerShell before any non-raw work begins, and every module after it is a PowerShell module; the
+  # value is also correct before that flip, where only raw tasks run and the registry reads the
+  # bootstrap uses parse under either shell. A WinRM leg is different rather than indifferent: that
+  # connection plugin expects cmd and warns when it is handed powershell.
   ansible_shell_type: >-
-    (aws_platform_details | default('', true) | lower is search('windows'))
-    | ternary('powershell', 'sh')
+    ((aws_tags.Connection | default('ssh-direct', true)) is search('^winrm')) | ternary(
+    'cmd',
+    (aws_platform_details | lower is search('windows')) | ternary('powershell', 'sh')
+    )
   # The bootstrap dispatcher selects a bootstrap role from this without running a fact module first.
   # Every EC2 attribute is prefixed above, so the unprefixed name it looks for is published here.
   platform: >-
-    (aws_platform_details | default('', true) | lower is search('windows'))
+    (aws_platform_details | lower is search('windows'))
     | ternary('Windows', 'Linux')
-  # The framework loader validates an upper-case ENV; it is the deployment's own Environment tag
-  # rather than a second value passed in beside it.
+  # The framework loader requires a variable NAMED 'ENV' and lower-cases the value itself; this is
+  # the deployment's own Environment tag rather than a second value passed in beside it. Read bare
+  # because the Environment filter above admits only instances that carry the tag.
   ENV: 'aws_tags.Environment'
   # NTLM rather than basic: the credential does not cross the wire in a header, and it works against
   # the workgroup-joined local Administrator a freshly launched instance is. Inert on the SSH legs.
@@ -127,14 +145,19 @@ compose:
     lookup('ansible.builtin.env', 'CI_PRIVATE_KEY') | default('~/.ssh/nwarila-ec2-key', true)
   # Keepalive: a settle poll can wait minutes for a product to persist a fresh install's edits,
   # running quiet with no SSH traffic. Without this the idle connection times out and the result is
-  # lost as UNREACHABLE. 30s x 20 outlasts a 600s settle deadline. The tunnelled form adds the SSM
-  # proxy that makes an instance id dialable.
+  # lost as UNREACHABLE. The 30s probes keep the link from counting as idle; twenty unanswered ones
+  # are the dead-peer budget. Only the tunnelled leg adds the proxy that makes an instance id
+  # dialable, so the shared options are stated once.
+  #
+  # Every line of this scalar sits at the block indent. YAML folds a line break to a space only
+  # between equally-indented lines, and a newline preserved inside the quoted ProxyCommand would
+  # split it into two shell commands -- the second failing, the first silently losing its port.
   ansible_ssh_common_args: >-
-    ((aws_tags.Connection | default('ssh-direct', true)) == 'ssh-ssm') | ternary(
-      '-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=20
-       -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession
-       --parameters portNumber=%p"',
-      '-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=20'
-    )
+    '-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=20'
+    ~ (((aws_tags.Connection | default('ssh-direct', true)) == 'ssh-ssm') | ternary(
+    ' -o ProxyCommand="aws ssm start-session --target %h'
+    ~ ' --document-name AWS-StartSSHSession --parameters portNumber=%p"',
+    ''
+    ))
 
 #endregion --- [ Boilerplate: the host describes itself ] ------------------------------------- #

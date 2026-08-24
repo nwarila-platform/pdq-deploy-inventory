@@ -10,7 +10,11 @@ filters:
   'tag:Environment': test
   'tag:Repository': "{{ lookup('ansible.builtin.env', 'GITHUB_REPOSITORY') }}"
 
-hostnames: [ instance-id ]
+# The host IS its declared name: Terraform sets the hostname, that value becomes the Name tag, and
+# naming the inventory host after it makes inventory_hostname the system's own name -- so nothing
+# downstream has to be told the name a second time. The instance id stands in only for an instance
+# that carries no Name tag.
+hostnames: [ 'tag:Name', instance-id ]
 
 strict: true
 
@@ -30,9 +34,19 @@ compose:
   ansible_host: aws_public_ip_address
   ansible_connection: "'ssh'"
   ansible_user: "'Administrator'"
-  ansible_shell_type: "'cmd'"
+  # The bootstrap play flips OpenSSH's DefaultShell to PowerShell on first contact and every module
+  # after it is a PowerShell module, so this is the shell type for the whole run. It is also correct
+  # BEFORE the flip: the only tasks that run then are raw, and the registry reads the bootstrap uses
+  # to detect and perform the flip parse under either shell.
+  ansible_shell_type: "'powershell'"
   ansible_ssh_private_key_file: "lookup('ansible.builtin.env', 'CI_PRIVATE_KEY')"
   # Keepalive: the settings settle poll waits minutes for the product to persist a fresh install's
   # edits, running quiet with no SSH traffic. Without this the idle direct-SSH connection times
   # out and the result is lost as UNREACHABLE. 30s x 20 keeps it alive past the 600s settle deadline.
+  # The framework loader validates an upper-case ENV; it is the deployment's own Environment tag
+  # rather than a second value passed in beside it.
+  ENV: 'aws_tags.Environment'
+  # The bootstrap dispatcher selects a bootstrap role from this without running a fact module first.
+  # Every EC2 attribute is prefixed above, so the unprefixed name it looks for is published here.
+  platform: 'aws_platform'
   ansible_ssh_common_args: "'-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=20'"

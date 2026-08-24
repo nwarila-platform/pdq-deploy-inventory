@@ -108,12 +108,6 @@
   gather_facts: false
   become: false
 
-  vars:
-    windows_bootstrap_hostname: "{{ aws_tags.Name }}"
-    # The dispatcher reads an unprefixed 'platform' to pick the Windows bootstrap WITHOUT running a
-    # fact module first; the inventory prefixes every EC2 attribute, so it is handed over here.
-    platform: "{{ aws_platform | default('') }}"
-
   tasks:
     - name: 'BOOTSTRAP | Dispatch The Framework Bootstrap For This Host'
       ansible.builtin.include_role:
@@ -131,10 +125,6 @@
   hosts: 'pdq_servers'
   gather_facts: true
   become: false
-
-  vars:
-    ansible_shell_type: 'powershell'
-    ENV: "{{ env }}"
 
   roles:
     # Neither role ships an absent entrypoint, and removing the applications is no reason to tear
@@ -193,10 +183,6 @@
   become: false
   any_errors_fatal: true
   vars:
-    # The bootstrap flipped the host to PowerShell; declare the matching shell type here rather
-    # than trusting the inventory's pre-bootstrap guess.
-    ansible_shell_type: 'powershell'
-    ENV: "{{ env }}"
     # One volume per concern, matching terraform/aws.tfvars by Function tag. The letters are the
     # contract this play publishes to the roles below: Inventory's database on D, Deploy's on E,
     # and the shared package repository on F.
@@ -265,7 +251,6 @@
     # no absent entrypoint, and removing an application is not a reason to touch the volumes that
     # outlive it.
     - role: 'windows_disk_manager'
-      when: (state | default('present') | string | lower | trim) != 'absent'
       vars:
         windows_disk_manager:
           platform: 'aws'

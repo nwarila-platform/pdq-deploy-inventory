@@ -76,10 +76,8 @@ compose:
   ansible_host: >-
     aws_instance_id
     if (aws_tags.Connection | default('ssh-direct', true)) == 'ssh-ssm'
-
     else '127.0.0.1'
     if (aws_tags.Connection | default('ssh-direct', true)) == 'winrm-ssm'
-
     else (aws_public_ip_address | default('', true))
          or (aws_private_ip_address | default('', true))
          or aws_instance_id
@@ -87,13 +85,11 @@ compose:
   ansible_connection: >-
     'winrm'
     if (aws_tags.Connection | default('ssh-direct', true)) is search('^winrm')
-
     else 'ssh'
 
   ansible_port: >-
     5986
     if (aws_tags.Connection | default('ssh-direct', true)) is search('^winrm')
-
     else 22
 
   # Keepalive: a settle poll can wait minutes with no SSH traffic, and an idle connection that times
@@ -105,7 +101,6 @@ compose:
   # into two shell commands -- the second failing, the first silently losing its port.
   ansible_ssh_common_args: >-
     '-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=20'
-
     ~ (
     ' -o ProxyCommand="aws ssm start-session --target %h'
     ~ ' --document-name AWS-StartSSHSession --parameters portNumber=%p"'
@@ -119,7 +114,6 @@ compose:
   ansible_user: >-
     'Administrator'
     if aws_platform_details | lower is search('windows')
-
     else 'ec2-user'
 
   # Over SSH on Windows the bootstrap flips OpenSSH's DefaultShell to PowerShell before any non-raw
@@ -129,10 +123,8 @@ compose:
   ansible_shell_type: >-
     'cmd'
     if (aws_tags.Connection | default('ssh-direct', true)) is search('^winrm')
-
     else 'powershell'
     if aws_platform_details | lower is search('windows')
-
     else 'sh'
 
   # The workflow stages its key and names it; a hand-run falls back to the account key pair, or to
@@ -163,7 +155,6 @@ compose:
   platform: >-
     'Windows'
     if aws_platform_details | lower is search('windows')
-
     else 'Linux'
 
   # The framework loader requires a variable NAMED 'ENV' and lower-cases the value itself. Read bare

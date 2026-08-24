@@ -10,11 +10,8 @@
 # =========================================================================================== #
 ---
 #region ------ [ This Repository ] ------------------------------------------------------------ #
-# What a clone rewrites, and all of it: where the deployment runs, and the group name its playbook
-# addresses. Everything below is derived from the instance or from the workflow's own environment,
-# and is carried unchanged.
-
-regions: [ us-east-1 ]
+# What a clone rewrites, and all of it. Everything below is derived from the instance or from the
+# workflow's own environment, and is carried unchanged.
 
 # The play addresses a group, not a run. Terraform stamps each system with a Function tag, so the
 # group is the set of functions whose hosts this playbook configures -- add a function to the list
@@ -26,6 +23,9 @@ groups:
 
 
 #region ------ [ Selecting This Run ] --------------------------------------------------------- #
+# Where to look, then which instance. These deployments run in one region.
+regions: [ us-east-1 ]
+
 # One run's instance and no other. Three tags are the identifiers GitHub sets for any workflow, so
 # a run can only ever see what it created; the fourth names the deployment and defaults to the one
 # these pipelines build. Nothing here is particular to this repository.

@@ -8,11 +8,16 @@
 
     Runs anywhere, Linux CI included: the script touches the platform through
     exactly three doors -- the licence read (Get-ItemProperty on one HKLM key),
-    the product's command line, and its sqlite tool. This file stubs all three:
-    the registry cmdlet returns a marker-wrapped base64 licence built by the
-    spec, and the two executables are FUNCTIONS named with their literal
-    Windows paths, because the call operator resolves a path-shaped string to a
-    function before it ever consults a filesystem.
+    the product's command line, and its sqlite tool. This file stubs all three
+    for both products: the registry cmdlet returns a marker-wrapped base64
+    licence built by the spec, and the executables are FUNCTIONS named with
+    their literal Windows paths, because the call operator resolves a
+    path-shaped string to a function before it ever consults a filesystem.
+
+    Join-Path uses the current filesystem provider's separator, so a scoped
+    invocation helper supplies Windows path semantics while the spec runs on
+    Linux. That keeps the derived paths byte-for-byte equal to the paths used
+    on the Windows target without changing the host's global command surface.
 
     Stub state lives in $global: variables because inside a function called
     from a child SCRIPT, $script: resolves to the child script's own scope, not
@@ -23,6 +28,21 @@
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+$script:Products = @(
+  @{
+    ProductName = 'PDQ Deploy'
+    CliPath = 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
+    SqlitePath = 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\sqlite3.exe'
+    LicenseKey = 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy'
+  }
+  @{
+    ProductName = 'PDQ Inventory'
+    CliPath = 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
+    SqlitePath = 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\sqlite3.exe'
+    LicenseKey = 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory'
+  }
+)
 
 BeforeAll {
   $script:ScriptPath = Join-Path -Path $PSScriptRoot -ChildPath 'Set-PdqRegistration.ps1'
@@ -42,11 +62,52 @@ BeforeAll {
     Remove-Variable -Name 'Ansible' -Scope 'Global' -Force -ErrorAction 'SilentlyContinue'
   }
 
+  # The target is Windows PowerShell 5.1. Its filesystem provider preserves the backslash paths
+  # below; Linux PowerShell uses forward slashes, so scope the target semantics to each invocation.
+  Function Invoke-PdqRegistration {
+    Param (
+      [System.String] $CliPath,
+      [System.String] $Email,
+      [Switch] $WhatIf
+    )
+
+    Function Split-Path {
+      Param (
+        [System.String] $Path,
+        [Switch] $Parent,
+        [Switch] $Leaf
+      )
+
+      $LastSeparator = $Path.LastIndexOf('\')
+      If ($Leaf) {
+        Return $Path.Substring($LastSeparator + 1)
+      }
+      If ($Parent) {
+        Return $Path.Substring(0, $LastSeparator)
+      }
+      Throw 'unexpected Split-Path invocation'
+    }
+
+    Function Join-Path {
+      Param (
+        [System.String] $Path,
+        [System.String] $ChildPath
+      )
+
+      '{0}\{1}' -f $Path, $ChildPath
+    }
+
+    $DerivedSqlitePath = Join-Path (Split-Path -Path $CliPath -Parent) 'sqlite3.exe'
+    New-Item -Force -Path ('function:' + $CliPath) -Value $script:CliStub | Out-Null
+    New-Item -Force -Path ('function:' + $DerivedSqlitePath) -Value $script:SqliteStub | Out-Null
+    & $script:ScriptPath -Email $Email -CliPath $CliPath -WhatIf:$WhatIf
+  }
+
   # The licence the registry hands out: the same marker-wrapped base64 XML the
   # product stores, built here so a test can vary the ID or the address.
   Function New-FakeLicense {
-    Param ([System.String]$Id, [System.String]$Email)
-    $Xml = '<License Version="2.0" ID="{0}" Name="PDQ Deploy" Mode="Enterprise" E-Mail="{1}" />' -f $Id, $Email
+    Param ([System.String]$Id, [System.String]$Email, [System.String]$ProductName)
+    $Xml = '<License Version="2.0" ID="{0}" Name="{1}" Mode="Enterprise" E-Mail="{2}" />' -f $Id, $ProductName, $Email
     '--- START LICENSE ---{0}--- END LICENSE ---' -f [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Xml))
   }
 
@@ -55,7 +116,8 @@ BeforeAll {
   Function Get-ItemProperty {
     [CmdletBinding()]
     Param ([Parameter()] [System.String]$LiteralPath)
-    If ($LiteralPath -ne 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy') {
+    $global:LicenseKeyReads += $LiteralPath
+    If ($LiteralPath -ne $global:ExpectedLicenseKey) {
       Throw ('unexpected registry read: {0}' -f $LiteralPath)
     }
     [PSCustomObject]@{ License = $global:FakeLicenseBlob }
@@ -71,7 +133,8 @@ BeforeAll {
   }
 
   # Command-line door: SystemInfo names the database, nothing else is asked.
-  New-Item -Force -Path 'function:C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe' -Value {
+  $script:CliStub = {
+    $global:CliCommandPaths += $MyInvocation.MyCommand.Name
     $global:CliCalls += , @($args)
     $global:LASTEXITCODE = 0
     @('  Console Version : 20.1.8.0', '  Database : C:\fake\Database.db')
@@ -79,7 +142,8 @@ BeforeAll {
 
   # Sqlite door: SELECTs read the arrays; the write call applies each
   # statement so later reads observe it. Row shape is sqlite's own pipe join.
-  New-Item -Force -Path 'function:C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\sqlite3.exe' -Value {
+  $script:SqliteStub = {
+    $global:SqliteCommandPaths += $MyInvocation.MyCommand.Name
     $Database, $Sql = $args
     $global:SqliteCalls += , @($Database, $Sql)
     $global:LASTEXITCODE = If ($global:FakeSqliteFails) { 1 } Else { 0 }
@@ -112,17 +176,22 @@ BeforeAll {
   }
 }
 
-Describe 'Set-PdqRegistration' {
+AfterAll {
+  Remove-AnsibleContext
+}
+
+Describe 'Set-PdqRegistration <ProductName>' -ForEach $script:Products {
   It 'declares SupportsShouldProcess so the module runs it in check mode' {
     # win_powershell SKIPS a script in check mode unless it advertises this, returning
     # changed=true and no result -- the exact spelling the module's own detector keys on.
-    $Script = Get-Content -Raw (Join-Path $PSScriptRoot 'Set-PdqRegistration.ps1')
+    $Script = Get-Content -Raw $script:ScriptPath
     $Script | Should -Match '\[CmdletBinding\(SupportsShouldProcess'
   }
 
   BeforeEach {
     $env:COMPUTERNAME = 'TESTBOX'
-    $global:FakeLicenseBlob = New-FakeLicense -Id 'lic-0001' -Email 'someone@example.com'
+    $global:ExpectedLicenseKey = $LicenseKey
+    $global:FakeLicenseBlob = New-FakeLicense -Id 'lic-0001' -Email 'someone@example.com' -ProductName $ProductName
     $global:FakeMachines = @()
     $global:FakeUsers = @()
     $global:FakeRegistrations = @()
@@ -130,33 +199,49 @@ Describe 'Set-PdqRegistration' {
     $global:FakeSqliteFails = $False
     $global:FakeWriteIgnored = $False
     $global:CliCalls = @()
+    $global:CliCommandPaths = @()
     $global:SqliteCalls = @()
+    $global:SqliteCommandPaths = @()
+    $global:LicenseKeyReads = @()
     $global:WriteCalls = 0
     Remove-AnsibleContext
   }
 
   Context 'refusing bad input' {
     It 'throws when the email does not match the one the licence was issued to' {
-      { & $script:ScriptPath -Email 'other@example.com' 2>$null } | Should -Throw '*does not match*'
+      { Invoke-PdqRegistration -CliPath $CliPath -Email 'other@example.com' 2>$null } |
+        Should -Throw '*does not match*'
       $global:WriteCalls | Should -Be 0
     }
 
     It 'throws when the licence carries no ID to register against' {
       $global:FakeLicenseBlob = '--- START LICENSE ---{0}--- END LICENSE ---' -f
         [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes('<License Version="2.0" />'))
-      { & $script:ScriptPath -Email 'someone@example.com' 2>$null } | Should -Throw '*no ID*'
+      { Invoke-PdqRegistration -CliPath $CliPath -Email 'someone@example.com' 2>$null } |
+        Should -Throw '*no ID*'
     }
 
     It 'throws when the database write fails' {
       $global:FakeSqliteFails = $True
-      { & $script:ScriptPath -Email 'someone@example.com' 2>$null } | Should -Throw '*exit code 1*'
+      { Invoke-PdqRegistration -CliPath $CliPath -Email 'someone@example.com' 2>$null } |
+        Should -Throw '*exit code 1*'
+    }
+  }
+
+  Context 'deriving product paths' {
+    It 'uses the exact command, sqlite and licence paths from the product CLI path' {
+      $Null = Invoke-PdqRegistration -CliPath $CliPath -Email 'someone@example.com'
+
+      ($global:CliCommandPaths | Select-Object -Unique) | Should -BeExactly $CliPath
+      ($global:SqliteCommandPaths | Select-Object -Unique) | Should -BeExactly $SqlitePath
+      ($global:LicenseKeyReads | Select-Object -Unique) | Should -BeExactly $LicenseKey
     }
   }
 
   Context 'hardening' {
     It 'escapes every interpolated value, not just the email' {
       $env:COMPUTERNAME = "o'brien-pc"
-      $Null = & $script:ScriptPath -Email 'someone@example.com'
+      $Null = Invoke-PdqRegistration -CliPath $CliPath -Email 'someone@example.com'
       $Batch = ($global:SqliteCalls | Where-Object { $_[1] -match 'INSERT' } | Select-Object -Last 1)[1]
       $Batch | Should -Match "o''brien-pc"
       $Batch | Should -Not -Match "o'brien-pc'"
@@ -164,13 +249,15 @@ Describe 'Set-PdqRegistration' {
 
     It 'refuses an absent database rather than creating an empty one' {
       $global:FakeDbPresent = $False
-      { & $script:ScriptPath -Email 'someone@example.com' 2>$null } | Should -Throw '*is not at*'
+      { Invoke-PdqRegistration -CliPath $CliPath -Email 'someone@example.com' 2>$null } |
+        Should -Throw '*is not at*'
     }
 
     It 'reports no change when the email guard rejects the input' {
-      $global:FakeLicenseBlob = New-FakeLicense -Id 'lic-0001' -Email 'real@example.com'
+      $global:FakeLicenseBlob = New-FakeLicense -Id 'lic-0001' -Email 'real@example.com' -ProductName $ProductName
       $Context = New-AnsibleContext
-      { & $script:ScriptPath -Email 'wrong@example.com' 2>$null } | Should -Throw '*does not match*'
+      { Invoke-PdqRegistration -CliPath $CliPath -Email 'wrong@example.com' 2>$null } |
+        Should -Throw '*does not match*'
       $Context.Changed | Should -BeFalse
       Remove-AnsibleContext
     }
@@ -178,7 +265,8 @@ Describe 'Set-PdqRegistration' {
 
   Context 'recording a fresh build' {
     It 'creates the machine, the user and the registration, and reports the change' {
-      $Result = & $script:ScriptPath -Email 'someone@example.com' | ConvertFrom-Json
+      $Result = Invoke-PdqRegistration -CliPath $CliPath -Email 'someone@example.com' |
+        ConvertFrom-Json
       $Result.changed | Should -BeTrue
       $Result.registered | Should -Be 'someone@example.com'
       $global:FakeMachines | Should -Be @('testbox|' + $global:FakeMachines[0].Split('|')[1])
@@ -189,25 +277,27 @@ Describe 'Set-PdqRegistration' {
 
     It 'stores lower-case names whatever the machine reports' {
       $env:COMPUTERNAME = 'UPPERBOX'
-      $Null = & $script:ScriptPath -Email 'someone@example.com'
+      $Null = Invoke-PdqRegistration -CliPath $CliPath -Email 'someone@example.com'
       $global:FakeMachines[0] | Should -Match '^upperbox\|'
       $global:FakeUsers[0] | Should -Match '^upperbox\\administrator\|'
     }
 
     It 'fails the run when the row does not read back as written' {
       $global:FakeWriteIgnored = $True
-      { & $script:ScriptPath -Email 'someone@example.com' 2>$null } | Should -Throw '*did not read back*'
+      { Invoke-PdqRegistration -CliPath $CliPath -Email 'someone@example.com' 2>$null } |
+        Should -Throw '*did not read back*'
     }
   }
 
   Context 'converging an already-registered build' {
     BeforeEach {
-      $Null = & $script:ScriptPath -Email 'someone@example.com'
+      $Null = Invoke-PdqRegistration -CliPath $CliPath -Email 'someone@example.com'
       $global:WriteCalls = 0
     }
 
     It 'changes nothing and writes nothing the second time' {
-      $Result = & $script:ScriptPath -Email 'someone@example.com' | ConvertFrom-Json
+      $Result = Invoke-PdqRegistration -CliPath $CliPath -Email 'someone@example.com' |
+        ConvertFrom-Json
       $Result.changed | Should -BeFalse
       $Result.msg | Should -Be 'registration already present'
       $global:WriteCalls | Should -Be 0
@@ -215,8 +305,9 @@ Describe 'Set-PdqRegistration' {
 
     It 'replaces the row but keeps both ids when only the address moved' {
       $Before = $global:FakeRegistrations[0].Split('|')
-      $global:FakeLicenseBlob = New-FakeLicense -Id 'lic-0001' -Email 'renamed@example.com'
-      $Result = & $script:ScriptPath -Email 'renamed@example.com' | ConvertFrom-Json
+      $global:FakeLicenseBlob = New-FakeLicense -Id 'lic-0001' -Email 'renamed@example.com' -ProductName $ProductName
+      $Result = Invoke-PdqRegistration -CliPath $CliPath -Email 'renamed@example.com' |
+        ConvertFrom-Json
       $Result.changed | Should -BeTrue
       $After = $global:FakeRegistrations[0].Split('|')
       $After[1] | Should -Be $Before[1]
@@ -229,16 +320,16 @@ Describe 'Set-PdqRegistration' {
     AfterEach { Remove-AnsibleContext }
 
     It 'sets Changed=$False explicitly when the registration is already present' {
-      $Null = & $script:ScriptPath -Email 'someone@example.com'
+      $Null = Invoke-PdqRegistration -CliPath $CliPath -Email 'someone@example.com'
       $Context = New-AnsibleContext
-      & $script:ScriptPath -Email 'someone@example.com'
+      Invoke-PdqRegistration -CliPath $CliPath -Email 'someone@example.com'
       $Context.Changed | Should -BeFalse
       $Context.Result.registered | Should -Be 'someone@example.com'
     }
 
     It 'reports the would-be change in check mode and writes nothing' {
       $Null = New-AnsibleContext -CheckMode
-      & $script:ScriptPath -Email 'someone@example.com' -WhatIf
+      Invoke-PdqRegistration -CliPath $CliPath -Email 'someone@example.com' -WhatIf
       $global:Ansible.Changed | Should -BeTrue
       $global:WriteCalls | Should -Be 0
       $global:FakeRegistrations.Count | Should -Be 0

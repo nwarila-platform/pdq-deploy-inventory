@@ -930,7 +930,7 @@
     # only guaranteed once the service has started. No become: the row write is a file write and
     # the one command-line call is SystemInfo, a local read needing no console authorisation. The
     # referenced .ps1 is MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the
-    # role tracks only files/Set-PdqInventoryRegistration.ps1.stub); run it before this role.
+    # role tracks only files/Set-PdqRegistration.ps1.stub); run it before this role.
 
     - name: 'PROCESS | Record The Product Registration'
       ansible.windows.win_powershell:
@@ -938,7 +938,8 @@
         error_action: 'stop'
         parameters:
           Email: "{{ pdq_inventory_running.license.email }}"
-        script: "{{ lookup('ansible.builtin.file', 'Set-PdqInventoryRegistration.ps1') }}"
+          CliPath: "{{ pdq_inventory_running.cli_path }}"
+        script: "{{ lookup('ansible.builtin.file', 'Set-PdqRegistration.ps1') }}"
 
     #endregion --- [ Process: Record The Product Registration ] ------------------------------- #
 

@@ -19,16 +19,16 @@
         a wrong licence, and either way writing it would record an address the vendor did not
         issue the licence to, so it throws instead.
 
-        Rows are written exactly as the popup writes them, measured 2026-08-21: LicensedMachine
-        and LicensedUser get a fresh GUID apiece when absent (lower-case names, the machine and
-        its built-in administrator), and Registration is keyed on all three ids with
-        ProductMode 'Server', RegistrationStatus 'Registered' and marketing declined. A row that
-        already matches leaves everything untouched; after any write the row is read back and
-        must equal what was asked, so a write that did not take fails the run.
+        Rows are written exactly as the popup writes them: LicensedMachine and LicensedUser get a
+        fresh GUID apiece when absent (lower-case names, the machine and its built-in
+        administrator), and Registration is keyed on all three ids with ProductMode 'Server',
+        RegistrationStatus 'Registered' and marketing declined. A row that already matches leaves
+        everything untouched; after any write the row is read back and must equal what was asked,
+        so a write that did not take fails the run.
 
         Org scripts are a single straightforward process stage: [ Initialization ], [ Main ]
         (read -> compare -> apply -> verify -> ONE result object), [ Output ]. Developed under
-        scripts/ with the sibling Set-PdqRegistration.pester.ps1 spec; the role tracks only
+        scripts/ with the sibling Set-PdqRegistration.pester.ps1 spec; each role tracks only
         files/Set-PdqRegistration.ps1.stub, resolved by the build.
 
     .PARAMETER DebugLevel
@@ -46,8 +46,12 @@
     .PARAMETER Email
         The registration address. Must equal the E-Mail attribute inside the installed licence.
 
+    .PARAMETER CliPath
+        Full path to the product's command line. Each role supplies its product's single fixed
+        install location so one script serves both products.
+
     .EXAMPLE
-        .\Set-PdqRegistration.ps1 -Email 'someone@example.com'
+        .\Set-PdqRegistration.ps1 -Email 'someone@example.com' -CliPath $ProductCliPath
 
     .OUTPUTS
         One object carrying changed, check_mode, registered and msg.
@@ -87,7 +91,18 @@ Param (
   )]
   [ValidatePattern('^\S+@\S+\.\S+$')]
   [System.String]
-  $Email
+  $Email,
+
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [ValidateNotNullOrEmpty()]
+  [System.String]
+  $CliPath
 )
 
 #region ------ [ Script ] -------------------------------------------------------------------- #
@@ -105,17 +120,16 @@ New-Variable -Force -Name:'LOG_LEVELS' -Option:('Private', 'ReadOnly') -Value:(
   [System.String[]]@('Verbose', 'Debug', 'Information', 'Warning', 'Error', 'Fatal')
 )
 
-# The product's command line, its sqlite tool, and the registry key its licence lives under.
-# Fixed, not offered: the installer ignores every documented relocation switch (measured
-# 2026-08-18), so a path parameter would advertise a choice that does not exist.
+# The path is each product's single fixed install location, supplied as -CliPath so one script
+# serves both products. The sqlite tool and licence registry key are derived from that path.
 New-Variable -Force -Name:'CLI_PATH' -Option:('Private', 'ReadOnly') -Value:(
-  [System.String]'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
+  [System.String]$CliPath
 )
 New-Variable -Force -Name:'SQLITE_PATH' -Option:('Private', 'ReadOnly') -Value:(
-  [System.String]'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\sqlite3.exe'
+  [System.String](Join-Path (Split-Path -Path $CliPath -Parent) 'sqlite3.exe')
 )
 New-Variable -Force -Name:'LICENSE_KEY' -Option:('Private', 'ReadOnly') -Value:(
-  [System.String]'HKLM:\SOFTWARE\Admin Arsenal\PDQ Deploy'
+  [System.String]('HKLM:\SOFTWARE\Admin Arsenal\{0}' -f (Split-Path -Path (Split-Path -Path $CliPath -Parent) -Leaf))
 )
 
 # Initialize the custom stream preferences; the built-in ones already exist.

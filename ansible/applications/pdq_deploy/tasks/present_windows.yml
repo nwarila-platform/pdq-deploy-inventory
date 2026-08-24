@@ -1033,6 +1033,7 @@
         error_action: 'stop'
         parameters:
           Email: "{{ pdq_deploy_running.license.email }}"
+          CliPath: "{{ pdq_deploy_running.cli_path }}"
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqRegistration.ps1') }}"
 
     #endregion --- [ Process: Record The Product Registration ] ------------------------------- #

@@ -87,7 +87,7 @@
 # artifacts, deliberately NEVER allowlisted, so they cannot be committed.
 !/ansible/applications/pdq_inventory/files/Get-InstalledSoftware.ps1.stub
 !/ansible/applications/pdq_inventory/files/Set-PdqInventorySetting.ps1.stub
-!/ansible/applications/pdq_inventory/files/Set-PdqInventoryRegistration.ps1.stub
+!/ansible/applications/pdq_inventory/files/Set-PdqRegistration.ps1.stub
 !/ansible/applications/pdq_inventory/files/Set-PdqVariable.ps1.stub
 !/ansible/applications/pdq_inventory/handlers/main.yml
 !/ansible/applications/pdq_inventory/meta/main.yml
@@ -132,8 +132,6 @@
 !/scripts/Set-PdqRegistration.pester.ps1
 !/scripts/Set-PdqInventorySetting.ps1
 !/scripts/Set-PdqInventorySetting.pester.ps1
-!/scripts/Set-PdqInventoryRegistration.ps1
-!/scripts/Set-PdqInventoryRegistration.pester.ps1
 !/scripts/Set-PdqVariable.ps1
 !/scripts/Set-PdqVariable.pester.ps1
 !/scripts/compose-and-run.sh

@@ -6,10 +6,12 @@
 # Deploy and PDQ Inventory roles. Runs from the COMPOSED tree only — in CI, .github/workflows/aws-deploy.yml
 # overlays this repository's roles into the pinned ansible-framework checkout and executes this
 # playbook against a dynamic EC2 inventory filtered to this run by its framework-set EC2 tags,
-# reached by direct SSH to the instance's public IPv4.
+# reached by direct SSH to the instance's public IPv4, bootstrapped, brought onto the private
+# network, joined to its directory, and then configured.
 #
-# Three plays, in a required order: confirm the filtered inventory is non-empty, wait for that
-# instance to become reachable, then configure it.
+# Five plays, in a required order: confirm the filtered inventory is non-empty, wait for that
+# instance to become reachable, bootstrap it (transport, elevation, computer name), bring it onto
+# the private network and into the directory, then configure the products.
 #
 # =========================================================================================== #
 ---
@@ -84,9 +86,104 @@
     - name: 'READY | Wait For EC2Launch Provisioning To Complete'
       changed_when: false
 
-      ansible.builtin.raw: '"C:\Program Files\Amazon\EC2Launch\EC2Launch.exe" status -b'
+      # Invoked through powershell.exe explicitly so the probe parses on BOTH shells the host may
+      # serve: cmd on first boot, and PowerShell once the bootstrap has flipped the DefaultShell
+      # (every converge after the first, including the post-OS-swap one).
+      ansible.builtin.raw: >-
+        powershell -NoProfile -Command
+        "& 'C:\Program Files\Amazon\EC2Launch\EC2Launch.exe' status -b"
 
 #endregion --- [ Play: Windows Readiness ] ---------------------------------------------------- #
+
+#region ------ [ Play: Bootstrap The Windows Host ] ------------------------------------------- #
+# The framework's Windows bootstrap: it repairs the transport (OpenSSH DefaultShell to PowerShell),
+# proves an elevated session, and sets the computer name. It runs once per invocation, after the
+# readiness probe and before every play that configures the host, with gather_facts off -- implicit gathering would run a PowerShell module
+# over the shell the inventory guessed, the failure the bootstrap exists to prevent. The name it
+# sets is the Terraform 'hostname', read back from the instance's Name tag so there is one source.
+# A host that later joins the directory carries this name into its computer object.
+
+- name: 'PLAY | Bootstrap The Windows Host'
+  hosts: 'pdq_servers'
+  gather_facts: false
+  become: false
+
+  vars:
+    windows_bootstrap_hostname: "{{ aws_tags.Name }}"
+    # The dispatcher reads an unprefixed 'platform' to pick the Windows bootstrap WITHOUT running a
+    # fact module first; the inventory prefixes every EC2 attribute, so it is handed over here.
+    platform: "{{ aws_platform | default('') }}"
+
+  tasks:
+    - name: 'BOOTSTRAP | Dispatch The Framework Bootstrap For This Host'
+      ansible.builtin.include_role:
+        name: 'os_bootstrap'
+
+#endregion --- [ Play: Bootstrap The Windows Host ] ------------------------------------------- #
+
+
+#region ------ [ Play: Reach The Private Network And Join Its Directory ] --------------------- #
+# The tunnel first, then the join: domain_member cannot resolve or reach a realm the host is not
+# yet on the network for. From here on the host serves PowerShell (the bootstrap flipped it), so
+# the shell type is declared per play rather than trusted from the inventory's pre-bootstrap guess.
+
+- name: 'PLAY | Reach The Private Network And Join Its Directory'
+  hosts: 'pdq_servers'
+  gather_facts: true
+  become: false
+
+  vars:
+    ansible_shell_type: 'powershell'
+    ENV: "{{ env }}"
+
+  roles:
+    # Neither role ships an absent entrypoint, and removing the applications is no reason to tear
+    # the host off its network or out of its directory.
+    - role: 'openvpn_client'
+      when: (state | default('present') | string | lower | trim) != 'absent'
+      vars:
+        openvpn_client:
+          installer:
+            bucket: "{{ aws_account_id }}-apprepo"
+            path: 'OpenVPN.net/OpenVPN Community/<version>/OpenVPN_Community_amd64.msi'
+            version: '2.6.22'
+            sha256: '1e1bb9a712990d1b2b961de7e8df3384964e4fb6f6776a100840f0d9a82ed507'
+          profile:
+            bucket: "{{ aws_account_id }}-ansible"
+            object: 'openvpn/aws-ec2-test.ovpn'
+            sha256: 'b5dd2190d6d30eb8642f9d9c37ebd8bdeaabdb3afb39831c541eefc9082f058d'
+          profile_name: 'aws-ec2-test'
+          # The automatic service cannot configure the data-channel-offload adapter under the
+          # installer's virtual account (netsh fails and the tunnel exits); SYSTEM completes it.
+          # Declared in the form the service reports, which is what the role's proof compares.
+          service_account: 'NT AUTHORITY\SYSTEM'
+          dns:
+            domain: 'tcn.trinitytechnicalservices.com'
+            servers:
+              - '10.69.112.4'
+              - '10.69.112.5'
+          proofs:
+            - host: '10.69.112.4'
+              port: 389
+            - host: '10.69.112.5'
+              port: 389
+
+    - role: 'domain_member'
+      when: (state | default('present') | string | lower | trim) != 'absent'
+      vars:
+        domain_member:
+          realm: 'tcn.trinitytechnicalservices.com'
+          # Qualified as a UPN: the join module hands the name to the directory verbatim, and an
+          # unqualified name is not resolved against the realm from a host that is not yet in it.
+          user: 'svc-domainjoin@tcn.trinitytechnicalservices.com'
+          password:
+            bucket: "{{ aws_account_id }}-apprepo"
+            object: 'applications/domain_member/svc-domainjoin-password.txt'
+            sha256: '275cbdbe8f9a92c30b64294a61a2e49e4e3a65552cd7fb523646849f33ec2f8b'
+          computer_ou: 'OU=PDQ,OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'
+
+#endregion --- [ Play: Reach The Private Network And Join Its Directory ] --------------------- #
+
 
 #region ------ [ Play: PDQ Deploy And Inventory ] ------------------------------------------- #
 
@@ -96,6 +193,9 @@
   become: false
   any_errors_fatal: true
   vars:
+    # The bootstrap flipped the host to PowerShell; declare the matching shell type here rather
+    # than trusting the inventory's pre-bootstrap guess.
+    ansible_shell_type: 'powershell'
     ENV: "{{ env }}"
     # One volume per concern, matching terraform/aws.tfvars by Function tag. The letters are the
     # contract this play publishes to the roles below: Inventory's database on D, Deploy's on E,

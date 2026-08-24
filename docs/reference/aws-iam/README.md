@@ -40,7 +40,7 @@ The workflow assumes `nwarila-platform_pdq-deploy-inventory_runner` through `DEP
 | `nwarila-platform_pdq-deploy-inventory_runner_ec2.json` | Read deployment metadata; launch tagged instances and volumes; manage and tag owned instances and volumes |
 | `nwarila-platform_pdq-deploy-inventory_runner_ssm.json` | Read the AMI parameter hierarchy; start SSH sessions and PowerShell commands on repository-tagged instances; read results and tear down the runner's sessions |
 | `nwarila-platform_pdq-deploy-inventory_runner_kms.json` | Resolve KMS aliases and keys; use KMS cryptographic and grant operations through EC2 in `us-east-1` |
-| `nwarila-platform_pdq-deploy-inventory_runner_s3.json` | Manage the two Terraform state objects; read the two licences, both versioned installers and the service-account secret |
+| `nwarila-platform_pdq-deploy-inventory_runner_s3.json` | Manage the two Terraform state objects; read the two licences, the versioned PDQ and OpenVPN installers, the VPN profile, and the two service-account secrets |
 | `nwarila-platform_pdq-deploy-inventory_runner_ebs.json` | Describe volumes; create tagged volumes; attach, detach and delete owned volumes |
 | `nwarila-platform_pdq-deploy-inventory_admin_s3.json` | List `PDQ.com/`; publish PDQ installers and the two licences; abort multipart uploads under `PDQ.com/` |
 
@@ -60,11 +60,14 @@ The workflow assumes `nwarila-platform_pdq-deploy-inventory_runner` through `DEP
 
 ## Artifact access and the instance profile
 
-The runner reads exactly the two licence objects and the service-account secret under
-`applications/pdq/`. It also reads the versioned installers at
-`PDQ.com/PDQ Deploy/<version>/PDQ_Deploy_x86-x64.exe` and
-`PDQ.com/PDQ Inventory/<version>/PDQ_Inventory_x86-x64.exe`. The application tasks fetch those
-objects on the controller and copy only the installers to the guest. The operator role has the same
+The runner reads exactly the two licence objects and the PDQ service-account secret under
+`applications/pdq/`, the directory-join secret under `applications/domain_member/`, and the VPN
+profile under `openvpn/`. It also reads the versioned installers at
+`PDQ.com/PDQ Deploy/<version>/PDQ_Deploy_x86-x64.exe`,
+`PDQ.com/PDQ Inventory/<version>/PDQ_Inventory_x86-x64.exe`, and
+`OpenVPN.net/OpenVPN Community/<version>/OpenVPN_Community_amd64.msi`. Every installer key keeps
+the version out of the filename, so each grant carries exactly one wildcard: the version segment.
+The roles fetch those objects on the controller and copy only the installers to the guest. The operator role has the same
 reads and additionally publishes installers and licences through `admin_s3`.
 
 The instance profile carries `AmazonSSMManagedInstanceCore` only and has no S3 policy. No credential

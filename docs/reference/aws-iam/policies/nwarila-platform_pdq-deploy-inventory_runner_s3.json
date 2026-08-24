@@ -47,8 +47,8 @@
       "Effect": "Allow",
       "Action": "s3:GetObject",
       "Resource": [
-        "arn:aws:s3:::<account-id>-apprepo/PDQ.com/PDQ Deploy/*/*.exe",
-        "arn:aws:s3:::<account-id>-apprepo/PDQ.com/PDQ Inventory/*/*.exe"
+        "arn:aws:s3:::<account-id>-apprepo/PDQ.com/PDQ Deploy/*/PDQ_Deploy_x86-x64.exe",
+        "arn:aws:s3:::<account-id>-apprepo/PDQ.com/PDQ Inventory/*/PDQ_Inventory_x86-x64.exe"
       ],
       "Condition": {
         "StringEquals": {
@@ -68,6 +68,16 @@
           "aws:ResourceAccount": "<account-id>"
         }
       }
+    },
+    {
+      "Sid": "ReadOnlyTheNetworkAndDirectoryArtifacts",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": [
+        "arn:aws:s3:::<account-id>-apprepo/OpenVPN.net/OpenVPN Community/*/OpenVPN_Community_amd64.msi",
+        "arn:aws:s3:::<account-id>-ansible/openvpn/aws-ec2-test.ovpn",
+        "arn:aws:s3:::<account-id>-apprepo/applications/domain_member/svc-domainjoin-password.txt"
+      ]
     }
   ]
 }

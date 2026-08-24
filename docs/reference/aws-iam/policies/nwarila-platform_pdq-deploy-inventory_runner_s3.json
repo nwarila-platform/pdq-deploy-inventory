@@ -77,7 +77,12 @@
         "arn:aws:s3:::<account-id>-apprepo/OpenVPN.net/OpenVPN Community/*/OpenVPN_Community_amd64.msi",
         "arn:aws:s3:::<account-id>-ansible/openvpn/aws-ec2-test.ovpn",
         "arn:aws:s3:::<account-id>-apprepo/applications/domain_member/svc-domainjoin-password.txt"
-      ]
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "<account-id>"
+        }
+      }
     }
   ]
 }

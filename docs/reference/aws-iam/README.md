@@ -66,7 +66,8 @@ profile under `openvpn/`. It also reads the versioned installers at
 `PDQ.com/PDQ Deploy/<version>/PDQ_Deploy_x86-x64.exe`,
 `PDQ.com/PDQ Inventory/<version>/PDQ_Inventory_x86-x64.exe`, and
 `OpenVPN.net/OpenVPN Community/<version>/OpenVPN_Community_amd64.msi`. Every installer key keeps
-the version out of the filename, so each grant carries exactly one wildcard: the version segment.
+the version out of the filename, so each grant carries one wildcard, on the version path, and the
+literal filename bounds it (an S3 wildcard can span path separators, so the filename is the pin).
 The roles fetch those objects on the controller and copy only the installers to the guest. The operator role has the same
 reads and additionally publishes installers and licences through `admin_s3`.
 

@@ -513,22 +513,22 @@
     #endregion --- [ Process: Prepare The Repository Directory ] ------------------------------ #
 
     #region ------ [ Process: Share The Repository Over The Network ] ------------------------- #
-    # Published only once the directory beneath it is permissioned. The share is READ ONLY, to
-    # everyone: targets in pull copy mode fetch package files over it themselves, so read is the
-    # whole job, and Windows applies the more restrictive of share and NTFS -- making this the
-    # binding gate whoever the caller turns out to be. Writing happens locally against the
-    # directory, never across the wire. rule_action is 'set' so the list is exactly what is
-    # named here; an access another run granted is removed rather than accumulating.
+    # Published only once the directory beneath it is permissioned. Share access is exactly the
+    # service account whose credential pull-mode targets present, plus Administrators for operator
+    # navigation; Everyone is removed and traffic is SMB3-encrypted. The share remains READ ONLY,
+    # with writes made locally rather than across the wire. The NTFS ACL remains the binding gate:
+    # SYSTEM and Administrators have full access, while Users have read-and-execute. rule_action is
+    # 'set' so stale grants are removed rather than accumulating.
 
     - name: 'PROCESS | Share The Repository Over The Network'
       ansible.windows.win_share:
         caching_mode: 'Manual'
         description: 'PDQ Deploy package repository'
-        encrypt: false
+        encrypt: true
         list: false
         name: "{{ pdq_deploy_running.repository.share_name }}"
         path: "{{ __repository_dir__ }}"
-        read: 'Everyone'
+        read: "{{ pdq_deploy_running.service_account.name }},Administrators"
         rule_action: 'set'
         state: 'present'
 

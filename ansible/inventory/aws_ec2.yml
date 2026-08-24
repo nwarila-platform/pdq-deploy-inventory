@@ -98,18 +98,18 @@ compose:
   # out is reported as UNREACHABLE. The 30s probes keep the link from counting as idle; twenty
   # unanswered ones are the dead-peer budget. Only the tunnelled leg adds the proxy.
   #
-  # Every line of this scalar sits at the block indent: YAML folds a break to a space only between
-  # equally-indented lines, and a newline preserved inside the quoted ProxyCommand would split it
-  # into two shell commands -- the second failing, the first silently losing its port.
+  # Each quoted fragment stays on ONE line. YAML preserves a line break inside an indented block,
+  # and a newline landing inside the quoted ProxyCommand would split it into two shell commands --
+  # the second failing, the first silently losing its port. Breaks between fragments are harmless.
   ansible_ssh_common_args: >-
     '-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=20'
     ~ (
-    ((aws_tags.Connection | default('ssh-direct', true)) == 'ssh-ssm')
-    | ternary(
-    ' -o ProxyCommand="aws ssm start-session --target %h'
-    ~ ' --document-name AWS-StartSSHSession --parameters portNumber=%p"',
-    ''
-    )
+      ((aws_tags.Connection | default('ssh-direct', true)) == 'ssh-ssm') |
+        ternary(
+          ' -o ProxyCommand="aws ssm start-session --target %h'
+          ~ ' --document-name AWS-StartSSHSession --parameters portNumber=%p"',
+          ''
+        )
     )
 
   #endregion --- [ Reaching the host ] -------------------------------------------------------- #
@@ -117,7 +117,7 @@ compose:
   #region ------ [ Logging in ] --------------------------------------------------------------- #
   ansible_user: >-
     (aws_platform_details | lower is search('windows'))
-    | ternary('Administrator', 'ec2-user')
+      | ternary('Administrator', 'ec2-user')
 
   # Over SSH on Windows the bootstrap flips OpenSSH's DefaultShell to PowerShell before any non-raw
   # work begins. The value is correct before that flip too, where only raw tasks run and the
@@ -125,16 +125,12 @@ compose:
   # indifferent: that plugin expects cmd and warns when handed powershell.
   ansible_shell_type: >-
     ((aws_tags.Connection | default('ssh-direct', true)) is search('^winrm'))
-    | ternary(
-        'cmd',
-        (aws_platform_details | lower is search('windows'))
+      | ternary('cmd', (aws_platform_details | lower is search('windows'))
         | ternary('powershell', 'sh')
       )
 
-  # The workflow stages its key and names it; a hand-run falls back to the account key pair, or to
-  # an agent holding it, in which case the file is never read.
-  ansible_ssh_private_key_file: >-
-    lookup('ansible.builtin.env', 'CI_PRIVATE_KEY') | default('~/.ssh/nwarila-ec2-key', true)
+  # The workflow stages its key and names it;
+  ansible_ssh_private_key_file: lookup('ansible.builtin.env', 'CI_PRIVATE_KEY')
 
   #endregion --- [ Logging in ] --------------------------------------------------------------- #
 
@@ -158,7 +154,7 @@ compose:
   # first, which on Windows would precede the transport repair the bootstrap exists to perform.
   platform: >-
     (aws_platform_details | lower is search('windows'))
-    | ternary('Windows', 'Linux')
+      | ternary('Windows', 'Linux')
 
   # The framework loader requires a variable NAMED 'ENV' and lower-cases the value itself. Read bare
   # because the Environment filter above admits only instances that carry the tag.

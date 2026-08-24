@@ -9,8 +9,6 @@
 #
 # =========================================================================================== #
 ---
-plugin: amazon.aws.aws_ec2
-
 #region ------ [ This Repository ] ------------------------------------------------------------ #
 # What a clone rewrites, and all of it: where the deployment runs, and the group name its playbook
 # addresses. Everything below is derived from the instance or from the workflow's own environment,
@@ -42,6 +40,9 @@ filters:
 
 
 #region ------ [ Plugin Behaviour ] ----------------------------------------------------------- #
+
+# The inventory plugin itself, and the three settings that decide how it presents what it finds.
+plugin: amazon.aws.aws_ec2
 
 # Terraform's hostname becomes the Name tag, so naming hosts after it makes inventory_hostname the
 # system's own name and nothing downstream needs telling it twice.

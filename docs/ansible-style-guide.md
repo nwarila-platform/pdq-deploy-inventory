@@ -35,9 +35,8 @@
 
 ## 3. Loader contract — SEEDED
 
-The two local loaders are currently v3.1.0 and diverge from the pinned framework
-loader v3.3.0 (verified 2026-08-10); the difference is tracked in
-`docs/TECH-DEBT.md`.
+Both local loaders are v3.3.0, adopted verbatim from the pinned framework and
+byte-identical to it and to each other (verified 2026-08-24).
 
 - Every role must ship the framework's generic loader as `tasks/main.yml`,
   **byte-identical, never edited per-role**. Loader changes are governance-surface →
@@ -50,8 +49,8 @@ loader v3.3.0 (verified 2026-08-10); the difference is tracked in
   preserving the hash-match invariant. Unanimous agreement + Director
   acceptance required; otherwise the loader does not change.
 - OS task files: `<state>_<family>[_<dist>[_<ver>]].yml`, resolved most-specific-first
-  via `first_found`. This role ships `present_windows.yml` + `clean_windows.yml`
-  (family-level; `os_family=Windows`).
+  via `first_found`. These roles ship `present_windows.yml`, `absent_windows.yml` and
+  `clean_windows.yml` (family-level; `os_family=Windows`).
 - **RATIFIED (Director, 2026-07-31):** A role's `tasks/` directory contains only the
   generic `main.yml` loader, loader-resolved OS entrypoints, and `validate.yml`; this
   list is exhaustive. Do not add other task files or split an entrypoint with a sibling
@@ -171,8 +170,7 @@ clobber, verified at the module source). These stay `quiet: true` with an action
   distinguishable (e.g. distinct identifiers).
 - The declared CONFIG contract (post-merge `config.*`) is validated in ONE place where `config` is
   in scope — the role's `tasks/validate.yml`, run by the
-  local v3.1.0 loader's `INIT | Validating Merged Configuration` hook. Version numbering
-  verifies that the pinned framework loader is v3.3.0; its hook was not byte-inspected.
+  loader's `INIT | Validating Merged Configuration` hook.
   This validation must **never** use `meta/argument_specs.yml` (it is structurally blind
   to the merged `config`; see §8).
 - Guards carry a negative proof: deliberately wrong input fails on the intended assert

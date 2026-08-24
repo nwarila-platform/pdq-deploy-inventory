@@ -301,6 +301,14 @@ jobs:
           bash "${GITHUB_WORKSPACE}/scripts/materialize-role-scripts.sh"
 
           framework_dir="${GITHUB_WORKSPACE}/.frameworks/ansible-framework"
+
+          # The framework's own roles track only files/<Name>.ps1.stub. Materialize them in the
+          # checkout before the overlay: that materializer validates every stub it finds, and this
+          # repository's roles resolve their sources from this repository, not from the framework.
+          if [ -x "${framework_dir}/scripts/materialize-role-scripts.sh" ]; then
+            (cd "${framework_dir}" && ./scripts/materialize-role-scripts.sh)
+          fi
+
           for role_source in "${GITHUB_WORKSPACE}"/ansible/applications/*; do
             role_name="$(basename "${role_source}")"
             [ -f "${role_source}/tasks/main.yml" ] || { echo "!! missing tasks/main.yml in ${role_source}" >&2; exit 1; }
@@ -354,7 +362,16 @@ jobs:
             --extra-vars aws_account_id="${AWS_ACCOUNT_ID}"                    \
             --extra-vars aws_region="${AWS_REGION}"                            \
             --extra-vars state=present 2>&1 | tee /dev/stderr)"
-          if ! printf '%s\n' "${recap}" | grep -Eq ': +ok=[0-9]+ +changed=2\b'; then
+          # Every target's recap line must show exactly the two credential changes and no
+          # failure, so a second host reporting more changes cannot hide behind a first that
+          # reported two.
+          hosts="$(printf '%s\n' "${recap}" | grep -E '^[^ ]+ +: +ok=[0-9]+' || true)"
+          if [ -z "${hosts}" ]; then
+            echo "::error::no play recap found -- the converge did not run to a recap" >&2
+            exit 1
+          fi
+          if printf '%s\n' "${hosts}" \
+            | grep -qvE 'changed=2 +unreachable=0 +failed=0\b'; then
             echo "::error::second converge did not report exactly two credential changes" >&2
             exit 1
           fi
@@ -419,7 +436,16 @@ jobs:
             --extra-vars aws_account_id="${AWS_ACCOUNT_ID}"                    \
             --extra-vars aws_region="${AWS_REGION}"                            \
             --extra-vars state=present 2>&1 | tee /dev/stderr)"
-          if ! printf '%s\n' "${recap}" | grep -Eq ': +ok=[0-9]+ +changed=2\b'; then
+          # Every target's recap line must show exactly the two credential changes and no
+          # failure, so a second host reporting more changes cannot hide behind a first that
+          # reported two.
+          hosts="$(printf '%s\n' "${recap}" | grep -E '^[^ ]+ +: +ok=[0-9]+' || true)"
+          if [ -z "${hosts}" ]; then
+            echo "::error::no play recap found -- the converge did not run to a recap" >&2
+            exit 1
+          fi
+          if printf '%s\n' "${hosts}" \
+            | grep -qvE 'changed=2 +unreachable=0 +failed=0\b'; then
             echo "::error::post-swap converge did not report exactly two credential changes" >&2
             exit 1
           fi

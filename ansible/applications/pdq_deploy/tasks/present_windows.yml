@@ -117,7 +117,8 @@
     #endregion --- [ Process: Fetch The Service Account Password ] ---------------------------- #
 
     #region ------ [ Process: Require A Non-Empty Service Account Password ] ------------------ #
-    # An empty object cannot provide a usable Windows account credential. The assertion exposes
+    # An empty or whitespace-only object cannot provide a usable Windows account credential. The
+    # assertion exposes
     # only the object key and never the fetched value.
 
     - name: 'PROCESS | Require A Non-Empty Service Account Password'
@@ -127,7 +128,7 @@
           '{{ pdq_deploy_running.service_account.object }}' is empty. Refusing to continue with an
           empty credential.
         quiet: true
-        that: [ __pdq_deploy_secret__.contents | default('') | length > 0 ]
+        that: [ __pdq_deploy_secret__.contents | default('') | trim | length > 0 ]
 
     #endregion --- [ Process: Require A Non-Empty Service Account Password ] ------------------ #
 

@@ -161,7 +161,11 @@
     # terraform/aws.tfvars) and the role resolves it to the attached disk itself, because a
     # volume id only exists after apply. The layout is passed through whole: adding a volume is
     # a change in two files, not three.
+    # Skipped when the applications are being removed: the disk role provisions storage and ships
+    # no absent entrypoint, and removing an application is not a reason to touch the volumes that
+    # outlive it.
     - role: 'windows_disk_manager'
+      when: (state | default('present') | string | lower | trim) != 'absent'
       vars:
         windows_disk_manager:
           platform: 'aws'

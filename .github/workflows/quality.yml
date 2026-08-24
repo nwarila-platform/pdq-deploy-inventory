@@ -27,7 +27,13 @@ jobs:
           python-version: '3.12'
 
       - name: Install quality tools
-        run: pip install -r requirements-quality.txt
+        run: |
+          set -euo pipefail
+          pip install -r requirements-quality.txt
+          # ansible-lint resolves modules offline, so the collections the roles call must be
+          # present before the syntax check runs.
+          ansible-galaxy collection install --force \
+            --requirements-file requirements-quality.yml
 
       - name: Lint YAML
         run: yamllint -c .yamllint.yml ansible
@@ -60,6 +66,11 @@ jobs:
         run: |
           set -euo pipefail
           scripts/materialize-role-scripts.sh
+          # The framework's roles carry stubs of their own; materialize them in the checkout
+          # before the overlay, for the same reason the deploy workflow does.
+          if [ -x .frameworks/ansible-framework/scripts/materialize-role-scripts.sh ]; then
+            (cd .frameworks/ansible-framework && ./scripts/materialize-role-scripts.sh)
+          fi
           for role_name in pdq_inventory pdq_deploy; do
             rsync -a --delete "ansible/applications/${role_name}/" \
               ".frameworks/ansible-framework/applications/${role_name}/"

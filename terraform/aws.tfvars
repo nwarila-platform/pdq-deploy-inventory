@@ -147,6 +147,17 @@ all_systems = [
             cidr_ipv4                    = "0.0.0.0/0"
             prefix_list_id               = null
             referenced_security_group_id = null
+          },
+          # The VPN tunnel that carries the host onto the private network. Scoped by port rather
+          # than by address: the profile names its endpoint by DNS, and that address changes.
+          {
+            description                  = "OpenVPN tunnel out"
+            ip_protocol                  = "udp"
+            from_port                    = 1194
+            to_port                      = 1194
+            cidr_ipv4                    = "0.0.0.0/0"
+            prefix_list_id               = null
+            referenced_security_group_id = null
           }
         ]
         tags = {}

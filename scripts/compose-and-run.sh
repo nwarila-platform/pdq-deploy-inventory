@@ -121,6 +121,13 @@ git -C "${FRAMEWORK_DIR}" fetch --quiet origin
 git -C "${FRAMEWORK_DIR}" checkout --quiet --detach "${PIN}"
 echo ">> Framework pinned at $(git -C "${FRAMEWORK_DIR}" rev-parse --short HEAD)"
 
+# The framework's own roles track only files/<Name>.ps1.stub, so their scripts must be
+# materialized in the checkout. This runs BEFORE the overlay because that materializer validates
+# every stub it finds, and this repository's roles resolve their sources from this repository.
+if [ -x "${FRAMEWORK_DIR}/scripts/materialize-role-scripts.sh" ]; then
+    (cd "${FRAMEWORK_DIR}" && ./scripts/materialize-role-scripts.sh)
+fi
+
 # --- 2. Overlay roles into the framework namespace ------------------------------------------ #
 shopt -s nullglob
 role_sources=("${REPO_ROOT}"/ansible/applications/*)

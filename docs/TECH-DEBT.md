@@ -44,13 +44,12 @@
 - **Result:** ordinary verbose runs no longer expose the merged dictionaries; consuming secret
   tasks retain their own `no_log` guards.
 
-## TD-006 — framework pin is a minimal fix commit off the old pin, not a released mainline
+## TD-006 — CLOSED — framework pin is a released mainline commit
 
-- **Recorded:** 2026-08-23.
-- **What:** `.framework-pin` points at `9fc6cba`, a single commit above the previous pin
-  `24a8ec74`. Its only file change is the `windows_disk_manager` adopted-drive-letter fix.
-- **Debt:** the pin is deliberately off the mainline release track — a minimal, tested delta chosen
-  so enabling OS-drive replacement did not also pull in unrelated `main` changes (RedHat/Rocky
-  hardening) that our Windows composition has not exercised.
-- **Exit criteria:** re-pin to a released mainline commit that includes the fix and verify the
-  composition still converges and stays idempotent.
+- **Recorded:** 2026-08-23. **Closed:** 2026-08-24.
+- **Original issue:** `.framework-pin` pointed at `9fc6cba`, a single commit above the previous
+  pin carrying only the `windows_disk_manager` adopted-drive-letter fix, deliberately off the
+  mainline release track.
+- **Closure evidence:** the pin is now `d19e6d4`, released `v0.1.6`, which contains that fix. The
+  composition converged against it and the second converge reported only the two expected
+  credential changes, so the exit criteria are met.

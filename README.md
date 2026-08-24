@@ -64,7 +64,7 @@ the rebuilt host with the data preserved.
 | `ansible/playbooks/pdq-aws.yml` | Composed play: inventory contract, host readiness, framework disk manager, then both products |
 | `ansible/inventory/aws_ec2.yml` | Dynamic AWS inventory (filters this run's instance by tag) |
 | `terraform/aws.tfvars` | Data-only input to the pinned aws-terraform-framework (no `.tf` files here) |
-| `scripts/` | Composition, script materialization, and IAM helpers |
+| `scripts/` | Composition, script materialization, and the products' PowerShell utilities |
 | `docs/ansible-style-guide.md` | Ansible design and authoring rules |
 | `docs/TECH-DEBT.md` | Current engineering debt |
 

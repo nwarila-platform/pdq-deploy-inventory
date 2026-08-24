@@ -25,7 +25,6 @@
 #                                   inside the licence blob before it is written.
 #   pdq_inventory.service_account.bucket  S3 bucket holding the shared service-account password.
 #   pdq_inventory.service_account.object  Object key of that password object.
-#   pdq_inventory.service_account.sha256  Lowercase 64-character digest of that object.
 #   pdq_inventory.database.drive    Drive letter the dedicated database volume is mounted at on the
 #                                   guest; the role consumes the letter, it does not provision the disk.
 # The role fetches every object through the CONTROLLER. The guest is never given cloud

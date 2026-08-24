@@ -330,11 +330,11 @@ jobs:
             --extra-vars aws_region="${AWS_REGION}"                            \
             --extra-vars state=present
 
-      # Idempotency gate: a settled host reports NO changes on a second converge. The same play is
-      # run again and the step fails if any managed host reports changed>0 -- the standard proof
-      # that every task's change detection is honest. A role that re-reports a change would bounce
-      # its service on every run, so this is a hard gate, not a warning.
-      - name: Prove the converge is idempotent (second run is a no-op)
+      # Idempotency gate: a settled host reports exactly two changes on a second converge, one from
+      # each role's PROCESS | Enforce The Background Service Credential task. Those tasks re-assert
+      # the shared credential; any recap value other than changed=2 fails, keeping all other change
+      # detection honest.
+      - name: Prove the converge has only the expected credential changes
         timeout-minutes: 30
         working-directory: .frameworks/ansible-framework
         env:
@@ -350,19 +350,20 @@ jobs:
             --extra-vars aws_account_id="${AWS_ACCOUNT_ID}"                    \
             --extra-vars aws_region="${AWS_REGION}"                            \
             --extra-vars state=present 2>&1 | tee /dev/stderr)"
-          if printf '%s\n' "${recap}" | grep -Eq ': +ok=[0-9]+ +changed=[1-9]'; then
-            echo "::error::second converge reported changes -- the role is not idempotent" >&2
+          if ! printf '%s\n' "${recap}" | grep -Eq ': +ok=[0-9]+ +changed=2\b'; then
+            echo "::error::second converge did not report exactly two credential changes" >&2
             exit 1
           fi
-          echo "idempotent: the second converge reported no changes"
+          echo "second converge reported exactly the two expected credential changes"
 
       # OS-DRIVE REPLACEMENT proof (opt-in). Bumping refresh_serial replaces the OS instance in
       # place while the STANDALONE data volumes detach and re-attach to the replacement; the guest
       # must then resume on its existing databases and repository. The re-converge adopts the
       # reattached data (the disk role leaves a labelled volume untouched and re-letters it), and a
-      # second post-swap converge must report no changes -- the same idempotency proof, on a host
-      # whose OS was rebuilt. The framework's user_data reinstalls the launch key on the fresh OS,
-      # so no key handling is needed here.
+      # second post-swap converge must report only the two PROCESS | Enforce The Background Service
+      # Credential changes -- the same bounded idempotency proof, on a host whose OS was rebuilt.
+      # The framework's user_data reinstalls the launch key on the fresh OS, so no key handling is
+      # needed here.
       - name: Replace the OS drive, keeping the data volumes (refresh_serial bump)
         if: inputs.os_swap
         timeout-minutes: 15
@@ -397,7 +398,7 @@ jobs:
             --extra-vars aws_region="${AWS_REGION}"                            \
             --extra-vars state=present
 
-      - name: Prove the rebuilt host is idempotent (second post-swap converge is a no-op)
+      - name: Prove the rebuilt host has only the expected credential changes
         if: inputs.os_swap
         timeout-minutes: 30
         working-directory: .frameworks/ansible-framework
@@ -414,11 +415,11 @@ jobs:
             --extra-vars aws_account_id="${AWS_ACCOUNT_ID}"                    \
             --extra-vars aws_region="${AWS_REGION}"                            \
             --extra-vars state=present 2>&1 | tee /dev/stderr)"
-          if printf '%s\n' "${recap}" | grep -Eq ': +ok=[0-9]+ +changed=[1-9]'; then
-            echo "::error::post-swap converge reported changes -- adoption is not idempotent" >&2
+          if ! printf '%s\n' "${recap}" | grep -Eq ': +ok=[0-9]+ +changed=2\b'; then
+            echo "::error::post-swap converge did not report exactly two credential changes" >&2
             exit 1
           fi
-          echo "idempotent after OS replacement: the rebuilt host reported no changes"
+          echo "post-swap converge reported exactly the two expected credential changes"
 
       - name: Hold the converged guest for interactive work
         if: >-

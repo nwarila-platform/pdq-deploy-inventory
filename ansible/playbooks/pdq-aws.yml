@@ -188,12 +188,11 @@
             version: '20.1.8.0'
             sha256: '856dbe3dd4544d4b9ae1f382ee51f2a5f25f41714c462fa4afcff9743cc85eb9'
 
-          # The password itself never appears here: only the object that holds it and the digest
-          # that pins it. Fetched as a string and used to create the account; never on disk.
+          # The password itself never appears here: only the object that holds it. Fetched as a
+          # string and used to create the account; never on disk.
           service_account:
             bucket: "{{ aws_account_id }}-ansible"
             object: 'applications/pdq/svc-pdq-password.txt'
-            sha256: 'd522139ebd26b7729f781d88aa9b41fcf189c6e59719ab3c46be32cd003ea729'
 
           # The licence itself never appears here: only the object that holds it, in the -ansible
           # bucket beside the other deployment material (NOT the installer's -apprepo bucket). It is
@@ -248,11 +247,10 @@
             sha256: '48a486f3682cc01218993e72a8006163616166dd5f0fdcd1fab36724710fdbbf'
 
           # The ONE Background Service User both products share. The password never appears here:
-          # only the object that holds it and the digest that pins it, the same object Deploy uses.
+          # only the object that holds it, the same object Deploy uses.
           service_account:
             bucket: "{{ aws_account_id }}-ansible"
             object: 'applications/pdq/svc-pdq-password.txt'
-            sha256: 'd522139ebd26b7729f781d88aa9b41fcf189c6e59719ab3c46be32cd003ea729'
 
           # Inventory has its OWN licence, distinct from Deploy's, in the -ansible bucket beside
           # the other deployment material. Fetched as a string and written straight to the

@@ -21,10 +21,9 @@ collide with the role's `state` input.
 `compose:` sets `ansible_host: aws_public_ip_address` (the subnet-assigned launch-time address; no
 Elastic IP, no NAT), `ansible_connection: ssh`, `ansible_user: Administrator`,
 `ansible_shell_type: cmd`, and the private key from `CI_PRIVATE_KEY`; a keepalive `ssh_common_args`
-outlasts the minutes-long settings settle poll. Reachability is the runner-scoped security group the
-framework attaches at runtime plus the temporary development-cycle ingress in `terraform/aws.tfvars`.
-SSM (via the instance profile's `AmazonSSMManagedInstanceCore`) is the administrator's backup
-connection, not this path.
+outlasts the minutes-long settings settle poll. Reachability comes only from the runner-scoped
+security group the framework attaches at runtime. SSM (via the instance profile's
+`AmazonSSMManagedInstanceCore`) is the administrator's backup connection, not this path.
 
 ## Running the playbook by hand
 

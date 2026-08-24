@@ -18,9 +18,6 @@ cannot be overridden from here.
 
 Reachability is **direct SSH over a launch-time public IPv4**: the shared subnet's
 MapPublicIpOnLaunch assigns the address (no Elastic IP, no NAT), and at runtime the framework
-attaches one security group scoped to the runner's validated public IPv4. As a temporary
-development-cycle allowance `aws.tfvars` also opens SSH (22), the PDQ Deploy console (6336), and the
-PDQ Inventory console (7337) to all of IPv4, split into two `/1` halves — remove it when the cycle
-ends. SSM (via the instance
-profile's `AmazonSSMManagedInstanceCore`) is the administrator's backup connection, not the primary
-path.
+attaches the only ingress: one security group scoped to the runner's validated public IPv4. SSM
+(via the instance profile's `AmazonSSMManagedInstanceCore`) is the administrator's backup
+connection, not the primary path.

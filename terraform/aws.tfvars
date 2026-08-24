@@ -137,71 +137,7 @@ all_systems = [
         interface_type  = null
         private_ip      = null
         security_groups = []
-        # Deliberate temporary development-cycle allowance: SSH from the whole IPv4 space, split
-        # into two halves because the framework refuses a zero-length prefix; remove when the cycle ends.
-        ingress = [
-          {
-            description                  = "SSH from first half of IPv4"
-            ip_protocol                  = "tcp"
-            from_port                    = 22
-            to_port                      = 22
-            cidr_ipv4                    = "0.0.0.0/1"
-            prefix_list_id               = null
-            referenced_security_group_id = null
-          },
-          {
-            description                  = "SSH from second half of IPv4"
-            ip_protocol                  = "tcp"
-            from_port                    = 22
-            to_port                      = 22
-            cidr_ipv4                    = "128.0.0.0/1"
-            prefix_list_id               = null
-            referenced_security_group_id = null
-          },
-          # PDQ Deploy Central Server. Client consoles connect to the background service on this
-          # port; it is the product's own default and is set independently by the play, so the two
-          # move together by hand. Split into halves for the same reason SSH is, and open to the
-          # same range under the same temporary development-cycle allowance.
-          {
-            description                  = "PDQ Deploy console from first half of IPv4"
-            ip_protocol                  = "tcp"
-            from_port                    = 6336
-            to_port                      = 6336
-            cidr_ipv4                    = "0.0.0.0/1"
-            prefix_list_id               = null
-            referenced_security_group_id = null
-          },
-          {
-            description                  = "PDQ Deploy console from second half of IPv4"
-            ip_protocol                  = "tcp"
-            from_port                    = 6336
-            to_port                      = 6336
-            cidr_ipv4                    = "128.0.0.0/1"
-            prefix_list_id               = null
-            referenced_security_group_id = null
-          },
-          # PDQ Inventory Central Server. Client consoles connect to the background service on this
-          # port; the play sets it independently, so the two move together by hand. Split and opened
-          # like the Deploy console above, under the same temporary development-cycle allowance.
-          {
-            description                  = "PDQ Inventory console from first half of IPv4"
-            ip_protocol                  = "tcp"
-            from_port                    = 7337
-            to_port                      = 7337
-            cidr_ipv4                    = "0.0.0.0/1"
-            prefix_list_id               = null
-            referenced_security_group_id = null
-          },
-          {
-            description                  = "PDQ Inventory console from second half of IPv4"
-            ip_protocol                  = "tcp"
-            from_port                    = 7337
-            to_port                      = 7337
-            cidr_ipv4                    = "128.0.0.0/1"
-            prefix_list_id               = null
-            referenced_security_group_id = null
-          }
-        ]
+        ingress         = []
         egress = [
           {
             description                  = "HTTPS out"

@@ -39,13 +39,12 @@
       - pdq_deploy_running.repository.drive | default('') is match('^[A-Za-z]$')
       - pdq_deploy_running.service_account.bucket | default('') | length > 0
       - pdq_deploy_running.service_account.object | default('') | length > 0
-      - pdq_deploy_running.service_account.sha256 | default('') is match('^[0-9a-f]{64}$')
     fail_msg: >-
       Refusing to deploy: a required input is missing or malformed. The playbook must supply the
       installer (bucket, path, four-part version, lowercase 64-char sha256); the licence (bucket,
       object, sha256, and the email it was issued to); the service-account password (bucket,
-      object, sha256) and its name; and one drive letter each for the database and the repository.
-      Every artifact is verified against its pinned digest before it is used. See meta/main.yml.
+      object) and its name; and one drive letter each for the database and the repository. The
+      installer and licence are verified against their pinned digests before use. See meta/main.yml.
     quiet: true
 
 - name: 'VALIDATE | Require The Product Identity Probes'

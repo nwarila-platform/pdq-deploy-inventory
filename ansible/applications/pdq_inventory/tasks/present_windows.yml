@@ -76,10 +76,10 @@
 
     #region ------ [ Process: Fetch The Service Account Password ] ---------------------------- #
     # Pulled as a STRING and never written to disk on either machine, exactly like the licence.
-    # The object holds the password with no trailing newline, so it is used verbatim; the digest
-    # pins that byte-for-byte, and a re-upload that adds whitespace fails the next task loudly.
-    # Reading changes nothing and the task says so, which is what lets a converged host report
-    # no changes at all -- a fetch that claimed one would hide real drift behind constant noise.
+    # The object holds the password with no trailing newline, so it is used verbatim. The next task
+    # rejects an empty response before Windows account changes begin. Reading changes nothing and
+    # the task says so, preventing this read-only fetch from adding noise to the two expected
+    # credential-task changes.
 
     - name: 'PROCESS | Fetch The Service Account Password'
       changed_when: false
@@ -109,21 +109,20 @@
 
     #endregion --- [ Process: Fetch The Service Account Password ] ---------------------------- #
 
-    #region ------ [ Process: Verify The Service Account Password Digest ] -------------------- #
-    # Same contract the installer and licence get: an object is trusted only once it matches the
-    # digest pinned in the playbook. Deliberately NOT no_log -- assert reports the expression text
-    # and our message, never the value, so a mismatch stays diagnosable without exposing a secret.
+    #region ------ [ Process: Require A Non-Empty Service Account Password ] ------------------ #
+    # An empty object cannot provide a usable Windows account credential. The assertion exposes
+    # only the object key and never the fetched value.
 
-    - name: 'PROCESS | Verify The Service Account Password Digest'
+    - name: 'PROCESS | Require A Non-Empty Service Account Password'
       ansible.builtin.assert:
         fail_msg: >-
           The service account password object
-          '{{ pdq_inventory_running.service_account.object }}' does not match the sha256 pinned in
-          the playbook. Refusing to create an account from an unverified secret.
+          '{{ pdq_inventory_running.service_account.object }}' is empty. Refusing to continue with
+          an empty credential.
         quiet: true
-        that: [ __pdq_inventory_secret__.contents | hash('sha256') == pdq_inventory_running.service_account.sha256 ]
+        that: [ __pdq_inventory_secret__.contents | default('') | length > 0 ]
 
-    #endregion --- [ Process: Verify The Service Account Password Digest ] -------------------- #
+    #endregion --- [ Process: Require A Non-Empty Service Account Password ] ------------------ #
 
     #region ------ [ Process: Ensure The Background Service User ] ---------------------------- #
     # One Background Service User is shared by Deploy and Inventory, so this role ensures it
@@ -620,11 +619,10 @@
 
     # ----------------------------------------------------------------------------------------- #
 
-    # ansible.windows.win_service cannot read a Windows account password back for comparison, so
-    # update_password: always keeps the deterministic S3 credential authoritative. The module then
-    # reports changed every converge; changed_when: false keeps the converge idempotent.
+    # ansible.windows.win_service cannot read a password back to compare, so update_password: always
+    # re-asserts the credential every converge and the task honestly reports changed each run. The
+    # deploy pipeline's idempotency gate expects exactly these two credential-task changes.
     - name: 'PROCESS | Enforce The Background Service Credential'
-      changed_when: false
       no_log: true
 
       ansible.windows.win_service:

@@ -12,13 +12,22 @@
 plugin: amazon.aws.aws_ec2
 
 #region ------ [ This Repository ] ------------------------------------------------------------ #
-# The only part of this file that is about THIS repository. Everything below is derived from the
-# instance and is carried unchanged by any repository that deploys a host this way.
+# What a clone rewrites, and all of it: where the deployment runs, and the group name its playbook
+# addresses. Everything below is derived from the instance or from the workflow's own environment,
+# and is carried unchanged.
 
 regions: [ us-east-1 ]
 
-# Three tags come from the workflow's own environment, so a run sees only what it created; the
-# fourth names the deployment, defaulting to the one this repository's pipeline builds.
+groups:
+  pdq_servers: 'true'
+
+#endregion --- [ This Repository ] ------------------------------------------------------------ #
+
+
+#region ------ [ Selecting This Run ] --------------------------------------------------------- #
+# One run's instance and no other. Three tags are the identifiers GitHub sets for any workflow, so
+# a run can only ever see what it created; the fourth names the deployment and defaults to the one
+# these pipelines build. Nothing here is particular to this repository.
 filters:
   instance-state-name: running
   'tag:RepositoryId': "{{ lookup('ansible.builtin.env', 'GITHUB_REPOSITORY_ID') }}"
@@ -26,10 +35,7 @@ filters:
   'tag:Repository': "{{ lookup('ansible.builtin.env', 'GITHUB_REPOSITORY') }}"
   'tag:Environment': "{{ lookup('ansible.builtin.env', 'ENVIRONMENT') | default('test', true) }}"
 
-groups:
-  pdq_servers: 'true'
-
-#endregion --- [ This Repository ] ------------------------------------------------------------ #
+#endregion --- [ Selecting This Run ] --------------------------------------------------------- #
 
 
 #region ------ [ Plugin Behaviour ] ----------------------------------------------------------- #
@@ -130,7 +136,9 @@ compose:
       )
 
   # The workflow stages its key and names it;
-  ansible_ssh_private_key_file: lookup('ansible.builtin.env', 'CI_PRIVATE_KEY')
+  ansible_ssh_private_key_file: >-
+    lookup('ansible.builtin.env', 'CI_PRIVATE_KEY')
+    | default('~/.ssh/nwarila-ec2-key', true)
 
   #endregion --- [ Logging in ] --------------------------------------------------------------- #
 

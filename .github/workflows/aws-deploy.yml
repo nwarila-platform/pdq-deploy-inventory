@@ -32,12 +32,7 @@ name: AWS Deploy
       hold_minutes:
         description: Hold the converged guest before teardown
         type: choice
-        options:
-          - '0'
-          - '15'
-          - '60'
-          - '120'
-          - '240'
+        options: [ '0', '15', '60', '120', '240' ]
         default: '0'
       os_swap:
         description: After converge, replace the OS drive and prove the data volumes reattach
@@ -48,7 +43,7 @@ name: AWS Deploy
         type: boolean
         default: false
   push:
-    branches: [main]
+    branches: [ main ]
   schedule:
     # Avoid the top-of-hour load spike documented for scheduled Actions workflows.
     - cron: '17 9 * * 1'
@@ -224,7 +219,6 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
-          # The framework's required_version is exact.
           terraform_version: '1.15.1'
           terraform_wrapper: false
 
@@ -264,13 +258,13 @@ jobs:
         run: |
           set -euo pipefail
           terraform destroy -input=false -auto-approve -lock-timeout=300s    \
-            -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars"             \
-            -var "runner_ip=${RUNNER_IP}"                                    \
-            -var "environment=test"                                          \
-            -var "repository=${GITHUB_REPOSITORY}"                           \
-            -var "repository_id=${GITHUB_REPOSITORY_ID}"                     \
             -var "commit_sha=$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)" \
-            -var "run_id=${GITHUB_RUN_ID}"
+            -var "environment=test"                                          \
+            -var "repository_id=${GITHUB_REPOSITORY_ID}"                     \
+            -var "repository=${GITHUB_REPOSITORY}"                           \
+            -var "run_id=${GITHUB_RUN_ID}"                                   \
+            -var "runner_ip=${RUNNER_IP}"                                    \
+            -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars"
 
       # The environment and deployment identity are individual -var flags — the highest-
       # precedence source, so the tfvars cannot override who this fresh deployment says it is.
@@ -280,14 +274,14 @@ jobs:
         working-directory: .frameworks/aws-terraform-framework/terraform
         run: |
           set -euo pipefail
-          terraform apply -input=false -auto-approve -lock-timeout=120s \
-            -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars" \
-            -var "runner_ip=${RUNNER_IP}" \
-            -var "environment=test" \
-            -var "repository=${GITHUB_REPOSITORY}" \
-            -var "repository_id=${GITHUB_REPOSITORY_ID}" \
+          terraform apply -input=false -auto-approve -lock-timeout=120s      \
             -var "commit_sha=$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)" \
-            -var "run_id=${GITHUB_RUN_ID}"
+            -var "environment=test"                                          \
+            -var "repository_id=${GITHUB_REPOSITORY_ID}"                     \
+            -var "repository=${GITHUB_REPOSITORY}"                           \
+            -var "run_id=${GITHUB_RUN_ID}"                                   \
+            -var "runner_ip=${RUNNER_IP}"                                    \
+            -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars"
 
       # This repo's roles overlay onto the pinned framework tree. A framework-TRACKED role
       # path is refused so an overlay can never replace framework-owned code.
@@ -336,11 +330,11 @@ jobs:
           set -euo pipefail
           # Dynamic inventory publishes an instance attribute named state; extra-vars take precedence.
           ansible-playbook "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
-            --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"    \
-            --extra-vars env=test                                              \
             --extra-vars aws_account_id="${AWS_ACCOUNT_ID}"                    \
             --extra-vars aws_region="${AWS_REGION}"                            \
-            --extra-vars state=present
+            --extra-vars env=test                                              \
+            --extra-vars state=present                                         \
+            --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"
 
       # Idempotency gate: a settled host reports exactly two changes on a second converge, one from
       # each role's PROCESS | Enforce The Background Service Credential task. Those tasks re-assert
@@ -391,15 +385,15 @@ jobs:
         working-directory: .frameworks/aws-terraform-framework/terraform
         run: |
           set -euo pipefail
-          terraform apply -input=false -auto-approve -lock-timeout=120s \
-            -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars" \
-            -var "runner_ip=${RUNNER_IP}" \
-            -var "environment=test" \
-            -var "repository=${GITHUB_REPOSITORY}" \
-            -var "repository_id=${GITHUB_REPOSITORY_ID}" \
+          terraform apply -input=false -auto-approve -lock-timeout=120s      \
             -var "commit_sha=$(git -C "${GITHUB_WORKSPACE}" rev-parse HEAD)" \
-            -var "run_id=${GITHUB_RUN_ID}" \
-            -var "refresh_serial=1"
+            -var "environment=test"                                          \
+            -var "refresh_serial=1"                                          \
+            -var "repository_id=${GITHUB_REPOSITORY_ID}"                     \
+            -var "repository=${GITHUB_REPOSITORY}"                           \
+            -var "run_id=${GITHUB_RUN_ID}"                                   \
+            -var "runner_ip=${RUNNER_IP}"                                    \
+            -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars"
 
       - name: Re-converge onto the reattached data (adopt the existing databases)
         if: inputs.os_swap
@@ -413,11 +407,11 @@ jobs:
         run: |
           set -euo pipefail
           ansible-playbook "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
-            --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"    \
-            --extra-vars env=test                                              \
             --extra-vars aws_account_id="${AWS_ACCOUNT_ID}"                    \
             --extra-vars aws_region="${AWS_REGION}"                            \
-            --extra-vars state=present
+            --extra-vars env=test                                              \
+            --extra-vars state=present                                         \
+            --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"
 
       - name: Prove the rebuilt host has only the expected credential changes
         if: inputs.os_swap
@@ -431,11 +425,11 @@ jobs:
         run: |
           set -euo pipefail
           recap="$(ansible-playbook "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
-            --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"    \
-            --extra-vars env=test                                              \
-            --extra-vars aws_account_id="${AWS_ACCOUNT_ID}"                    \
-            --extra-vars aws_region="${AWS_REGION}"                            \
-            --extra-vars state=present 2>&1 | tee /dev/stderr)"
+            --extra-vars aws_account_id="${AWS_ACCOUNT_ID}"                             \
+            --extra-vars aws_region="${AWS_REGION}"                                     \
+            --extra-vars env=test                                                       \
+            --extra-vars state=present                                                  \
+            --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml" 2>&1 | tee /dev/stderr)"
           # Every target's recap line must show exactly the two credential changes and no
           # failure, so a second host reporting more changes cannot hide behind a first that
           # reported two.

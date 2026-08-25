@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <AdminArsenal.Export Code="PDQDeploy" Name="PDQ Deploy" Version="20.1.8.0" MinimumVersion="15.0">
   <Package>
     <CurrentLibraryPackageVersionId value="null" />

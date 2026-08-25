@@ -70,6 +70,7 @@
 !/ansible/applications/pdq_deploy/files/.gitkeep
 # The stub names its source script under scripts/; the materialized files/Get-InstalledSoftware.ps1
 # is a build artifact and is deliberately NEVER allowlisted, so it cannot be committed.
+!/ansible/applications/pdq_deploy/files/packages/.gitattributes
 !/ansible/applications/pdq_deploy/files/packages/Google Chrome - Install.xml
 !/ansible/applications/pdq_deploy/files/Get-InstalledSoftware.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-RepositoryAcl.ps1.stub

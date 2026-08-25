@@ -1,0 +1,4 @@
+# PDQ exports these definitions as UTF-8 with a BOM and CRLF endings. Keeping them exactly
+# as the console writes them lets a fresh export be diffed against the tracked copy with no
+# normalisation at all, which is how drift is detected.
+*.xml -text

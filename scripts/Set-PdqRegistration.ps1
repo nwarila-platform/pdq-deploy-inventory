@@ -210,10 +210,22 @@ $Ansible.Changed = $False
 # The licence names both halves of the contract: the ID the Registration row references and the
 # E-Mail the address must equal. Read from the registry exactly as the product left it -- a
 # marker-wrapped base64 XML document -- and parsed, never pattern-matched.
-$LicenseBlob = [System.String](Get-ItemProperty -LiteralPath:$LICENSE_KEY).License
+Try {
+  $LicenseBlob = [System.String](Get-ItemProperty -LiteralPath:$LICENSE_KEY).License
+} Catch {
+  Throw ('Reading the licence from ''{0}'': {1}' -f $LICENSE_KEY, $PSItem.Exception.Message)
+}
 $LicenseBase64 = ($LicenseBlob -replace '---\s*(START|END)\s*LICENSE\s*---', '') -replace '\s', ''
 $LicenseXml = [System.Xml.XmlDocument]::new()
-$LicenseXml.LoadXml([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($LicenseBase64)))
+# Decoded and parsed in one guarded step: a truncated or re-encoded licence fails here by name
+# rather than as an opaque conversion error the caller cannot place.
+Try {
+  $LicenseXml.LoadXml([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($LicenseBase64)))
+} Catch {
+  Throw ('Decoding the licence from ''{0}'': {1}' -f @(
+      $LICENSE_KEY, $PSItem.Exception.GetBaseException().Message
+    ))
+}
 # GetAttribute, not property access: an attribute the licence does not carry comes back as an
 # empty string the guards below can name, where the adapter property would throw first.
 $LicenseId = [System.String]$LicenseXml.DocumentElement.GetAttribute('ID')
@@ -229,12 +241,20 @@ If (-not [System.String]::Equals($Email, $LicenseEmail, [System.StringComparison
 # of surfacing the program's bare text, and every exit code is judged against a policy the caller
 # states rather than a convention the reader has to infer.
 #
-# NEVER redirect a native command's stderr into the success stream with 2>&1. Windows PowerShell
-# 5.1 raises a terminating RemoteException for stderr captured that way while
-# ErrorActionPreference is Stop (measured on a target 2026-08-25), and it fires on ordinary paths:
-# the PDQ command line writes "not found" to stderr alongside an exit code that means "absent, not
-# broken". Left alone, stderr reaches the host, the exit code is read normally, and the captured
-# output holds the program's real output and nothing else.
+# Three things have to happen at once for that to work, all measured on the target 2026-08-25 under
+# win_powershell with error_action stop:
+#
+#   1. ErrorActionPreference is lowered across the call. A native command's stderr is a TERMINATING
+#      error while it is Stop -- redirected or not -- and the product writes to stderr on ORDINARY
+#      paths: "not found" with exit 3 is how it says a thing is absent. The bare call raises before
+#      any exit code can be read.
+#   2. stderr is merged into the capture. Left on its own stream it becomes an error record, and the
+#      module fails the task on any error record even when nothing threw.
+#   3. those records are separated back out. They are the program's commentary, not its output, and
+#      a caller reading the output would otherwise take a warning for data.
+#
+# What the program said on stderr is kept, so a failure can quote it rather than leaving the reader
+# to guess why an exit code was what it was.
 Function Invoke-NativeCommand {
   Param (
     [System.String] $Operation,
@@ -242,16 +262,36 @@ Function Invoke-NativeCommand {
     [System.String[]] $Argument = @(),
     [System.Int32[]] $SuccessExitCode = @(0)
   )
+  $Previous = $ErrorActionPreference
   Try {
-    $Output = & $FilePath @Argument
+    $ErrorActionPreference = 'Continue'
+    $Captured = & $FilePath @Argument 2>&1
     $Exit = $LASTEXITCODE
   } Catch {
     Throw ('{0}: ''{1}'' could not be run ({2})' -f $Operation, $FilePath, $PSItem.Exception.Message)
+  } Finally {
+    $ErrorActionPreference = $Previous
   }
+
+  $Written = [System.Collections.Generic.List[System.String]]::new()
+  $Said = [System.Collections.Generic.List[System.String]]::new()
+  ForEach ($Line In $Captured) {
+    If ($Line -is [System.Management.Automation.ErrorRecord]) {
+      $Said.Add(([System.String]$Line).Trim())
+    } Else {
+      $Written.Add([System.String]$Line)
+    }
+  }
+
   If ($SuccessExitCode -notcontains $Exit) {
-    Throw ('{0}: {1} exited {2}' -f $Operation, (Split-Path -Leaf -Path:$FilePath), $Exit)
+    Throw ('{0}: {1} exited {2}{3}' -f @(
+        $Operation
+        (Split-Path -Leaf -Path:$FilePath)
+        $Exit
+        $(If ($Said.Count -gt 0) { ' -- ' + ($Said -join '; ') } Else { '' })
+      ))
   }
-  Return [PSCustomObject]@{ Exit = [System.Int32]$Exit; Output = @($Output) }
+  Return [PSCustomObject]@{ Exit = [System.Int32]$Exit; Output = $Written.ToArray() }
 }
 
 # Where the database lives is a deployment choice, so it is asked for rather than assumed: the

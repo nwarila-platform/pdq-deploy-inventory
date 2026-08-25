@@ -307,14 +307,18 @@ Describe 'Remove-PdqPackage' {
         Should -Throw '*command line is not at*'
     }
 
-    It 'never captures the command line stderr with 2>&1' {
-      # Windows PowerShell 5.1 turns a native command's captured stderr into a TERMINATING error
-      # while ErrorActionPreference is Stop, which would kill the run mid-prune. Pinned here
-      # because its absence is invisible on review.
-      $Source = Get-Content -LiteralPath $script:ScriptPath -Raw
-      $Source -split "`n" |
-        Where-Object { $_ -match '2>&1' -and $_ -notmatch '^\s*#' } |
-        Should -BeNullOrEmpty
+    It 'keeps all three halves of the native-command contract' {
+      # Measured on a Windows target under win_powershell with error_action stop: with the
+      # preference at Stop a native command's stderr is a TERMINATING error, redirected or not; left
+      # on its own stream it becomes an error record and the module fails the task even though
+      # nothing threw. So the preference is lowered across the call, stderr is merged into the
+      # capture, and the records are separated back out of the output. Drop any one and the ordinary
+      # "not found" the product writes alongside an absent-means-absent exit code fails the run.
+      # Pinned here because all three are invisible on review.
+      $Source = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Remove-PdqPackage.ps1') -Raw
+      $Source | Should -Match "ErrorActionPreference = 'Continue'"
+      $Source | Should -Match '& \$FilePath @Argument 2>&1'
+      $Source | Should -Match '\[System\.Management\.Automation\.ErrorRecord\]'
     }
   }
 

@@ -179,20 +179,20 @@ If (-not (Test-Path -LiteralPath:$CliPath -PathType:'Leaf')) {
 # of surfacing the program's bare text, and every exit code is judged against a policy the caller
 # states rather than a convention the reader has to infer.
 #
-# Three things have to happen at once for that to work, all measured on the target 2026-08-25 under
-# win_powershell with error_action stop:
+# ErrorActionPreference is lowered across the call, and that part is load-bearing. Under Windows
+# PowerShell 5.1 a native command's stderr is raised as a TERMINATING error while the preference is
+# Stop -- redirected, discarded, or not -- so the call throws before its exit code can be read.
+# Measured on the target 2026-08-25: bare, 2>$null and 2>&1 all threw at Stop; all three completed
+# with the preference lowered. That matters because the product writes to stderr on ORDINARY paths:
+# "not found" alongside exit 3 is how it says a thing is ABSENT, which is the answer the caller
+# wants. The assignment is function-scoped, so it governs this call and dies at return -- the
+# caller's preference is never altered, and the restore below simply ends the window early rather
+# than letting it cover the rest of this function.
 #
-#   1. ErrorActionPreference is lowered across the call. A native command's stderr is a TERMINATING
-#      error while it is Stop -- redirected or not -- and the product writes to stderr on ORDINARY
-#      paths: "not found" with exit 3 is how it says a thing is absent. The bare call raises before
-#      any exit code can be read.
-#   2. stderr is merged into the capture. Left on its own stream it becomes an error record, and the
-#      module fails the task on any error record even when nothing threw.
-#   3. those records are separated back out. They are the program's commentary, not its output, and
-#      a caller reading the output would otherwise take a warning for data.
-#
-# What the program said on stderr is kept, so a failure can quote it rather than leaving the reader
-# to guess why an exit code was what it was.
+# Merging stderr and separating it back out is NOT required for the run to succeed -- measured, the
+# task passes either way -- and is done for two smaller reasons: an unmerged record lands in the
+# module's error output on every ordinary absent-check, which would leave that channel meaning
+# nothing, and what the program said is worth quoting when an exit code IS rejected.
 Function Invoke-NativeCommand {
   Param (
     [System.String] $Operation,
@@ -206,7 +206,13 @@ Function Invoke-NativeCommand {
     $Captured = & $FilePath @Argument 2>&1
     $Exit = $LASTEXITCODE
   } Catch {
-    Throw ('{0}: ''{1}'' could not be run ({2})' -f $Operation, $FilePath, $PSItem.Exception.Message)
+    # Still reachable with the preference lowered: a command that cannot be found or cannot be
+    # started fails the STATEMENT, which no preference makes non-terminating. The original is kept
+    # as the inner exception so its type and stack survive the added context.
+    Throw [System.Management.Automation.RuntimeException]::new(
+      ('{0}: ''{1}'' could not be run ({2})' -f $Operation, $FilePath, $PSItem.Exception.Message),
+      $PSItem.Exception
+    )
   } Finally {
     $ErrorActionPreference = $Previous
   }
@@ -219,6 +225,12 @@ Function Invoke-NativeCommand {
     } Else {
       $Written.Add([System.String]$Line)
     }
+  }
+
+  # An accepted exit code with something on stderr is reported rather than swallowed: the caller
+  # decided the code was survivable, not that the program had nothing to say.
+  If ($SuccessExitCode -contains $Exit -and $Said.Count -gt 0) {
+    Write-Warning -Message:('{0}: {1}' -f $Operation, ($Said -join '; '))
   }
 
   If ($SuccessExitCode -notcontains $Exit) {

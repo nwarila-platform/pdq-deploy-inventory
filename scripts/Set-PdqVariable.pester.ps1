@@ -293,6 +293,22 @@ Describe 'Set-PdqVariable' {
       $Source | Should -Match '& \$FilePath @Argument 2>&1'
       $Source | Should -Match '\[System\.Management\.Automation\.ErrorRecord\]'
     }
+    It 'carries the same native-command helper as its siblings' {
+      # There is no shared module -- one file per script is the org contract -- so the five copies
+      # are kept identical by checking, not by convention. A fix applied to one and not the others
+      # is the realistic hazard, and no other assertion here would notice it.
+      $Extract = {
+        Param ($File)
+        $Text = Get-Content -LiteralPath $File -Raw
+        $Start = $Text.IndexOf('Function Invoke-NativeCommand')
+        $Text.Substring($Start, $Text.IndexOf("`n}", $Start) - $Start)
+      }
+      $Mine = & $Extract (Join-Path $PSScriptRoot 'Set-PdqVariable.ps1')
+      ForEach ($Sibling In @('Set-PdqPackage.ps1', 'Remove-PdqPackage.ps1', 'Set-PdqVariable.ps1',
+          'Set-PdqSetting.ps1', 'Set-PdqRegistration.ps1')) {
+        (& $Extract (Join-Path $PSScriptRoot $Sibling)) | Should -BeExactly $Mine -Because $Sibling
+      }
+    }
   }
 
 }

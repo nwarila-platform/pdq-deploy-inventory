@@ -126,7 +126,14 @@ pdq_deploy_defaults:
       # null leaves the product's own channel; the value the console writes is Release or Beta.
       release_channel: null
     interface:
-      color_theme: null
+      # Dark for every profile built from the Default one, and for the connection account where
+      # the product has never written its own. The console stores the choice as a per-user string,
+      # so it is seeded rather than set through the command line like the settings above.
+      #
+      # A value the console does not recognise is IGNORED rather than rejected -- it simply opens
+      # on its own default -- so confirm the console is actually dark after a first sign-in rather
+      # than trusting this line.
+      color_theme: 'Dark'
       disable_splash_screen: false
       show_dashboard_on_launch: true
       show_missing_package_popup_during_export: true

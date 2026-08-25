@@ -126,7 +126,14 @@ pdq_inventory_defaults:
     # disable_splash_screen and color_theme are per-user (seeded like the alerts above);
     # show_collection_item_counts is a database setting applied through the command line.
     interface:
-      color_theme: null
+      # Dark for every profile built from the Default one, and for the connection account where
+      # the product has never written its own. The console stores the choice as a per-user string,
+      # so it is seeded rather than set through the command line like the settings above.
+      #
+      # A value the console does not recognise is IGNORED rather than rejected -- it simply opens
+      # on its own default -- so confirm the console is actually dark after a first sign-in rather
+      # than trusting this line.
+      color_theme: 'Dark'
       disable_splash_screen: false
       show_collection_item_counts: true
     # The scanner's database backups: on, ten kept, compressed -- the vendor's own recommendation.

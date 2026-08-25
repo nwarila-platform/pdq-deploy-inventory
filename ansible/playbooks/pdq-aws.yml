@@ -2,32 +2,34 @@
 # File: 'ansible/playbooks/pdq-aws.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# Provisions the declared Windows data disks on the EPHEMERAL EC2 instance, then applies the PDQ
-# Deploy and PDQ Inventory roles. Runs from the COMPOSED tree only — in CI, .github/workflows/aws-deploy.yml
-# overlays this repository's roles into the pinned ansible-framework checkout and executes this
-# playbook against a dynamic EC2 inventory filtered to this run by its framework-set EC2 tags,
-# reached by direct SSH to the instance's public IPv4, bootstrapped, brought onto the private
-# network, joined to its directory, and then configured.
+# Brings the EPHEMERAL EC2 instance from "the API says it exists" to a domain-joined host with
+# its data disks provisioned. The PDQ Deploy and Inventory roles follow, one product at a time.
 #
-# Five plays, in a required order: confirm the filtered inventory is non-empty, wait for that
-# instance to become reachable, bootstrap it (transport, elevation, computer name), bring it onto
-# the private network and into the directory, then configure the products.
+# Runs from the COMPOSED tree only: the workflow overlays this repository onto the pinned
+# ansible-framework and runs this against a dynamic EC2 inventory filtered to one run.
+#
+# The role order in the second play is the design. Each one is a precondition for the next: the
+# host must answer before it can be repaired, be repaired before a module runs, be on the network
+# before it can resolve a realm, be in the realm before it is a host worth provisioning, and have
+# its volumes lettered before a product is told to put a database on one.
+#
+# gather_facts and become are absent throughout because the framework's ansible.cfg makes
+# gathering explicit and escalation off. Both matter here: implicit gathering would run a module
+# over the shell os_bootstrap has not yet fixed, and the products escalate per task to the
+# background service user rather than running the whole play as somebody.
 #
 # =========================================================================================== #
 ---
 
 #region ------ [ Play: Inventory Contract ] --------------------------------------------------- #
-# The dynamic EC2 inventory (aws_ec2.yml) already filters to this run's instance by its
-# framework-set tags, so the identity contract is not re-asserted here -- that would only re-check
-# what the aws-terraform-framework guarantees. This guards the one state the filter cannot cover:
-# an empty inventory, where the instance never launched or never tagged.
+# The inventory already filters to this run's instance by its framework-set tags. This guards the
+# two states that filter cannot cover: an empty result, where nothing launched or nothing tagged,
+# and an invocation that never said which account it is deploying into.
 
 - name: 'PLAY | Validate The Ephemeral AWS Inventory Contract'
   hosts: 'localhost'
-  gather_facts: false
-  become: false
   tasks:
-    - name: 'INVENTORY | Require One Host And An Immutable Repository Identity'
+    - name: 'INVENTORY | Require At Least One Filtered Host'
       ansible.builtin.assert:
         that: groups['pdq_servers'] | default([]) | length >= 1
         fail_msg: >-
@@ -36,166 +38,104 @@
           successful deployment proof.
         quiet: true
 
+    # Account-derived values are passed EXPLICITLY on the invocation, never read from the
+    # environment by a role, so the play and the deploy identity cannot disagree.
+    - name: 'INVENTORY | Require The AWS Deployment Identity'
+      ansible.builtin.assert:
+        that:
+          - aws_account_id is defined
+          - aws_account_id is match('^[0-9]{12}$')
+          - aws_region is defined
+          - aws_region is match('^[a-z]{2}(-[a-z]+)+-[0-9]$')
+        fail_msg: >-
+          aws_account_id and aws_region must be provided as extra-vars. The aws-deploy workflow
+          passes them from its own environment (the same values the OIDC role ARN and region
+          use); a local run must pass both explicitly.
+        quiet: true
+
 #endregion --- [ Play: Inventory Contract ] --------------------------------------------------- #
 
-#region ------ [ Play: Windows Readiness ] ---------------------------------------------------- #
-# The instance answers the EC2 API seconds after creation and accepts SSH minutes later: it must
-# finish sysprep and EC2Launch before sshd starts and the launch key is installed.
-#
-# Poll the TCP port without opening SSH sessions while sysprep and EC2Launch start sshd, then use
-# a bounded authenticated probe before running anything on the guest.
+#region ------ [ Play: Configure The Guest ] -------------------------------------------------- #
 
-- name: 'PLAY | Wait For Windows Readiness (direct SSH, EC2Launch)'
+- name: 'PLAY | Configure The Guest (ephemeral AWS)'
   hosts: 'pdq_servers'
-  gather_facts: false
-  become: false
   any_errors_fatal: true
 
-  tasks:
-    - name: 'READY | Wait For The Direct SSH Port'
-      delegate_to: 'localhost'
-
-      ansible.builtin.wait_for:
-        active_connection_states: [ 'ESTABLISHED', 'FIN_WAIT1', 'FIN_WAIT2', 'SYN_RECV', 'SYN_SENT', 'TIME_WAIT' ]
-        connect_timeout: 5
-        delay: 0
-        host: "{{ ansible_host }}"
-        port: 22
-        sleep: 15
-        state: 'started'
-        timeout: 900
-
-    - name: 'READY | Confirm The Direct SSH Path End To End'
-      changed_when: false
-      delay: 15
-      delegate_to: 'localhost'
-      failed_when: __ssh_ready__.rc != 0
-      register: '__ssh_ready__'
-      retries: 20
-      until: __ssh_ready__.rc == 0
-
-      ansible.builtin.command:
-        cmd: >-
-          ssh {{ ansible_ssh_common_args }} -i {{ ansible_ssh_private_key_file }}
-          -o BatchMode=yes -o ConnectTimeout=15
-          {{ ansible_user }}@{{ ansible_host }} exit
-        expand_argument_vars: true
-        stdin_add_newline: true
-        strip_empty_ends: true
-
-    - name: 'READY | Wait For EC2Launch Provisioning To Complete'
-      changed_when: false
-
-      # Invoked through powershell.exe explicitly so the probe parses on BOTH shells the host may
-      # serve: cmd on first boot, and PowerShell once the bootstrap has flipped the DefaultShell
-      # (every converge after the first, including the post-OS-swap one).
-      ansible.builtin.raw: >-
-        powershell -NoProfile -Command
-        "& 'C:\Program Files\Amazon\EC2Launch\EC2Launch.exe' status -b"
-
-#endregion --- [ Play: Windows Readiness ] ---------------------------------------------------- #
-
-#region ------ [ Play: Bootstrap The Windows Host ] ------------------------------------------- #
-# The framework's Windows bootstrap: it repairs the transport (OpenSSH DefaultShell to PowerShell),
-# proves an elevated session, and sets the computer name. It runs once per invocation, after the
-# readiness probe and before every play that configures the host, with gather_facts off -- implicit gathering would run a PowerShell module
-# over the shell the inventory guessed, the failure the bootstrap exists to prevent. The name it
-# sets is the Terraform 'hostname', read back from the instance's Name tag so there is one source.
-# A host that later joins the directory carries this name into its computer object.
-
-- name: 'PLAY | Bootstrap The Windows Host'
-  hosts: 'pdq_servers'
-  gather_facts: false
-  become: false
-
-  tasks:
-    - name: 'BOOTSTRAP | Dispatch The Framework Bootstrap For This Host'
-      ansible.builtin.include_role:
-        name: 'os_bootstrap'
-
-#endregion --- [ Play: Bootstrap The Windows Host ] ------------------------------------------- #
-
-#region ------ [ Play: Reach The Private Network And Join Its Directory ] --------------------- #
-# The tunnel first, then the join: domain_member cannot resolve or reach a realm the host is not
-# yet on the network for. From here on the host serves PowerShell (the bootstrap flipped it), so
-# the shell type is declared per play rather than trusted from the inventory's pre-bootstrap guess.
-
-- name: 'PLAY | Reach The Private Network And Join Its Directory'
-  hosts: 'pdq_servers'
-  gather_facts: true
-  become: false
-
+  #region ------ [ Roles ] -------------------------------------------------------------------- #
   roles:
-    # Neither role ships an absent entrypoint, and removing the applications is no reason to tear
-    # the host off its network or out of its directory.
-    - role: 'openvpn_client'
-      when: (state | default('present') | string | lower | trim) != 'absent'
-      vars:
-        openvpn_client:
-          installer:
-            bucket: "{{ aws_account_id }}-apprepo"
-            path: 'OpenVPN.net/OpenVPN Community/<version>/OpenVPN_Community_amd64.msi'
-            version: '2.6.22'
-            sha256: '1e1bb9a712990d1b2b961de7e8df3384964e4fb6f6776a100840f0d9a82ed507'
-          profile:
-            bucket: "{{ aws_account_id }}-ansible"
-            object: 'applications/openvpn/aws-ec2-test.ovpn'
-            sha256: 'b5dd2190d6d30eb8642f9d9c37ebd8bdeaabdb3afb39831c541eefc9082f058d'
-          profile_name: 'aws-ec2-test'
-          # The automatic service cannot configure the data-channel-offload adapter under the
-          # installer's virtual account (netsh fails and the tunnel exits); SYSTEM completes it.
-          # Declared in the form the service reports, which is what the role's proof compares.
-          service_account: 'NT AUTHORITY\SYSTEM'
-          dns:
-            domain: 'tcn.trinitytechnicalservices.com'
-            servers: [ '10.69.112.4', '10.69.112.5' ]
-          proofs:
-            - host: '10.69.112.4'
-              port: 389
-            - host: '10.69.112.5'
-              port: 389
 
+    #region ------ [ Roles: Host Readiness ] -------------------------------------------------- #
+    # Waits for the connection itself, never a port: a TCP connect cannot speak for a connection
+    # reaching its target through a proxy or a tunnel, and this inventory can select those. It
+    # then waits out EC2Launch, detecting the platform itself rather than being told.
+    - role: 'host_readiness'
+    #endregion --- [ Roles: Host Readiness ] -------------------------------------------------- #
+
+    #region ------ [ Roles: OS Bootstrap ] ---------------------------------------------------- #
+    # Flips OpenSSH's DefaultShell to PowerShell and proves the session is elevated. Every module
+    # after it depends on that. Pass it NO vars: role params outrank the connection scoping it
+    # relies on, and a stray one silently re-breaks the pre-flip stage.
+    - role: 'os_bootstrap'
+    #endregion --- [ Roles: OS Bootstrap ] ---------------------------------------------------- #
+
+    #region ------ [ Roles: Remote Client ] --------------------------------------------------- #
+    # Site policy: the role defaults every value remote_client needs, so this play states none.
+    # 'aws_account_id' is an extra-var -- only the pipeline knows which account it deploys into.
+    # Skipped when the products are being removed: an uninstall is not a reason to rebuild a
+    # tunnel the host is about to stop needing.
+    - role: 'remote_client'
+      when: (state | default('present') | string | lower | trim) != 'absent'
+    #endregion --- [ Roles: Remote Client ] --------------------------------------------------- #
+
+    #region ------ [ Roles: Domain Member ] --------------------------------------------------- #
+    # Wraps the platform's join mechanism and defaults the site's realm, account and secret. Only
+    # two things are this repository's to say: the account it deploys into, and where a PDQ server
+    # is filed -- its own OU, not the deployment servers'.
     - role: 'domain_member'
       when: (state | default('present') | string | lower | trim) != 'absent'
       vars:
         domain_member:
-          realm: 'tcn.trinitytechnicalservices.com'
-          # Qualified as a UPN: the join module hands the name to the directory verbatim, and an
-          # unqualified name is not resolved against the realm from a host that is not yet in it.
-          user: 'svc-domainjoin@tcn.trinitytechnicalservices.com'
-          password:
-            bucket: "{{ aws_account_id }}-ansible"
-            object: 'roles/domain_member/svc-domainjoin-password.txt'
-            sha256: '275cbdbe8f9a92c30b64294a61a2e49e4e3a65552cd7fb523646849f33ec2f8b'
+          password: { bucket: "{{ aws_account_id }}-ansible" }
           computer_ou: 'OU=PDQ,OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'
+    #endregion --- [ Roles: Domain Member ] --------------------------------------------------- #
 
-#endregion --- [ Play: Reach The Private Network And Join Its Directory ] --------------------- #
+    #region ------ [ Roles: Windows Disk Manager ] -------------------------------------------- #
+    # `function` names each EBS volume's Function tag from terraform/aws.tfvars, and the role
+    # resolves it to the attached disk itself -- a volume id only exists after apply. The letters
+    # are the contract this play publishes to the products below: Inventory's database on D,
+    # Deploy's on E, and the shared package repository on F.
+    - role: 'windows_disk_manager'
+      vars:
+        windows_disk_manager:
+          platform: 'aws'
+          disks:
+            - function: 'PDQINVENTORY'
+              drive_letter: 'D'
+              label: 'PDQINVENTORY'
+              allocation_unit: 65536
+            - function: 'PDQDEPLOY'
+              drive_letter: 'E'
+              label: 'PDQDEPLOY'
+              allocation_unit: 65536
+            - function: 'PDQREPO'
+              drive_letter: 'F'
+              label: 'PDQREPO'
+              allocation_unit: 65536
+    #endregion --- [ Roles: Windows Disk Manager ] -------------------------------------------- #
 
-#region ------ [ Play: PDQ Deploy And Inventory ] ------------------------------------------- #
+  #endregion --- [ Roles ] -------------------------------------------------------------------- #
+
+#endregion --- [ Play: Configure The Guest ] -------------------------------------------------- #
+
+#region ------ [ Play: PDQ Deploy And Inventory ] --------------------------------------------- #
+# One all-in-one Central Server: both products co-located, in the same operating mode, under one
+# background service user. They are separate roles because each is separately installable, not
+# because they are separately deployable.
 
 - name: 'PLAY | PDQ Deploy And Inventory (all-in-one Central Server, ephemeral AWS)'
   hosts: 'pdq_servers'
-  gather_facts: false
-  become: false
   any_errors_fatal: true
   vars:
-    # One volume per concern, matching terraform/aws.tfvars by Function tag. The letters are the
-    # contract this play publishes to the roles below: Inventory's database on D, Deploy's on E,
-    # and the shared package repository on F.
-    pdq_disk_layout:
-      - function: 'PDQINVENTORY'
-        drive_letter: 'D'
-        label: 'PDQINVENTORY'
-        allocation_unit: 65536
-      - function: 'PDQDEPLOY'
-        drive_letter: 'E'
-        label: 'PDQDEPLOY'
-        allocation_unit: 65536
-      - function: 'PDQREPO'
-        drive_letter: 'F'
-        label: 'PDQREPO'
-        allocation_unit: 65536
-
     # The pinned application versions, defined ONCE here and handed to BOTH products below (they
     # share one custom-variable model). Each key is the application's Add/Remove Programs identity
     # -- <Publisher>_<DisplayName>, Title Case, special characters spelled out, matching the AppRepo
@@ -214,44 +154,10 @@
       NotepadPlusPlusTeam_NotepadPlusPlus: '8.7.1'
       MicrosoftCorporation_MicrosoftVisualStudioCode: '1.94.2'
 
-  #region ------ [ Pre-Tasks ] ---------------------------------------------------------------- #
-  pre_tasks:
-
-    # Account-derived values are passed EXPLICITLY on the invocation, never read from the
-    # environment by a role, so the play and the deploy identity cannot disagree.
-    - name: 'PRE | Assert the AWS deployment identity was provided'
-      ansible.builtin.assert:
-        that:
-          - aws_account_id is defined
-          - aws_account_id is match('^[0-9]{12}$')
-          - aws_region is defined
-          - aws_region is match('^[a-z]{2}(-[a-z]+)+-[0-9]$')
-        fail_msg: >-
-          aws_account_id and aws_region must be provided as extra-vars. The aws-deploy workflow
-          passes them from its own environment (the same values the OIDC role ARN and region
-          use); a local run must pass both explicitly.
-        quiet: true
-
-  #endregion --- [ Pre-Tasks ] ---------------------------------------------------------------- #
 
   #region ------ [ Roles ] -------------------------------------------------------------------- #
   roles:
 
-    #region ------ [ Roles: Windows Disk Manager ] -------------------------------------------- #
-    # Guest disk provisioning is delegated to the composed framework role — this repository
-    # never duplicates it. `function` names each EBS volume's Function tag (declared in
-    # terraform/aws.tfvars) and the role resolves it to the attached disk itself, because a
-    # volume id only exists after apply. The layout is passed through whole: adding a volume is
-    # a change in two files, not three.
-    # Skipped when the applications are being removed: the disk role provisions storage and ships
-    # no absent entrypoint, and removing an application is not a reason to touch the volumes that
-    # outlive it.
-    - role: 'windows_disk_manager'
-      vars:
-        windows_disk_manager:
-          platform: 'aws'
-          disks: "{{ pdq_disk_layout }}"
-    #endregion --- [ Roles: Windows Disk Manager ] -------------------------------------------- #
 
     #region ------ [ Roles: PDQ Deploy ] ------------------------------------------------------ #
     - role: 'pdq_deploy'

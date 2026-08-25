@@ -75,8 +75,8 @@
       "Action": "s3:GetObject",
       "Resource": [
         "arn:aws:s3:::<account-id>-apprepo/OpenVPN.net/OpenVPN Community/*/OpenVPN_Community_amd64.msi",
-        "arn:aws:s3:::<account-id>-ansible/applications/openvpn/aws-ec2-test.ovpn",
-        "arn:aws:s3:::<account-id>-ansible/roles/domain_member/svc-domainjoin-password.txt"
+        "arn:aws:s3:::<account-id>-ansible/host_roles/remote_client/aws-ec2-test.ovpn",
+        "arn:aws:s3:::<account-id>-ansible/host_roles/domain_member/svc-domainjoin-password.txt"
       ],
       "Condition": {
         "StringEquals": {

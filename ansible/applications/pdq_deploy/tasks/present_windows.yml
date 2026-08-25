@@ -830,6 +830,39 @@
 
     #endregion --- [ Process: Import The Pinned Variables ] ----------------------------------- #
 
+    #region ------ [ Process: Import The Declared Packages ] ---------------------------------- #
+    # Each XML file under files/packages/ is a package the product must hold, exported from the
+    # console and committed as-is, so the repository states the package rather than describing it.
+    # Its install steps reference the pinned variables imported above by name, which is why this
+    # runs after them. Deploy's own script imports a definition only when the product does not hold
+    # it or holds it differently, and proves the import by exporting the package again, so a
+    # converged host writes nothing and a package the command line silently drops fails the run.
+    # One call per definition, so the recap names the package that changed. The .ps1 is
+    # MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role tracks only
+    # files/Set-PdqPackage.ps1.stub). This adds and updates; a package no definition declares is
+    # left alone.
+
+    - name: 'PROCESS | Import The Declared Packages'
+      become: true
+      become_method: 'ansible.builtin.runas'
+      become_user: "{{ pdq_deploy_running.service_account.name }}"
+      loop: "{{ query('ansible.builtin.fileglob', 'packages/*.xml') | sort }}"
+      loop_control:
+        label: "{{ item | basename }}"
+      vars:
+        ansible_become_flags: 'logon_type=batch'
+        ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
+
+      ansible.windows.win_powershell:
+        depth: 3
+        error_action: 'stop'
+        parameters:
+          Definition: "{{ lookup('ansible.builtin.file', item) }}"
+          CliPath: "{{ pdq_deploy_running.cli_path }}"
+        script: "{{ lookup('ansible.builtin.file', 'Set-PdqPackage.ps1') }}"
+
+    #endregion --- [ Process: Import The Declared Packages ] ---------------------------------- #
+
     #region ------ [ Process: Authorize The Console Users ] ----------------------------------- #
     # Who may open the console. A silent install authorises no one, and RBAC being off leaves it
     # that way -- the product requires each account or group to be an explicit Console User, not

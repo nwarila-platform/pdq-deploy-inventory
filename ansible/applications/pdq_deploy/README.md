@@ -5,9 +5,10 @@ Windows. In one converge it installs the product, applies the licence, ensures t
 service account and records its credential with the product, places the database on its dedicated
 drive, creates the package repository on a second drive and enforces its directory permissions,
 publishes it as an encrypted read-only network share, sets Central Server mode and the console
-port, applies the product preferences, imports the pinned variables, seeds the per-user console
-defaults, authorises the console users, chooses the event-log severities and service-manager
-behaviour, and records the registration that would otherwise stop the first console with a popup.
+port, applies the product preferences, imports the pinned variables and the declared packages,
+seeds the per-user console defaults, authorises the console users, chooses the event-log severities
+and service-manager behaviour, and records the registration that would otherwise stop the first
+console with a popup.
 
 Everything moves through the controller: it fetches each artifact from S3 and hands the installer
 to the target, so the guest never receives cloud credentials. The installer is verified against
@@ -55,6 +56,18 @@ changing a default surfaces as a reported change rather than silent drift. The r
 is derived from the host and the share this role publishes, keeping the directory, share, and
 product configuration aligned.
 
+## Declared packages
+
+Each `files/packages/*.xml` file is a package the product must hold, exported from the console and
+committed unchanged, so the repository states the package rather than describing it. A definition
+is imported only when the product does not hold it or holds it differently, and the import is
+proved by exporting the package again, so a converged host writes nothing. Install steps reference
+the pinned variables by name, which is why the packages are imported after them.
+
+Adding a package is exporting it from the console into `files/packages/` and allowing that exact
+filename in `.gitignore`, which tracks nothing it has not been told about by name. The role does
+not remove a package no definition declares.
+
 ## State
 
 - `present` (default) — install and configure to the declared state.
@@ -76,8 +89,8 @@ Guest-side logic that a task cannot express cleanly is a first-class PowerShell 
 and Pester-tested once under `scripts/` and materialized into the role by
 `scripts/materialize-role-scripts.sh` (the role tracks only the `.ps1.stub` markers). The role uses
 `Get-InstalledSoftware.ps1`, `Set-PdqSetting.ps1`, `Set-PdqVariable.ps1`, and
-`Set-PdqRegistration.ps1`, all shared with `pdq_inventory`, plus Deploy's
-`Set-RepositoryAcl.ps1` for the package directory.
+`Set-PdqRegistration.ps1`, all shared with `pdq_inventory`, plus Deploy's own
+`Set-RepositoryAcl.ps1` for the package directory and `Set-PdqPackage.ps1` for the packages.
 
 ## Verification
 

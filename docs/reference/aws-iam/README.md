@@ -61,8 +61,9 @@ The workflow assumes `nwarila-platform_pdq-deploy-inventory_runner` through `DEP
 ## Artifact access and the instance profile
 
 The runner reads exactly the two licence objects and the PDQ service-account secret under
-`applications/pdq/`, the directory-join secret under `applications/domain_member/`, and the VPN
-profile under `applications/openvpn/`. It also reads the versioned installers at
+`applications/pdq/`, the VPN profile under `applications/openvpn/`, and the directory-join secret
+under `roles/domain_member/` — a directory membership is a state the host is in, not an application
+it carries, so it is filed apart from them. It also reads the versioned installers at
 `PDQ.com/PDQ Deploy/<version>/PDQ_Deploy_x86-x64.exe`,
 `PDQ.com/PDQ Inventory/<version>/PDQ_Inventory_x86-x64.exe`, and
 `OpenVPN.net/OpenVPN Community/<version>/OpenVPN_Community_amd64.msi`. Every installer key keeps

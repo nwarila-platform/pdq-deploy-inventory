@@ -164,8 +164,8 @@
           # unqualified name is not resolved against the realm from a host that is not yet in it.
           user: 'svc-domainjoin@tcn.trinitytechnicalservices.com'
           password:
-            bucket: "{{ aws_account_id }}-apprepo"
-            object: 'applications/domain_member/svc-domainjoin-password.txt'
+            bucket: "{{ aws_account_id }}-ansible"
+            object: 'roles/domain_member/svc-domainjoin-password.txt'
             sha256: '275cbdbe8f9a92c30b64294a61a2e49e4e3a65552cd7fb523646849f33ec2f8b'
           computer_ou: 'OU=PDQ,OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'
 

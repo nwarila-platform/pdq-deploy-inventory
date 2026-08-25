@@ -313,8 +313,13 @@ jobs:
 
       # Readiness, configuration and the PDQ proof all live in the playbook. The EC2 inventory
       # plugin filters live AWS instances to this repository and run before exposing one target.
+      #
+      # A converge onto a NEW instance measured 32 minutes (2026-08-25): roughly seven waiting for
+      # the machine to answer and finish its first boot, seven preparing it, and eight per product.
+      # The budget is the measured time with room to spare, because the failure it guards against is
+      # a hung converge -- and cutting a working one short reports a defect that is not there.
       - name: Run the PDQ playbook
-        timeout-minutes: 30
+        timeout-minutes: 60
         working-directory: .frameworks/ansible-framework
         env:
           ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
@@ -395,9 +400,12 @@ jobs:
             -var "runner_ip=${RUNNER_IP}"                                    \
             -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars"
 
+      # The OS is new, so this is a first converge again and takes as long as one. The second
+      # converges and the absent proofs below run against a host that is already up and stay well
+      # inside the shorter budget.
       - name: Re-converge onto the reattached data (adopt the existing databases)
         if: inputs.os_swap
-        timeout-minutes: 30
+        timeout-minutes: 60
         working-directory: .frameworks/ansible-framework
         env:
           ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg

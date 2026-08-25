@@ -379,6 +379,35 @@ New-Variable -Force -Name:'SETTLE_POLL_MILLISECONDS' -Option:('Private', 'ReadOn
 #region ------ [ Main ] ---------------------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Main'
 
+# The ONE place a native command is run, so every failure names the operation that failed instead
+# of surfacing the program's bare text, and every exit code is judged against a policy the caller
+# states rather than a convention the reader has to infer.
+#
+# NEVER redirect a native command's stderr into the success stream with 2>&1. Windows PowerShell
+# 5.1 raises a terminating RemoteException for stderr captured that way while
+# ErrorActionPreference is Stop (measured on a target 2026-08-25), and it fires on ordinary paths:
+# the PDQ command line writes "not found" to stderr alongside an exit code that means "absent, not
+# broken". Left alone, stderr reaches the host, the exit code is read normally, and the captured
+# output holds the program's real output and nothing else.
+Function Invoke-NativeCommand {
+  Param (
+    [System.String] $Operation,
+    [System.String] $FilePath,
+    [System.String[]] $Argument = @(),
+    [System.Int32[]] $SuccessExitCode = @(0)
+  )
+  Try {
+    $Output = & $FilePath @Argument
+    $Exit = $LASTEXITCODE
+  } Catch {
+    Throw ('{0}: ''{1}'' could not be run ({2})' -f $Operation, $FilePath, $PSItem.Exception.Message)
+  }
+  If ($SuccessExitCode -notcontains $Exit) {
+    Throw ('{0}: {1} exited {2}' -f $Operation, (Split-Path -Leaf -Path:$FilePath), $Exit)
+  }
+  Return [PSCustomObject]@{ Exit = [System.Int32]$Exit; Output = @($Output) }
+}
+
 # Names other tasks own -- set aside by EXACT name so a misspelled routed key fails as an unknown
 # setting instead of silently reverting to its default.
 New-Variable -Force -Name:'ROUTED_NAMES_DEPLOY' -Option:('Private', 'ReadOnly') -Value:(
@@ -500,10 +529,8 @@ Try {
     # Where the database lives is a deployment choice, so it is asked for rather than assumed:
     # the product reports its own path. The variable write, the settle poll and the unexported
     # reads below all share it.
-    $Info = & $CLI_PATH 'SystemInfo' 2>&1
-    If ($LASTEXITCODE -ne 0) {
-      Throw ('SystemInfo failed with exit code {0}' -f $LASTEXITCODE)
-    }
+    $Info = (Invoke-NativeCommand -Operation:'Reading the product system information' `
+        -FilePath:$CLI_PATH -Argument:@('SystemInfo')).Output
     $DatabasePath = (
       @($Info | Where-Object -FilterScript { $PSItem -match '^\s*Database\s*:' }) |
         Select-Object -First 1
@@ -518,9 +545,10 @@ Try {
     If (Test-Path -LiteralPath:$EXPORT_PATH) {
       Remove-Item -LiteralPath:$EXPORT_PATH -Force
     }
-    $Null = & $CLI_PATH 'ExportSettings' '-Path' $EXPORT_PATH '-Overwrite' 2>&1
-    If ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath:$EXPORT_PATH)) {
-      Throw ('ExportSettings failed with exit code {0}' -f $LASTEXITCODE)
+    $Null = Invoke-NativeCommand -Operation:'Exporting the product settings' -FilePath:$CLI_PATH `
+      -Argument:@('ExportSettings', '-Path', $EXPORT_PATH, '-Overwrite')
+    If (-not (Test-Path -LiteralPath:$EXPORT_PATH)) {
+      Throw 'Exporting the product settings: the command line reported success but wrote no file'
     }
 
     # Flatten to element.parent dotted names. LocalName, never Name: grouping elements can
@@ -564,10 +592,8 @@ Try {
     If ($Unexported.Count -gt 0) {
       # -csv so a value holding a comma or newline (a printing header) survives: list mode would
       # split it; CSV quotes it and ConvertFrom-Csv reads it whole once the native lines rejoin.
-      $Rows = @(& $SQLITE_PATH -csv $DatabasePath 'SELECT Name, Value FROM Settings;' 2>&1) -join "`n"
-      If ($LASTEXITCODE -ne 0) {
-        Throw ('Reading the settings table failed with exit code {0}' -f $LASTEXITCODE)
-      }
+      $Rows = (Invoke-NativeCommand -Operation:'Reading the settings table' -FilePath:$SQLITE_PATH `
+          -Argument:@('-csv', $DatabasePath, 'SELECT Name, Value FROM Settings;')).Output -join "`n"
       ForEach ($Record In @($Rows | ConvertFrom-Csv -Header:('Name', 'Value'))) {
         $PersistedNow[$Record.Name] = $Record.Value
       }
@@ -610,23 +636,17 @@ Try {
             $Desired.Replace("'", "''")
             $DatabaseVariable[$Name].Replace("'", "''")
           )
-          $Null = & $SQLITE_PATH $DatabasePath $Statement 2>&1
-          If ($LASTEXITCODE -ne 0) {
-            Throw ('Database write failed for {0} with exit code {1}' -f $Name, $LASTEXITCODE)
-          }
+          $Null = Invoke-NativeCommand -Operation:('Writing the setting ''{0}'' to the database' -f $Name) `
+            -FilePath:$SQLITE_PATH -Argument:@($DatabasePath, $Statement)
         } ElseIf ($Desired -eq [System.String]::Empty) {
           # -Set refuses empty values; the product's way back to blank is -Reset, dropping
           # the override row. Verify still proves the result reads back blank.
-          $Null = & $CLI_PATH 'Settings' '-Name' $WriteName '-Reset' 2>&1
-          If ($LASTEXITCODE -ne 0) {
-            Throw ('Settings -Reset failed for {0} with exit code {1}' -f $Name, $LASTEXITCODE)
-          }
+          $Null = Invoke-NativeCommand -Operation:('Clearing the setting ''{0}''' -f $Name) `
+            -FilePath:$CLI_PATH -Argument:@('Settings', '-Name', $WriteName, '-Reset')
           $CliWritten[$WriteName] = [System.String]::Empty
         } Else {
-          $Null = & $CLI_PATH 'Settings' '-Name' $WriteName '-Set' $Desired 2>&1
-          If ($LASTEXITCODE -ne 0) {
-            Throw ('Settings -Set failed for {0} with exit code {1}' -f $Name, $LASTEXITCODE)
-          }
+          $Null = Invoke-NativeCommand -Operation:('Writing the setting ''{0}''' -f $Name) `
+            -FilePath:$CLI_PATH -Argument:@('Settings', '-Name', $WriteName, '-Set', $Desired)
           $CliWritten[$WriteName] = $Desired
         }
       }
@@ -638,10 +658,8 @@ Try {
         $Deadline = [System.DateTime]::UtcNow.AddSeconds($SETTLE_DEADLINE_SECONDS)
         While ($True) {
           $Persisted = @{}
-          $Rows = @(& $SQLITE_PATH -csv $DatabasePath 'SELECT Name, Value FROM Settings;' 2>&1) -join "`n"
-          If ($LASTEXITCODE -ne 0) {
-            Throw ('Reading the settings table failed with exit code {0}' -f $LASTEXITCODE)
-          }
+          $Rows = (Invoke-NativeCommand -Operation:'Reading the settings table' -FilePath:$SQLITE_PATH `
+              -Argument:@('-csv', $DatabasePath, 'SELECT Name, Value FROM Settings;')).Output -join "`n"
           ForEach ($Record In @($Rows | ConvertFrom-Csv -Header:('Name', 'Value'))) {
             $Persisted[$Record.Name] = $Record.Value
           }
@@ -665,10 +683,9 @@ Try {
       # An open console's next save writes its stale page model back over anything applied
       # here (measured 2026-08-21), so writes report who has a console open.
       If ($ToWrite.Count -gt 0) {
-        $Sessions = @(& $SQLITE_PATH $DatabasePath "SELECT UserName FROM ConsoleUserSessions WHERE Console <> '';" 2>&1)
-        If ($LASTEXITCODE -ne 0) {
-          Throw ('Reading the console sessions failed with exit code {0}' -f $LASTEXITCODE)
-        }
+        $Sessions = (Invoke-NativeCommand -Operation:'Reading the open console sessions' `
+            -FilePath:$SQLITE_PATH `
+            -Argument:@($DatabasePath, "SELECT UserName FROM ConsoleUserSessions WHERE Console <> '';")).Output
         ForEach ($Row In $Sessions) {
           If ($Row) {
             $OpenConsole.Add([System.String]$Row)

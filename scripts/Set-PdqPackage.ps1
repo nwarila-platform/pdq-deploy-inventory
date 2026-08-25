@@ -181,31 +181,31 @@ Function ConvertTo-ComparableText {
   Return $Text.TrimStart([System.Char]0xFEFF).Replace("`r`n", "`n").TrimEnd()
 }
 
-# The ONE place the command line is invoked, so every failure names the operation that failed
-# instead of surfacing the product's bare text, and every exit code is judged against a policy the
-# caller states rather than a convention the reader has to infer.
+# The ONE place a native command is run, so every failure names the operation that failed instead
+# of surfacing the program's bare text, and every exit code is judged against a policy the caller
+# states rather than a convention the reader has to infer.
 #
-# NEVER redirect the command line's stderr into the success stream with 2>&1. Windows PowerShell
-# 5.1 raises a terminating RemoteException for a native command's stderr captured that way while
-# ErrorActionPreference is Stop (measured on the target 2026-08-25), and it would fire on exactly
-# the paths that matter: the product writes "Package not found" to stderr with exit 3. Left alone,
-# stderr reaches the host and the exit code is read normally.
-Function Invoke-PdqCli {
+# NEVER redirect a native command's stderr into the success stream with 2>&1. Windows PowerShell
+# 5.1 raises a terminating RemoteException for stderr captured that way while
+# ErrorActionPreference is Stop (measured on a target 2026-08-25), and it fires on ordinary paths:
+# the PDQ command line writes "not found" to stderr alongside an exit code that means "absent, not
+# broken". Left alone, stderr reaches the host, the exit code is read normally, and the captured
+# output holds the program's real output and nothing else.
+Function Invoke-NativeCommand {
   Param (
     [System.String] $Operation,
-    [System.String[]] $Argument,
+    [System.String] $FilePath,
+    [System.String[]] $Argument = @(),
     [System.Int32[]] $SuccessExitCode = @(0)
   )
   Try {
-    $Output = & $CliPath @Argument
+    $Output = & $FilePath @Argument
     $Exit = $LASTEXITCODE
   } Catch {
-    Throw ('{0}: the command line at ''{1}'' could not be run ({2})' -f @(
-        $Operation, $CliPath, $PSItem.Exception.Message
-      ))
+    Throw ('{0}: ''{1}'' could not be run ({2})' -f $Operation, $FilePath, $PSItem.Exception.Message)
   }
   If ($SuccessExitCode -notcontains $Exit) {
-    Throw ('{0}: the command line exited {1}' -f $Operation, $Exit)
+    Throw ('{0}: {1} exited {2}' -f $Operation, (Split-Path -Leaf -Path:$FilePath), $Exit)
   }
   Return [PSCustomObject]@{ Exit = [System.Int32]$Exit; Output = @($Output) }
 }
@@ -221,7 +221,7 @@ Function Get-PackageText {
     Remove-Item -LiteralPath:$Staged -Force
   }
 
-  $Export = Invoke-PdqCli -Operation:('Exporting the package ''{0}''' -f $Name) -SuccessExitCode:@(0, 3) -Argument:@(
+  $Export = Invoke-NativeCommand -FilePath:$CliPath -Operation:('Exporting the package ''{0}''' -f $Name) -SuccessExitCode:@(0, 3) -Argument:@(
     'ExportPackages', '-Name', $Name, '-Path', $Staged, '-Overwrite'
   )
   If ($Export.Exit -eq 3) {
@@ -280,7 +280,7 @@ If ((Get-PackageText -Name:$Name) -cne $Declared) {
           $Name, $Staged, $PSItem.Exception.Message
         ))
     }
-    $Null = Invoke-PdqCli -Operation:('Importing the package ''{0}''' -f $Name) -Argument:@(
+    $Null = Invoke-NativeCommand -FilePath:$CliPath -Operation:('Importing the package ''{0}''' -f $Name) -Argument:@(
       'ImportPackages', '-Path', $Staged, '-Overwrite'
     )
     Remove-Item -LiteralPath:$Staged -Force

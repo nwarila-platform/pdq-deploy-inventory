@@ -221,10 +221,10 @@ Describe 'Set-PdqRegistration <ProductName>' -ForEach $script:Products {
         Should -Throw '*no ID*'
     }
 
-    It 'throws when the database write fails' {
+    It 'throws when the database fails, naming the operation and the program' {
       $global:FakeSqliteFails = $True
       { Invoke-PdqRegistration -CliPath $CliPath -Email 'someone@example.com' 2>$null } |
-        Should -Throw '*exit code 1*'
+        Should -Throw '*Reading the LicensedMachine table: sqlite3.exe exited 1*'
     }
   }
 
@@ -335,4 +335,18 @@ Describe 'Set-PdqRegistration <ProductName>' -ForEach $script:Products {
       $global:FakeRegistrations.Count | Should -Be 0
     }
   }
+
+  Context 'the hazard it must not reintroduce' {
+    It 'never captures a native command stderr with 2>&1' {
+      # Windows PowerShell 5.1 turns a native command's captured stderr into a TERMINATING error
+      # while ErrorActionPreference is Stop, so the redirect would kill the run on paths where a
+      # program writes a warning and carries on. Pinned here because its absence is invisible on
+      # review.
+      $Source = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Set-PdqRegistration.ps1') -Raw
+      $Source -split "`n" |
+        Where-Object { $_ -match '2>&1' -and $_ -notmatch '^\s*#' } |
+        Should -BeNullOrEmpty
+    }
+  }
+
 }

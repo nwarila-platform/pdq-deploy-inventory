@@ -363,7 +363,7 @@ Describe 'Set-PdqSetting' {
     It 'fails loudly when the console-session read errors instead of reporting no console' {
       $global:FakeSessionFails = $True
       { & $script:ScriptPath @script:Ctx -Preference @{ deployments = @{ cleanup_days = 45 } } 2>$null } |
-        Should -Throw '*console sessions failed*'
+        Should -Throw '*Reading the open console sessions: sqlite3.exe exited 1*'
     }
 
     It 'takes the console shape: pages holding their settings' {
@@ -675,4 +675,18 @@ Describe 'Set-PdqSetting' {
       @($global:FakeSqliteCalls | Where-Object { $_ -match 'SystemVariables' }).Count | Should -Be 0
     }
   }
+
+  Context 'the hazard it must not reintroduce' {
+    It 'never captures a native command stderr with 2>&1' {
+      # Windows PowerShell 5.1 turns a native command's captured stderr into a TERMINATING error
+      # while ErrorActionPreference is Stop, so the redirect would kill the run on paths where a
+      # program writes a warning and carries on. Pinned here because its absence is invisible on
+      # review.
+      $Source = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Set-PdqSetting.ps1') -Raw
+      $Source -split "`n" |
+        Where-Object { $_ -match '2>&1' -and $_ -notmatch '^\s*#' } |
+        Should -BeNullOrEmpty
+    }
+  }
+
 }

@@ -278,4 +278,18 @@ Describe 'Set-PdqVariable' {
       @($global:FakeCliCalls | Where-Object { $_ -like 'ExportVariables*' }).Count | Should -Be 1
     }
   }
+
+  Context 'the hazard it must not reintroduce' {
+    It 'never captures a native command stderr with 2>&1' {
+      # Windows PowerShell 5.1 turns a native command's captured stderr into a TERMINATING error
+      # while ErrorActionPreference is Stop, so the redirect would kill the run on paths where a
+      # program writes a warning and carries on. Pinned here because its absence is invisible on
+      # review.
+      $Source = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Set-PdqVariable.ps1') -Raw
+      $Source -split "`n" |
+        Where-Object { $_ -match '2>&1' -and $_ -notmatch '^\s*#' } |
+        Should -BeNullOrEmpty
+    }
+  }
+
 }

@@ -165,6 +165,35 @@ If ($StandaloneRun) {
 #region ------ [ Main ] ---------------------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Main'
 
+# The ONE place a native command is run, so every failure names the operation that failed instead
+# of surfacing the program's bare text, and every exit code is judged against a policy the caller
+# states rather than a convention the reader has to infer.
+#
+# NEVER redirect a native command's stderr into the success stream with 2>&1. Windows PowerShell
+# 5.1 raises a terminating RemoteException for stderr captured that way while
+# ErrorActionPreference is Stop (measured on a target 2026-08-25), and it fires on ordinary paths:
+# the PDQ command line writes "not found" to stderr alongside an exit code that means "absent, not
+# broken". Left alone, stderr reaches the host, the exit code is read normally, and the captured
+# output holds the program's real output and nothing else.
+Function Invoke-NativeCommand {
+  Param (
+    [System.String] $Operation,
+    [System.String] $FilePath,
+    [System.String[]] $Argument = @(),
+    [System.Int32[]] $SuccessExitCode = @(0)
+  )
+  Try {
+    $Output = & $FilePath @Argument
+    $Exit = $LASTEXITCODE
+  } Catch {
+    Throw ('{0}: ''{1}'' could not be run ({2})' -f $Operation, $FilePath, $PSItem.Exception.Message)
+  }
+  If ($SuccessExitCode -notcontains $Exit) {
+    Throw ('{0}: {1} exited {2}' -f $Operation, (Split-Path -Leaf -Path:$FilePath), $Exit)
+  }
+  Return [PSCustomObject]@{ Exit = [System.Int32]$Exit; Output = @($Output) }
+}
+
 # Validate and normalise the request in one pass: every name must satisfy the product's rule and
 # every value must be a string, so a bad request fails before anything is read or written.
 $Desired = @{}
@@ -198,10 +227,8 @@ Try {
     }
     # Export ALL custom variables. Exit 3 means the product holds none yet -- a first run against a
     # fresh install -- which is an empty current state, not a failure.
-    $Null = & $CliPath 'ExportVariables' '-Path' $EXPORT_PATH '-Overwrite' 2>&1
-    If ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3) {
-      Throw ('ExportVariables failed with exit code {0}' -f $LASTEXITCODE)
-    }
+    $Null = Invoke-NativeCommand -Operation:'Exporting the custom variables' -FilePath:$CliPath `
+      -SuccessExitCode:@(0, 3) -Argument:@('ExportVariables', '-Path', $EXPORT_PATH, '-Overwrite')
 
     # Parse <CustomVariable><Name/><Value/></CustomVariable> into a name -> value map. Explicit
     # SelectSingleNode, never the property adapter, because a child named 'Name' would otherwise
@@ -237,10 +264,9 @@ Try {
       # Create-or-overwrite by name. -Force makes one path serve both a new name and a changed
       # value; only differing names reach here, so it never rewrites an unchanged variable.
       ForEach ($Name In $ToWrite) {
-        $Null = & $CliPath 'CreateCustomVariable' '-Name' $Name '-Value' $Desired[$Name] '-Force' 2>&1
-        If ($LASTEXITCODE -ne 0) {
-          Throw ('CreateCustomVariable failed for {0} with exit code {1}' -f $Name, $LASTEXITCODE)
-        }
+        $Null = Invoke-NativeCommand -Operation:('Writing the variable ''{0}''' -f $Name) `
+          -FilePath:$CliPath `
+          -Argument:@('CreateCustomVariable', '-Name', $Name, '-Value', $Desired[$Name], '-Force')
       }
     } Else {
       # Prove it: anything that does not read back with the requested value was not applied -- the

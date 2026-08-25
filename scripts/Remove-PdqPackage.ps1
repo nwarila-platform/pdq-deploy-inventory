@@ -175,29 +175,31 @@ If (-not (Test-Path -LiteralPath:$CliPath -PathType:'Leaf')) {
   Throw ('The PDQ Deploy command line is not at ''{0}''' -f $CliPath)
 }
 
-# The ONE place the command line is invoked, so every failure names the operation that failed
-# instead of surfacing the product's bare text.
+# The ONE place a native command is run, so every failure names the operation that failed instead
+# of surfacing the program's bare text, and every exit code is judged against a policy the caller
+# states rather than a convention the reader has to infer.
 #
-# NEVER redirect the command line's stderr into the success stream with 2>&1. Windows PowerShell
-# 5.1 raises a terminating RemoteException for a native command's stderr captured that way while
-# ErrorActionPreference is Stop (measured on the target 2026-08-25). Left alone, stderr reaches the
-# host, the exit code is read normally, and the captured output holds names and nothing else.
-Function Invoke-PdqCli {
+# NEVER redirect a native command's stderr into the success stream with 2>&1. Windows PowerShell
+# 5.1 raises a terminating RemoteException for stderr captured that way while
+# ErrorActionPreference is Stop (measured on a target 2026-08-25), and it fires on ordinary paths:
+# the PDQ command line writes "not found" to stderr alongside an exit code that means "absent, not
+# broken". Left alone, stderr reaches the host, the exit code is read normally, and the captured
+# output holds the program's real output and nothing else.
+Function Invoke-NativeCommand {
   Param (
     [System.String] $Operation,
-    [System.String[]] $Argument,
+    [System.String] $FilePath,
+    [System.String[]] $Argument = @(),
     [System.Int32[]] $SuccessExitCode = @(0)
   )
   Try {
-    $Output = & $CliPath @Argument
+    $Output = & $FilePath @Argument
     $Exit = $LASTEXITCODE
   } Catch {
-    Throw ('{0}: the command line at ''{1}'' could not be run ({2})' -f @(
-        $Operation, $CliPath, $PSItem.Exception.Message
-      ))
+    Throw ('{0}: ''{1}'' could not be run ({2})' -f $Operation, $FilePath, $PSItem.Exception.Message)
   }
   If ($SuccessExitCode -notcontains $Exit) {
-    Throw ('{0}: the command line exited {1}' -f $Operation, $Exit)
+    Throw ('{0}: {1} exited {2}' -f $Operation, (Split-Path -Leaf -Path:$FilePath), $Exit)
   }
   Return [PSCustomObject]@{ Exit = [System.Int32]$Exit; Output = @($Output) }
 }
@@ -206,7 +208,7 @@ Function Invoke-PdqCli {
 # is stripped, never the name's own leading or trailing spaces -- trimming those would address a
 # different package than the one the product named.
 Function Get-HeldPackageName {
-  $Listing = Invoke-PdqCli -Operation:'Listing the packages' -Argument:@('GetPackageNames')
+  $Listing = Invoke-NativeCommand -FilePath:$CliPath -Operation:'Listing the packages' -Argument:@('GetPackageNames')
   $Names = [System.Collections.Generic.List[System.String]]::new()
   ForEach ($Line In $Listing.Output) {
     $Text = ([System.String]$Line).TrimEnd([System.Char]13, [System.Char]10)
@@ -273,7 +275,7 @@ If (-not $Ansible.CheckMode) {
     # -Force because the command line otherwise waits for a confirmation this run cannot answer.
     # It also waives the product's own nested-step check, which is why the declarations were
     # checked for references above.
-    $Null = Invoke-PdqCli -Operation:('Removing the package ''{0}''' -f $Name) -Argument:@(
+    $Null = Invoke-NativeCommand -FilePath:$CliPath -Operation:('Removing the package ''{0}''' -f $Name) -Argument:@(
       'DeletePackages', '-Name', $Name, '-Force'
     )
     $Removed.Add($Name)

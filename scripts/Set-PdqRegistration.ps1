@@ -225,12 +225,39 @@ If (-not [System.String]::Equals($Email, $LicenseEmail, [System.StringComparison
   Throw ('The email handed in does not match the one the licence was issued to ({0})' -f $LicenseEmail)
 }
 
+# The ONE place a native command is run, so every failure names the operation that failed instead
+# of surfacing the program's bare text, and every exit code is judged against a policy the caller
+# states rather than a convention the reader has to infer.
+#
+# NEVER redirect a native command's stderr into the success stream with 2>&1. Windows PowerShell
+# 5.1 raises a terminating RemoteException for stderr captured that way while
+# ErrorActionPreference is Stop (measured on a target 2026-08-25), and it fires on ordinary paths:
+# the PDQ command line writes "not found" to stderr alongside an exit code that means "absent, not
+# broken". Left alone, stderr reaches the host, the exit code is read normally, and the captured
+# output holds the program's real output and nothing else.
+Function Invoke-NativeCommand {
+  Param (
+    [System.String] $Operation,
+    [System.String] $FilePath,
+    [System.String[]] $Argument = @(),
+    [System.Int32[]] $SuccessExitCode = @(0)
+  )
+  Try {
+    $Output = & $FilePath @Argument
+    $Exit = $LASTEXITCODE
+  } Catch {
+    Throw ('{0}: ''{1}'' could not be run ({2})' -f $Operation, $FilePath, $PSItem.Exception.Message)
+  }
+  If ($SuccessExitCode -notcontains $Exit) {
+    Throw ('{0}: {1} exited {2}' -f $Operation, (Split-Path -Leaf -Path:$FilePath), $Exit)
+  }
+  Return [PSCustomObject]@{ Exit = [System.Int32]$Exit; Output = @($Output) }
+}
+
 # Where the database lives is a deployment choice, so it is asked for rather than assumed: the
 # product reports its own path and cannot be wrong about it.
-$Info = & $CLI_PATH 'SystemInfo' 2>&1
-If ($LASTEXITCODE -ne 0) {
-  Throw ('SystemInfo failed with exit code {0}' -f $LASTEXITCODE)
-}
+$Info = (Invoke-NativeCommand -Operation:'Reading the product system information' `
+    -FilePath:$CLI_PATH -Argument:@('SystemInfo')).Output
 $DatabasePath = (
   @($Info | Where-Object -FilterScript { $PSItem -match '^\s*Database\s*:' }) |
     Select-Object -First 1
@@ -252,23 +279,21 @@ $UserName = '{0}\administrator' -f $MachineName
 # here avoids baking their column names into SQL this script would then have to keep true.
 $MachineId = [System.String]::Empty
 $UserId = [System.String]::Empty
-ForEach ($Row In @(& $SQLITE_PATH $DatabasePath 'PRAGMA busy_timeout = 5000; SELECT * FROM LicensedMachine;' 2>&1)) {
+ForEach ($Row In (Invoke-NativeCommand -Operation:'Reading the LicensedMachine table' `
+      -FilePath:$SQLITE_PATH `
+      -Argument:@($DatabasePath, 'PRAGMA busy_timeout = 5000; SELECT * FROM LicensedMachine;')).Output) {
   $Parts = ([System.String]$Row).Split('|')
   If ($Parts.Count -eq 2 -and $Parts[0] -eq $MachineName) {
     $MachineId = $Parts[1]
   }
 }
-If ($LASTEXITCODE -ne 0) {
-  Throw ('Reading LicensedMachine failed with exit code {0}' -f $LASTEXITCODE)
-}
-ForEach ($Row In @(& $SQLITE_PATH $DatabasePath 'PRAGMA busy_timeout = 5000; SELECT * FROM LicensedUser;' 2>&1)) {
+ForEach ($Row In (Invoke-NativeCommand -Operation:'Reading the LicensedUser table' `
+      -FilePath:$SQLITE_PATH `
+      -Argument:@($DatabasePath, 'PRAGMA busy_timeout = 5000; SELECT * FROM LicensedUser;')).Output) {
   $Parts = ([System.String]$Row).Split('|')
   If ($Parts.Count -eq 2 -and $Parts[0] -eq $UserName) {
     $UserId = $Parts[1]
   }
-}
-If ($LASTEXITCODE -ne 0) {
-  Throw ('Reading LicensedUser failed with exit code {0}' -f $LASTEXITCODE)
 }
 
 # The desired Registration row, in the exact column order the table declares:
@@ -285,14 +310,13 @@ If ($NeedUser) {
 $Desired = '{0}|{1}|{2}|{3}|Server|Registered|0' -f $LicenseId, $UserId, $MachineId, $Email
 
 $Existing = [System.String]::Empty
-ForEach ($Row In @(& $SQLITE_PATH $DatabasePath 'PRAGMA busy_timeout = 5000; SELECT * FROM Registration;' 2>&1)) {
+ForEach ($Row In (Invoke-NativeCommand -Operation:'Reading the Registration table' `
+      -FilePath:$SQLITE_PATH `
+      -Argument:@($DatabasePath, 'PRAGMA busy_timeout = 5000; SELECT * FROM Registration;')).Output) {
   $C = ([System.String]$Row).Split('|')
   If ($C.Count -ge 3 -and $C[0] -eq $LicenseId -and $C[1] -eq $UserId -and $C[2] -eq $MachineId) {
     $Existing = [System.String]$Row
   }
-}
-If ($LASTEXITCODE -ne 0) {
-  Throw ('Reading Registration failed with exit code {0}' -f $LASTEXITCODE)
 }
 
 $Changed = $Existing -ne $Desired
@@ -321,15 +345,15 @@ If ($Changed -and -not $Ansible.CheckMode) {
   $Reg = "INSERT OR REPLACE INTO Registration VALUES('{0}','{1}','{2}','{3}','Server','Registered',0);"
   $Statements.Add(($Reg -f $Esc['lic'], $Esc['uid'], $Esc['mid'], $Esc['email']))
   $Statements.Add('COMMIT;')
-  $Null = & $SQLITE_PATH $DatabasePath ($Statements -join ' ') 2>&1
-  If ($LASTEXITCODE -ne 0) {
-    Throw ('Writing the registration failed with exit code {0}' -f $LASTEXITCODE)
-  }
+  $Null = Invoke-NativeCommand -Operation:'Writing the registration' -FilePath:$SQLITE_PATH `
+    -Argument:@($DatabasePath, ($Statements -join ' '))
 
   # Prove it: the row must now read back exactly as asked, or the run fails rather than
   # reporting a change that did not happen.
   $ReadBack = [System.String]::Empty
-  ForEach ($Row In @(& $SQLITE_PATH $DatabasePath 'PRAGMA busy_timeout = 5000; SELECT * FROM Registration;' 2>&1)) {
+  ForEach ($Row In (Invoke-NativeCommand -Operation:'Reading the registration back' `
+        -FilePath:$SQLITE_PATH `
+        -Argument:@($DatabasePath, 'PRAGMA busy_timeout = 5000; SELECT * FROM Registration;')).Output) {
     $C = ([System.String]$Row).Split('|')
     If ($C.Count -ge 3 -and $C[0] -eq $LicenseId -and $C[1] -eq $UserId -and $C[2] -eq $MachineId) {
       $ReadBack = [System.String]$Row

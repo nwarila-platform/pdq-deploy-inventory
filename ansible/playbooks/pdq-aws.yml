@@ -115,7 +115,6 @@
 
 #endregion --- [ Play: Bootstrap The Windows Host ] ------------------------------------------- #
 
-
 #region ------ [ Play: Reach The Private Network And Join Its Directory ] --------------------- #
 # The tunnel first, then the join: domain_member cannot resolve or reach a realm the host is not
 # yet on the network for. From here on the host serves PowerShell (the bootstrap flipped it), so
@@ -149,9 +148,7 @@
           service_account: 'NT AUTHORITY\SYSTEM'
           dns:
             domain: 'tcn.trinitytechnicalservices.com'
-            servers:
-              - '10.69.112.4'
-              - '10.69.112.5'
+            servers: [ '10.69.112.4', '10.69.112.5' ]
           proofs:
             - host: '10.69.112.4'
               port: 389
@@ -173,7 +170,6 @@
           computer_ou: 'OU=PDQ,OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'
 
 #endregion --- [ Play: Reach The Private Network And Join Its Directory ] --------------------- #
-
 
 #region ------ [ Play: PDQ Deploy And Inventory ] ------------------------------------------- #
 
@@ -213,7 +209,7 @@
       PythonSoftwareFoundation_Python311: '3.11.9'
       PythonSoftwareFoundation_Python312: '3.12.7'
       PythonSoftwareFoundation_Python313: '3.13.0'
-      GoogleLlc_GoogleChrome: '129.0.6668.90'
+      GoogleLlc_GoogleChrome: '151.0.7922.138'
       Mozilla_MozillaFirefox: '131.0'
       NotepadPlusPlusTeam_NotepadPlusPlus: '8.7.1'
       MicrosoftCorporation_MicrosoftVisualStudioCode: '1.94.2'

@@ -232,9 +232,13 @@ pdq_deploy_defaults:
       unc_path: >-
         ADMIN$\AdminArsenal
       local_path_of_shared_directory: ''
+    # Telemetry off, and the first-run consent dialog with it. The two are separate: the first
+    # switch is the collection, the second is whether the console still owes the user the dialog
+    # that asks about it. Left true, a fresh console opens on that dialog and waits for someone to
+    # dismiss it -- on a server nobody signs into, it simply sits there.
     usage_data:
       collect_usage_data: false
-      alert_first_time_analytics_dialog: true
+      alert_first_time_analytics_dialog: false
 
   #region ------ [ Installer layout ] -------------------------------------------------------- #
 

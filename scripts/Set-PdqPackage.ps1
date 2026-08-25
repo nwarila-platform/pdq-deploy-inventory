@@ -55,7 +55,7 @@
         .\Set-PdqPackage.ps1 -Definition (Get-Content -Raw '.\Google Chrome - Install.xml') -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
 
     .OUTPUTS
-        One object carrying name, changed, check_mode, ignored and msg.
+        One object carrying name, definition, changed, check_mode, ignored and msg.
 #>
 
 [CmdletBinding(SupportsShouldProcess)]
@@ -168,11 +168,46 @@ If ($StandaloneRun) {
 #region ------ [ Main ] ---------------------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Main'
 
+# The command line is the one thing this script cannot do without, so a wrong path says so here
+# rather than as a failure to run some particular operation later.
+If (-not (Test-Path -LiteralPath:$CliPath -PathType:'Leaf')) {
+  Throw ('The PDQ Deploy command line is not at ''{0}''' -f $CliPath)
+}
+
 # What the product varies between writes of the same package, plus the trailing whitespace Ansible
 # has already stripped from the declaration on its way here.
 Function ConvertTo-ComparableText {
   Param ([System.String] $Text)
   Return $Text.TrimStart([System.Char]0xFEFF).Replace("`r`n", "`n").TrimEnd()
+}
+
+# The ONE place the command line is invoked, so every failure names the operation that failed
+# instead of surfacing the product's bare text, and every exit code is judged against a policy the
+# caller states rather than a convention the reader has to infer.
+#
+# NEVER redirect the command line's stderr into the success stream with 2>&1. Windows PowerShell
+# 5.1 raises a terminating RemoteException for a native command's stderr captured that way while
+# ErrorActionPreference is Stop (measured on the target 2026-08-25), and it would fire on exactly
+# the paths that matter: the product writes "Package not found" to stderr with exit 3. Left alone,
+# stderr reaches the host and the exit code is read normally.
+Function Invoke-PdqCli {
+  Param (
+    [System.String] $Operation,
+    [System.String[]] $Argument,
+    [System.Int32[]] $SuccessExitCode = @(0)
+  )
+  Try {
+    $Output = & $CliPath @Argument
+    $Exit = $LASTEXITCODE
+  } Catch {
+    Throw ('{0}: the command line at ''{1}'' could not be run ({2})' -f @(
+        $Operation, $CliPath, $PSItem.Exception.Message
+      ))
+  }
+  If ($SuccessExitCode -notcontains $Exit) {
+    Throw ('{0}: the command line exited {1}' -f $Operation, $Exit)
+  }
+  Return [PSCustomObject]@{ Exit = [System.Int32]$Exit; Output = @($Output) }
 }
 
 # Reading the package is the same act whether deciding or proving: export it by name and hand back
@@ -185,18 +220,24 @@ Function Get-PackageText {
   If (Test-Path -LiteralPath:$Staged) {
     Remove-Item -LiteralPath:$Staged -Force
   }
-  $Null = & $CliPath 'ExportPackages' '-Name' $Name '-Path' $Staged '-Overwrite' 2>&1
-  $ExportExit = $LASTEXITCODE
-  If ($ExportExit -eq 3) {
+
+  $Export = Invoke-PdqCli -Operation:('Exporting the package ''{0}''' -f $Name) -SuccessExitCode:@(0, 3) -Argument:@(
+    'ExportPackages', '-Name', $Name, '-Path', $Staged, '-Overwrite'
+  )
+  If ($Export.Exit -eq 3) {
     Return [System.String]::Empty
   }
-  If ($ExportExit -ne 0) {
-    Throw ('ExportPackages failed for {0} with exit code {1}' -f $Name, $ExportExit)
-  }
   If (-not (Test-Path -LiteralPath:$Staged)) {
-    Throw ('ExportPackages reported success for {0} but wrote no file' -f $Name)
+    Throw ('Exporting the package ''{0}'': the command line reported success but wrote no file' -f $Name)
   }
-  $Text = Get-Content -LiteralPath:$Staged -Raw
+
+  Try {
+    $Text = Get-Content -LiteralPath:$Staged -Raw
+  } Catch {
+    Throw ('Exporting the package ''{0}'': its export at ''{1}'' could not be read ({2})' -f @(
+        $Name, $Staged, $PSItem.Exception.Message
+      ))
+  }
   Remove-Item -LiteralPath:$Staged -Force
   Return (ConvertTo-ComparableText -Text:$Text)
 }
@@ -205,7 +246,11 @@ Function Get-PackageText {
 # anything is written.
 $Declared = ConvertTo-ComparableText -Text:$Definition
 $Document = [System.Xml.XmlDocument]::new()
-$Document.LoadXml($Declared)
+Try {
+  $Document.LoadXml($Declared)
+} Catch {
+  Throw ('The definition is not valid XML ({0})' -f $PSItem.Exception.GetBaseException().Message)
+}
 # Explicit SelectSingleNode, never the property adapter, because a child named 'Name' would
 # otherwise collide with XmlNode's own Name property.
 $NameNode = $Document.SelectSingleNode('/AdminArsenal.Export/Package/Name')
@@ -228,11 +273,16 @@ If ((Get-PackageText -Name:$Name) -cne $Declared) {
     # serve both a package the product does not hold and one it holds differently; a package that
     # already matches never reaches here, so it never rewrites a match.
     $Staged = Join-Path -Path:$Ansible.Tmpdir -ChildPath:'pdq-package-import.xml'
-    Set-Content -LiteralPath:$Staged -Value:$Declared -Encoding:'utf8' -NoNewline
-    $Null = & $CliPath 'ImportPackages' '-Path' $Staged '-Overwrite' 2>&1
-    If ($LASTEXITCODE -ne 0) {
-      Throw ('ImportPackages failed for {0} with exit code {1}' -f $Name, $LASTEXITCODE)
+    Try {
+      Set-Content -LiteralPath:$Staged -Value:$Declared -Encoding:'utf8' -NoNewline
+    } Catch {
+      Throw ('Importing the package ''{0}'': it could not be staged at ''{1}'' ({2})' -f @(
+          $Name, $Staged, $PSItem.Exception.Message
+        ))
     }
+    $Null = Invoke-PdqCli -Operation:('Importing the package ''{0}''' -f $Name) -Argument:@(
+      'ImportPackages', '-Path', $Staged, '-Overwrite'
+    )
     Remove-Item -LiteralPath:$Staged -Force
 
     # The product was told to write, so the host changed whatever the next read says. Reporting the
@@ -247,6 +297,9 @@ If ((Get-PackageText -Name:$Name) -cne $Declared) {
 $Result = [PSCustomObject]@{
   changed    = [System.Boolean]$Changed
   check_mode = [System.Boolean]$Ansible.CheckMode
+  # The declaration itself, so the caller can hand the complete set to the pruning step: deciding
+  # what is safe to delete needs the definitions, not just their names.
+  definition = [System.String]$Declared
   ignored    = [System.Boolean]$Ignored
   msg        = If ($Ignored) {
     '{0} does not read back as declared after import' -f $Name

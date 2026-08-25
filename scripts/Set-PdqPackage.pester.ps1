@@ -30,6 +30,9 @@ BeforeAll {
   $script:ScriptPath = Join-Path -Path $PSScriptRoot -ChildPath 'Set-PdqPackage.ps1'
   # The caller passes the CLI path; a Windows-shaped string so the path-function trick resolves.
   $script:CliPath = 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
+  # The script refuses a CLI path that is not there, so the spec mounts a C: drive over a temporary
+  # directory and puts a file at that exact path. The path-shaped FUNCTION still wins when the
+  # command is invoked -- PowerShell resolves a function of that name before a file on disk.
 
   # Inline $Ansible stand-in (org contract: pairs are self-contained). Faithful to win_powershell:
   # Changed defaults to $True, Tmpdir is scratch the module cleans up, and only the ratified
@@ -80,6 +83,13 @@ Describe 'Set-PdqPackage' {
   BeforeEach {
     $script:Tmpdir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid())
     New-Item -ItemType Directory -Path $script:Tmpdir -Force | Out-Null
+    $script:MountedDrive = $Null
+    If (-not (Get-PSDrive -Name 'C' -ErrorAction 'SilentlyContinue')) {
+      New-PSDrive -Name 'C' -PSProvider 'FileSystem' -Root $script:Tmpdir -Scope 'Global' | Out-Null
+      $script:MountedDrive = 'C'
+    }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $script:CliPath) -Force | Out-Null
+    Set-Content -LiteralPath $script:CliPath -Value 'stub' -WhatIf:$False
 
     $script:Chrome = 'Google Chrome - Install'
     $global:FakePackages = @{}
@@ -98,7 +108,11 @@ Describe 'Set-PdqPackage' {
       $global:FakeCliCalls.Add($args -join ' ')
       Switch ($args[0]) {
         'ExportPackages' {
-          # & CliPath ExportPackages -Name <name> -Path <file> -Overwrite
+          # The exact vector, so swapping a flag or adding an argument fails the spec rather than
+          # passing unnoticed.
+          If ($args.Count -ne 6 -or $args[1] -ne '-Name' -or $args[3] -ne '-Path' -or $args[5] -ne '-Overwrite') {
+            Throw ('unexpected ExportPackages arguments: {0}' -f ($args -join ' '))
+          }
           $Name = $args[2]
           $Held = $global:FakePackages.ContainsKey($Name)
           $Writes = If ($Null -eq $global:FakeExportWritesFile) { $Held } Else { $global:FakeExportWritesFile }
@@ -111,7 +125,9 @@ Describe 'Set-PdqPackage' {
           $global:LASTEXITCODE = $Exit
         }
         'ImportPackages' {
-          # & CliPath ImportPackages -Path <file> -Overwrite
+          If ($args.Count -ne 4 -or $args[1] -ne '-Path' -or $args[3] -ne '-Overwrite') {
+            Throw ('unexpected ImportPackages arguments: {0}' -f ($args -join ' '))
+          }
           $Text = Get-Content -LiteralPath $args[2] -Raw
           $Document = [System.Xml.XmlDocument]::new()
           $Document.LoadXml($Text.TrimStart([System.Char]0xFEFF))
@@ -130,6 +146,9 @@ Describe 'Set-PdqPackage' {
   }
 
   AfterEach {
+    If ($script:MountedDrive) {
+      Remove-PSDrive -Name $script:MountedDrive -Force -ErrorAction 'SilentlyContinue'
+    }
     Remove-Item -LiteralPath $script:Tmpdir -Recurse -Force -ErrorAction 'SilentlyContinue'
     Remove-Item -LiteralPath ('function:global:' + $script:CliPath) -Force -ErrorAction 'SilentlyContinue'
     Remove-AnsibleContext
@@ -138,6 +157,23 @@ Describe 'Set-PdqPackage' {
   AfterAll {
     Remove-Variable -Name 'FakePackages', 'FakeIgnored', 'FakeImportExit', 'FakeExportExit',
       'FakeExportWritesFile', 'FakeCliCalls' -Scope 'Global' -Force -ErrorAction 'SilentlyContinue'
+  }
+
+  Context 'the hazards it must not reintroduce' {
+    It 'never captures the command line stderr with 2>&1' {
+      # Windows PowerShell 5.1 turns a native command's captured stderr into a TERMINATING error
+      # while ErrorActionPreference is Stop, so the redirect would kill the run on the product's
+      # ordinary "not found" path. Pinned here because its absence is invisible on review.
+      $Source = Get-Content -LiteralPath $script:ScriptPath -Raw
+      $Source -split "`n" |
+        Where-Object { $_ -match '2>&1' -and $_ -notmatch '^\s*#' } |
+        Should -BeNullOrEmpty
+    }
+
+    It 'refuses a command line that is not there' {
+      { & $script:ScriptPath -Definition (New-PackageText -Name $script:Chrome) `
+          -CliPath 'C:\nope\PDQDeploy.exe' } | Should -Throw '*command line is not at*'
+    }
   }
 
   Context 'reading the declaration' {
@@ -174,6 +210,14 @@ Describe 'Set-PdqPackage' {
       New-AnsibleContext | Out-Null
       & $script:ScriptPath -Definition (New-PackageText -Name $script:Chrome) -CliPath $script:CliPath | Out-Null
       $global:Ansible.Result.name | Should -Be $script:Chrome
+    }
+
+    It 'returns the declaration, so the pruning step can see what it refers to' {
+      New-AnsibleContext | Out-Null
+      & $script:ScriptPath -Definition (New-PackageText -Name $script:Chrome) -CliPath $script:CliPath | Out-Null
+      $global:Ansible.Result.definition | Should -Match ('<Name>' + [Regex]::Escape($script:Chrome) + '</Name>')
+      # Normalised on the way in: the mark and the CRLFs are gone.
+      $global:Ansible.Result.definition | Should -Not -Match "`r"
     }
   }
 
@@ -228,7 +272,7 @@ Describe 'Set-PdqPackage' {
       $global:FakeExportExit = 1
       $global:FakeExportWritesFile = $false
       { & $script:ScriptPath -Definition (New-PackageText -Name $script:Chrome) -CliPath $script:CliPath } |
-        Should -Throw '*exit code 1*'
+        Should -Throw '*Exporting the package*exited 1*'
       # The package it could not read is the package it must not overwrite.
       @($global:FakeCliCalls -like 'ImportPackages*').Count | Should -Be 0
     }
@@ -238,7 +282,7 @@ Describe 'Set-PdqPackage' {
       $global:FakeExportExit = 1
       $global:FakeExportWritesFile = $true
       { & $script:ScriptPath -Definition (New-PackageText -Name $script:Chrome) -CliPath $script:CliPath } |
-        Should -Throw '*exit code 1*'
+        Should -Throw '*Exporting the package*exited 1*'
     }
 
     It 'refuses a success exit code that wrote no file' {
@@ -274,10 +318,10 @@ Describe 'Set-PdqPackage' {
       $Context.Result.msg | Should -Match 'does not read back as declared'
     }
 
-    It 'fails loudly when the import itself fails' {
+    It 'fails loudly when the import itself fails, naming the operation' {
       $global:FakeImportExit = 1
       { & $script:ScriptPath -Definition (New-PackageText -Name $script:Chrome) -CliPath $script:CliPath } |
-        Should -Throw '*exit code 1*'
+        Should -Throw '*Importing the package*exited 1*'
     }
 
     It 'leaves neither staged file behind' {

@@ -77,6 +77,10 @@
     __action_required__: "{{ __pdq_deploy_arp__.result.action_required }}"
     __repository_dir__: >-
       {{ pdq_deploy_running.repository.drive }}:\{{ pdq_deploy_running.repository.directory }}
+    # Anchored on THIS role. A bare 'packages/*.xml' is resolved against the whole search path, so
+    # a role whose own files/ did not arrive silently matches another tree's -- measured 2026-08-25,
+    # it returned a file from the playbook's files/ directory.
+    __package_glob__: "{{ role_path }}/files/packages/*.xml"
 
   # Begin The 'Process' Block
   block:
@@ -842,13 +846,29 @@
     # files/Set-PdqPackage.ps1.stub). This adds and updates; a package no definition declares is
     # left alone.
 
+    - name: 'PROCESS | Require Every Declared Definition To Be Present'
+      vars:
+        __found__: "{{ query('ansible.builtin.fileglob', __package_glob__) | map('basename') | sort }}"
+
+      ansible.builtin.assert:
+        fail_msg: >-
+          The package definitions on disk are not the ones this role declares.
+          Declared: {{ pdq_deploy_running.packages | sort | join(', ') | default('(none)', true) }}.
+          Found: {{ __found__ | join(', ') | default('(none)', true) }}.
+          Because a package the product holds that no definition names is removed, a definition
+          that did not arrive would be read as an instruction to delete that package.
+        quiet: true
+        that:
+          - __found__ == (pdq_deploy_running.packages | sort)
+
     - name: 'PROCESS | Import The Declared Packages'
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_deploy_running.service_account.name }}"
-      loop: "{{ query('ansible.builtin.fileglob', 'packages/*.xml') | sort }}"
+      loop: "{{ query('ansible.builtin.fileglob', __package_glob__) | sort }}"
       loop_control:
         label: "{{ item | basename }}"
+      register: '__pdq_deploy_packages__'
       vars:
         ansible_become_flags: 'logon_type=batch'
         ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
@@ -862,6 +882,41 @@
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqPackage.ps1') }}"
 
     #endregion --- [ Process: Import The Declared Packages ] ---------------------------------- #
+
+    #region ------ [ Process: Remove The Undeclared Packages ] -------------------------------- #
+    # The definitions are the whole declaration, so a package the product holds that none of them
+    # names is drift and goes. There is no switch for that: a role that states an end state and
+    # then leaves strangers standing has not stated the end state, and an operator reading
+    # files/packages/ is entitled to read it as the list.
+    #
+    # Read that way, declaring no definitions declares that the product holds no packages, and this
+    # empties it -- which is why the task above refuses to proceed when the files on disk are not
+    # the ones the role declares.
+    #
+    # The definitions come from the import above rather than from the filenames, so the package's
+    # own <Name> decides what counts as declared -- the same field the import matched on -- and the
+    # script can see what a declared package refers to, so it never deletes a package that one of
+    # them needs. It proves the removal by listing the packages again, so a delete the command line
+    # accepted and did not perform fails the run.
+
+    - name: 'PROCESS | Remove The Undeclared Packages'
+      become: true
+      become_method: 'ansible.builtin.runas'
+      become_user: "{{ pdq_deploy_running.service_account.name }}"
+      vars:
+        ansible_become_flags: 'logon_type=batch'
+        ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
+
+      ansible.windows.win_powershell:
+        depth: 3
+        error_action: 'stop'
+        parameters:
+          Definition: >-
+            {{ __pdq_deploy_packages__.results | map(attribute='result.definition') | list }}
+          CliPath: "{{ pdq_deploy_running.cli_path }}"
+        script: "{{ lookup('ansible.builtin.file', 'Remove-PdqPackage.ps1') }}"
+
+    #endregion --- [ Process: Remove The Undeclared Packages ] -------------------------------- #
 
     #region ------ [ Process: Authorize The Console Users ] ----------------------------------- #
     # Who may open the console. A silent install authorises no one, and RBAC being off leaves it

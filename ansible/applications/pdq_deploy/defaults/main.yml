@@ -297,3 +297,21 @@ pdq_deploy_defaults:
     share_name: 'AppRepo$'
 
   #endregion --- [ Product identity ] -------------------------------------------------------- #
+
+  #region ------ [ Declared packages ] ------------------------------------------------------- #
+  # The definition files this role expects to find in files/packages/, named so that a missing one
+  # is caught.
+  #
+  # The declaration is COMPLETE -- a package the product holds that no definition names is removed
+  # -- which means a definition that did not ARRIVE says exactly the same thing as a definition
+  # deliberately withdrawn: remove that package. The two are indistinguishable from the files
+  # alone, and the ways one fails to arrive are ordinary (an overlay that skipped files/, a new
+  # definition never allowlisted in .gitignore, a partial checkout).
+  #
+  # Naming them twice is the point: the files say what to install, this list says what must be
+  # there, and a converge where they disagree stops instead of deleting. An EMPTY list is how a
+  # caller states that the product holds no packages at all.
+  packages:
+    - 'Google Chrome - Install.xml'
+
+  #endregion --- [ Declared packages ] ------------------------------------------------------- #

@@ -139,7 +139,7 @@
             sha256: '1e1bb9a712990d1b2b961de7e8df3384964e4fb6f6776a100840f0d9a82ed507'
           profile:
             bucket: "{{ aws_account_id }}-ansible"
-            object: 'openvpn/aws-ec2-test.ovpn'
+            object: 'applications/openvpn/aws-ec2-test.ovpn'
             sha256: 'b5dd2190d6d30eb8642f9d9c37ebd8bdeaabdb3afb39831c541eefc9082f058d'
           profile_name: 'aws-ec2-test'
           # The automatic service cannot configure the data-channel-offload adapter under the

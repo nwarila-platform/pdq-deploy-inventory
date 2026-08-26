@@ -379,8 +379,9 @@ jobs:
           fi
           echo "second converge reported exactly the two expected credential changes"
 
-      # The proofs below add two more converges to the pipeline, which pushes the tail past the
-      # first session's 3,600 seconds -- so they run on a fresh session of their own.
+      # The proofs below add two more converges to the pipeline tail, and the job's single
+      # earlier session was budgeted before they existed -- so they run on a fresh session of
+      # their own rather than on whatever remains of it.
       - name: Refresh AWS credentials for the determinism proofs (OIDC)
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
@@ -423,9 +424,14 @@ jobs:
             If ($LASTEXITCODE -ne 0 -or -not (Test-Path $File)) {
               Write-Output ('no export from ' + $Product[0]); Exit 9
             }
-            $Xml = Get-Content $File -Raw
-            Remove-Item $File -Force
-            If ($Xml -notmatch $Product[1]) { Write-Output ($Product[1] + ' did not land'); Exit 6 }
+            Try {
+              $Xml = [System.Xml.XmlDocument]::new()
+              $Xml.LoadXml((Get-Content $File -Raw))
+            } Finally {
+              Remove-Item $File -Force
+            }
+            $Held = @($Xml.SelectNodes('//CustomVariable/Name') | ForEach-Object InnerText)
+            If ($Held -cnotcontains $Product[1]) { Write-Output ($Product[1] + ' did not land'); Exit 6 }
           }
           Write-Output 'both strays exist, witnessed from each product''s own export'
           Exit 0
@@ -480,20 +486,11 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          declared="$(python3 -c '
-          import yaml
-          plays = yaml.safe_load(open("'"${GITHUB_WORKSPACE}"'/ansible/playbooks/pdq-aws.yml"))
-          keys = [k for p in plays for k in (p.get("vars") or {}).get("pdq_variables", {})]
-          print(" ".join(sorted(keys)))')"
-          if [ -z "${declared}" ]; then
-            echo "::error::could not read pdq_variables from the playbook" >&2
-            exit 1
-          fi
           SVC_PW="$(aws s3 cp "s3://${AWS_ACCOUNT_ID}-ansible/applications/pdq/svc-pdq-password.txt" -)"
           export SVC_PW
           cat > /tmp/prove-clean.ps1 <<'PS1'
           $ErrorActionPreference = 'Continue'
-          $Declared = @($args)
+          $Declared = @(__DECLARED_NAMES__)
           If ($Declared.Count -eq 0) { Write-Output 'no declared names passed'; Exit 5 }
           ForEach ($Product In @('PDQ Deploy\PDQDeploy.exe', 'PDQ Inventory\PDQInventory.exe')) {
             $Cli = 'C:\Program Files (x86)\Admin Arsenal\' + $Product
@@ -522,9 +519,22 @@ jobs:
           Write-Output 'both products hold exactly the declared names'
           Exit 0
           PS1
-          # shellcheck disable=SC2086
+          # The declared names are read from the playbook itself and spliced in as single-quoted
+          # literals, apostrophes doubled -- lossless for any name the role accepts, where an
+          # argv split would break on the first space.
+          python3 - <<'PY'
+          import io, yaml
+          import os
+          plays = yaml.safe_load(open(os.environ['GITHUB_WORKSPACE'] + '/ansible/playbooks/pdq-aws.yml'))
+          keys = sorted({k for p in plays for k in (p.get('vars') or {}).get('pdq_variables', {})})
+          assert keys, 'could not read pdq_variables from the playbook'
+          literal = ', '.join("'" + k.replace("'", "''") + "'" for k in keys)
+          path = '/tmp/prove-clean.ps1'
+          text = io.open(path, encoding='utf-8').read()
+          io.open(path, 'w', encoding='utf-8').write(text.replace('__DECLARED_NAMES__', literal))
+          PY
           ansible pdq_servers -m ansible.builtin.script \
-            -a "/tmp/prove-clean.ps1 ${declared}" \
+            -a /tmp/prove-clean.ps1 \
             --become --become-method ansible.builtin.runas --become-user svc-pdq \
             -e ansible_become_flags=logon_type=batch \
             -e 'ansible_become_password={{ lookup("env", "SVC_PW") }}' \

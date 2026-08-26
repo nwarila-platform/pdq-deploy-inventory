@@ -23,11 +23,13 @@
         references, inside one immediate transaction, and the outcome is judged afterwards from
         the product's own reading rather than from the write's report of itself.
 
-        No name ever enters SQL. The table is first read back as row id plus hex-encoded name --
-        hex so the parse cannot be confused by anything a name may contain -- each undeclared
-        name is matched to its id in memory, and the DELETE names only validated integer ids.
-        A name the export listed that the table read does not hold stops the run before any
-        mutation: the two readings disagreeing means the schema or the product has moved.
+        No raw name ever enters SQL. The table is first read back as row id plus hex-encoded
+        name -- hex so the parse cannot be confused by anything a name may contain -- and the two
+        readings must agree exactly, in both directions, before anything is touched: either
+        disagreeing means the schema, the product, or a concurrent writer has moved. Each DELETE
+        then binds the row's whole identity, the id AND the hex of the name as it was read, so a
+        row renamed or replaced between the read and the write matches nothing instead of dying
+        for its predecessor's id, and the read-back afterwards reports it.
 
         The product's own export is the verify oracle on both sides of the write: what it holds
         decides what is removed, and the export is read AGAIN afterwards, so a delete the database
@@ -348,17 +350,18 @@ If ($Extra.Count -gt 0) {
   }
 
   # The table, read as row id and HEX-ENCODED name: hex because the parse must not be confusable
-  # by anything a name may contain, and the id because no name may ever enter SQL. The names the
-  # export listed must all be here -- the two readings disagreeing means the schema or the
-  # product has moved, and a prune against a moved product is refused, not attempted.
+  # by anything a name may contain, and the id because no raw name may ever enter SQL. The two
+  # readings must agree EXACTLY -- every exported name in the table, every table row in the
+  # export -- because either disagreeing means the schema, the product, or a concurrent writer
+  # has moved, and a prune against a moved product is refused, not attempted.
   #
   # No busy-timeout pragma on this read, for two reasons that were measured: the pragma ECHOES its
   # value as an output row, which this strict parse would refuse as a malformed line, and a reader
   # never waits on the writer under the write-ahead journal this database runs anyway.
+  #
   # An ORDINAL dictionary, deliberately: a default hashtable folds keys case-insensitively, and
-  # two rows differing only by case would then collapse onto one id -- the wrong row deleted. The
-  # case-fold refusal above covers what the export shows; this covers what it might not.
-  $IdByName = [System.Collections.Generic.Dictionary[System.String, System.String]]::new([System.StringComparer]::Ordinal)
+  # two rows differing only by case would then collapse onto one id -- the wrong row deleted.
+  $RowByName = [System.Collections.Generic.Dictionary[System.String, System.Object]]::new([System.StringComparer]::Ordinal)
   ForEach ($Row In (Invoke-NativeCommand -Operation:'Reading the variable table' -FilePath:$Sqlite `
         -Argument:@($DatabasePath, 'SELECT CustomVariableId, hex(Name) FROM CustomVariables;')).Output) {
     $Parts = ([System.String]$Row).Split('|')
@@ -369,22 +372,34 @@ If ($Extra.Count -gt 0) {
     For ($B = 0; $B -lt $Bytes.Length; $B++) {
       $Bytes[$B] = [System.Convert]::ToByte($Parts[1].Substring($B * 2, 2), 16)
     }
-    $IdByName[[System.Text.Encoding]::UTF8.GetString($Bytes)] = $Parts[0]
+    $RowByName[[System.Text.Encoding]::UTF8.GetString($Bytes)] = [PSCustomObject]@{ Id = $Parts[0]; Hex = $Parts[1] }
   }
-  $TargetId = [System.Collections.Generic.List[System.String]]::new()
-  ForEach ($Stranger In $Extra) {
-    If (-not $IdByName.ContainsKey($Stranger)) {
-      Throw ('The export lists {0} but the variable table does not hold it; refusing to prune a product whose readings disagree' -f $Stranger)
-    }
-    $TargetId.Add([System.String]$IdByName[$Stranger])
+  $HeldSet = [System.Collections.Generic.HashSet[System.String]]::new([System.String[]]$Held, [System.StringComparer]::Ordinal)
+  $NotInTable = @($Held | Where-Object { -not $RowByName.ContainsKey($PSItem) })
+  $NotInExport = @($RowByName.Keys | Where-Object { -not $HeldSet.Contains($PSItem) })
+  If ($NotInTable.Count -gt 0 -or $NotInExport.Count -gt 0) {
+    Throw ('The export and the variable table disagree (export only: {0}; table only: {1}); refusing to prune a product whose readings disagree' -f `
+      ($NotInTable -join ', '), ($NotInExport -join ', '))
   }
 
   If (-not $Ansible.CheckMode) {
-    # One DELETE naming only validated integer ids, inside one immediate transaction under a busy
-    # timeout, so a lock waits rather than fails and a failure leaves no partial prune behind.
-    $Batch = 'PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE; DELETE FROM CustomVariables WHERE CustomVariableId IN ({0}); COMMIT;' -f ($TargetId -join ', ')
+    # Each DELETE is bound to the row's WHOLE identity -- the id and the hex of the name exactly
+    # as it was read -- because the read and this write are separate connections, and a row that
+    # was renamed or replaced in between must NOT be deleted on the strength of a stale id. Both
+    # halves of the condition are validated hex and integers, so no raw name enters SQL; a row
+    # that moved simply matches nothing, and the read-back below reports it. The whole batch is
+    # one immediate transaction under a busy timeout, so a lock waits rather than fails and a
+    # failure leaves no partial prune behind.
+    $Statements = [System.Collections.Generic.List[System.String]]::new()
+    $Statements.Add('PRAGMA busy_timeout = 5000;')
+    $Statements.Add('BEGIN IMMEDIATE;')
+    ForEach ($Stranger In $Extra) {
+      $Statements.Add(("DELETE FROM CustomVariables WHERE CustomVariableId = {0} AND hex(Name) = '{1}';" -f `
+        $RowByName[$Stranger].Id, $RowByName[$Stranger].Hex))
+    }
+    $Statements.Add('COMMIT;')
     $Null = Invoke-NativeCommand -Operation:'Removing the undeclared variables' -FilePath:$Sqlite `
-      -Argument:@($DatabasePath, $Batch)
+      -Argument:@($DatabasePath, ($Statements -join ' '))
     $Removed.AddRange([System.String[]]$Extra)
   }
 }

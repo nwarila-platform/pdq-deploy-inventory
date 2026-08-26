@@ -82,6 +82,8 @@ Describe 'Remove-PdqVariable' {
     $global:FakeCliCalls = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeSqlBatches = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeTableHides = @()
+    $global:FakeTableExtra = @()
+    $global:FakeTableRenamed = @()
     $global:FakeDeleted = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeDbPath = $script:DbPath
     $global:LASTEXITCODE = 0
@@ -139,12 +141,17 @@ Describe 'Remove-PdqVariable' {
         }
         # Row ids are the name's position plus one, stable for the test's lifetime, hex exactly
         # as SQLite renders it: upper-case, of the UTF-8 bytes. A name in FakeTableHides is
-        # withheld -- the export and the table disagreeing is a state the script must refuse.
+        # withheld and FakeTableExtra rows are appended -- either way the export and the table
+        # disagree, a state the script must refuse.
         For ($I = 0; $I -lt $global:FakeVariables.Count; $I++) {
           $Held = $global:FakeVariables[$I]
           If ($global:FakeTableHides -contains $Held) { Continue }
           $Hex = -join ([System.Text.Encoding]::UTF8.GetBytes($Held) | ForEach-Object { $_.ToString('X2') })
           '{0}|{1}' -f ($I + 1), $Hex
+        }
+        For ($I = 0; $I -lt @($global:FakeTableExtra).Count; $I++) {
+          $Hex = -join ([System.Text.Encoding]::UTF8.GetBytes(@($global:FakeTableExtra)[$I]) | ForEach-Object { $_.ToString('X2') })
+          '{0}|{1}' -f (1000 + $I), $Hex
         }
         $global:LASTEXITCODE = 0
         Return
@@ -153,18 +160,20 @@ Describe 'Remove-PdqVariable' {
       # The batch's own pragma echoes '5000' -- measured -- and the script must not read the
       # delete invocation's output at all.
       '5000'
-      $Match = [System.Text.RegularExpressions.Regex]::Match(
-        $args[1], 'DELETE FROM CustomVariables WHERE CustomVariableId IN \(([0-9, ]+)\);')
-      If ($Match.Success) {
-        ForEach ($Id In ($Match.Groups[1].Value -split ',\s*')) {
-          $Target = $global:FakeVariables[[System.Int32]$Id - 1]
-          If ($global:FakeUndeletable -notcontains $Target) {
-            $global:FakeDeleted.Add($Target)
-          }
+      # The delete is honored only when the row's WHOLE identity still matches: the id resolves to
+      # a name whose current hex equals the one the batch carries. FakeTableRenamed simulates a
+      # row that moved between the read and the write -- its delete matches nothing.
+      ForEach ($Match In [System.Text.RegularExpressions.Regex]::Matches(
+          $args[1], "DELETE FROM CustomVariables WHERE CustomVariableId = ([0-9]+) AND hex\(Name\) = '([0-9A-F]*)';")) {
+        $Target = $global:FakeVariables[[System.Int32]$Match.Groups[1].Value - 1]
+        $Current = If ($global:FakeTableRenamed -contains $Target) { $Target + ' (renamed)' } Else { $Target }
+        $CurrentHex = -join ([System.Text.Encoding]::UTF8.GetBytes($Current) | ForEach-Object { $_.ToString('X2') })
+        If ($CurrentHex -ceq $Match.Groups[2].Value -and $global:FakeUndeletable -notcontains $Target) {
+          $global:FakeDeleted.Add($Target)
         }
-        # Removal happens after the loop so the position-derived ids stay stable within one batch.
-        ForEach ($Gone In $global:FakeDeleted) { $Null = $global:FakeVariables.Remove($Gone) }
       }
+      # Removal happens after the loop so the position-derived ids stay stable within one batch.
+      ForEach ($Gone In $global:FakeDeleted) { $Null = $global:FakeVariables.Remove($Gone) }
       $global:LASTEXITCODE = $global:FakeSqliteExit
     } | Out-Null
   }
@@ -182,7 +191,7 @@ Describe 'Remove-PdqVariable' {
   AfterAll {
     Remove-Variable -Name 'FakeVariables', 'FakeUndeletable', 'FakeExportExit', 'FakeExportNoFile',
       'FakeNoDbLine', 'FakeSqliteExit', 'FakeCliCalls', 'FakeSqlBatches', 'FakeDbPath',
-      'FakeTableHides', 'FakeDeleted' `
+      'FakeTableHides', 'FakeTableExtra', 'FakeTableRenamed', 'FakeDeleted' `
       -Scope 'Global' -Force -ErrorAction 'SilentlyContinue'
   }
 
@@ -267,14 +276,30 @@ Describe 'Remove-PdqVariable' {
   }
 
   Context 'the database write' {
-    It 'deletes by validated integer id in one immediate transaction, never by name' {
+    It 'binds every delete to the row''s id AND its hex name, in one immediate transaction' {
       $global:FakeVariables.Add('Stray One')
       $global:FakeVariables.Add('Stray Two')
       New-AnsibleContext | Out-Null
       & $script:ScriptPath -Name @() -CliPath $script:CliPath | Out-Null
       $global:FakeSqlBatches.Count | Should -Be 1
-      $global:FakeSqlBatches[0] | Should -Match '^PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE; DELETE FROM CustomVariables WHERE CustomVariableId IN \(1, 2\); COMMIT;$'
+      $global:FakeSqlBatches[0] | Should -Match '^PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE; (DELETE FROM CustomVariables WHERE CustomVariableId = [0-9]+ AND hex\(Name\) = ''[0-9A-F]*''; ){2}COMMIT;$'
       $global:FakeSqlBatches[0] | Should -Not -Match 'Stray'
+    }
+
+    It 'fails rather than deleting a row that moved between the read and the write' {
+      $global:FakeVariables.Add('Stray One')
+      $global:FakeTableRenamed = @('Stray One')
+      { & $script:ScriptPath -Name @() -CliPath $script:CliPath } |
+        Should -Throw '*still holds the undeclared variable*'
+      $global:FakeVariables.Count | Should -Be 1
+    }
+
+    It 'refuses to prune when the table holds a row the export does not show' {
+      $global:FakeVariables.Add($script:Firefox)
+      $global:FakeTableExtra = @('HiddenRow')
+      { & $script:ScriptPath -Name @() -CliPath $script:CliPath } |
+        Should -Throw '*readings disagree*'
+      $global:FakeSqlBatches.Count | Should -Be 0
     }
 
     It 'removes a name no SQL literal could carry safely, because no name enters SQL' {

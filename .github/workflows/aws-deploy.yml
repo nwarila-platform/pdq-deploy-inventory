@@ -8,9 +8,11 @@
 #   * AWS credentials are issued only to this workflow at refs/heads/main. Pull requests use
 #     the credential-free quality workflow; feature-branch workflow code never reaches AWS.
 #   * Reachability: direct SSH to a subnet-assigned public IPv4. At runtime the framework adds
-#     one runner-scoped security group, sourced from the runner's validated public IPv4, to every
-#     interface. This configuration creates no EIP and has no NAT. The playbook performs the
-#     bounded direct-SSH readiness check because readiness_gate remains disabled.
+#     one run-scoped security group to every interface, sourced from the runner's validated
+#     public IPv4 and, when an operator hostname is configured, from the address it resolves to
+#     as well — that one adding RDP, so a person can work on a held host. This configuration
+#     creates no EIP and has no NAT. The playbook performs the bounded direct-SSH readiness
+#     check because readiness_gate remains disabled.
 #   * AWS credentials are exchanged before provisioning and refreshed before eligible teardown.
 #     The initial 7,800-second session covers normal deployment work; the teardown refresh uses a
 #     modest 3,600-second session so long holds do not reach destroy with expired credentials.

@@ -159,7 +159,6 @@
       Google-LLC_Google-Chrome: '147.0.7727.56'
       Igor-Pavlov_7-Zip: '26.00.00.0'
       Martin-Prikryl_WinSCP: '6.5.6'
-      Mathwork_MatLab: 'r2023b'
       Microsoft-Corporation_Microsoft-Edge: '147.0.3912.60'
       Microsoft-Corporation_Microsoft-NetBanner: '2.3.181'
       Microsoft-Corporation_Microsoft-ODBC-Driver-17: '17.10.6.1'
@@ -178,8 +177,6 @@
       Microsoft-Corporation_PowerShell-7: '7.6.0.0'
       Microsoft-Corporation_Windows-Print-Services-Extension: '14182.0.0.0'
       Mozilla_Mozilla-Firefox-ESR: '140.9.1'
-      No-Magic-Inc_Cameo-Enterprise-Architecture: '2022.2.3'
-      No-Magic-Inc_Cameo-Systems-Modeler: '2022.2.3'
       Node.js-Foundation_Node.js-21: '21.7.3'
       Node.js-Foundation_Node.js-22: '22.22.2'
       Node.js-Foundation_Node.js-24: '24.14.1'
@@ -195,10 +192,7 @@
       Python-Software-Foundation_Python-3.14: '3.14.2150.0'
       Simon-Tatham_PuTTY: '0.83.0.0'
       Splunk-Inc_UniversalForwarder: '9.4.8.0'
-      Tableau-Desktop: '2023-3-0'
-      Tableau-Prep: '2023-3-3'
       The-Git-Development-Community_Git: '2.53.0.2'
-      Trellix_Trellix-Agent: '5.8.5.495'
       Wazuh-Inc_Wazuh-Agent: '4.14.4'
 
 

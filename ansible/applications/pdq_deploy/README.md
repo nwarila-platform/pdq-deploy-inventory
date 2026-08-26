@@ -4,7 +4,7 @@ Installs PDQ Deploy at a pinned version and brings it up as an all-in-one **Cent
 Windows. In one converge it installs the product, applies the licence, ensures the shared PDQ
 service account and records its credential with the product, places the database on its dedicated
 drive, creates the package repository on a second drive and enforces its directory permissions,
-publishes it as an encrypted read-only network share, sets Central Server mode and the console
+publishes it as an encrypted read-only network share, writes the script that fills it, sets Central Server mode and the console
 port, applies the product preferences, imports the pinned variables, reconciles the declared
 packages, seeds the per-user console defaults, authorises the console users, chooses the event-log
 severities and service-manager behaviour, and records the registration that would otherwise stop
@@ -40,8 +40,8 @@ role uses. The controller's Ansible environment needs the `amazon.aws` collectio
 Required deployment-specific inputs carry an account id or change with every version and every
 site, so the playbook states them where a reader can see them: the installer (bucket, four-part
 version, digest), the licence (bucket, object, digest, and the email it was issued to), the
-service-account password (bucket and object), and one drive letter each for the database and
-repository. The caller may also replace the default all-addresses listener with explicit addresses.
+service-account password (bucket and object), one drive letter each for the database and
+repository, and the repository's own bucket and region. The caller may also replace the default all-addresses listener with explicit addresses.
 `tasks/validate.yml` enforces these inputs on the controller before anything touches the guest.
 
 ## Configuration
@@ -55,6 +55,23 @@ the file identifies a deliberate data-egress choice. The surface is declared in 
 changing a default surfaces as a reported change rather than silent drift. The repository setting
 is derived from the host and the share this role publishes, keeping the directory, share, and
 product configuration aligned.
+
+## Filling the repository
+
+The repository holds the installers deployments copy to their targets. Those are vendor content,
+not configuration: pinning each one here would make a converge the only way to publish software.
+The role therefore ships the pull rather than performing it. `templates/Sync-Repository.cmd.j2` is
+written as `Sync-Repository.cmd` in the root of the repository drive, carrying this host's bucket,
+region and repository path, so an administrator runs it without knowing any of them. It sits one
+level above the directory it fills so that it is neither an object the sync can act on nor a file
+inside the network share.
+
+The sync is additive — `aws s3 sync` without `--delete` — because the repository layout carries the
+version in the path precisely so older versions stay on disk for a rollback.
+
+The script is generated unconditionally; whether it can complete is a property of the host, not of
+this role. It needs the AWS CLI installed, and it needs the host's instance profile to allow reads
+on the bucket. It reports which of the two is missing rather than failing on the first object.
 
 ## Declared packages
 

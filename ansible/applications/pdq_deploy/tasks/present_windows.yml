@@ -515,6 +515,25 @@
           Sddl: 'D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'
         script: "{{ lookup('ansible.builtin.file', 'Set-RepositoryAcl.ps1') }}"
 
+    # ----------------------------------------------------------------------------------------- #
+    # The repository holds what deployments copy to their targets, and those files arrive from S3
+    # rather than from this role -- an installer is vendor content, not configuration, and pinning
+    # every one of them here would make a converge the only way to publish software.
+    #
+    # So the role ships the pull instead of performing it: one script, written with this host's
+    # bucket, region and repository path already filled in, that an administrator runs when new
+    # content has been published.
+    #
+    # It sits in the DRIVE ROOT, one level above the directory it fills, for two reasons: it is
+    # then not itself an object the sync can act on, and it is not inside the network share, where
+    # every console that browses the repository would see it.
+
+    - name: 'PROCESS | Write The Repository Sync Script'
+      ansible.windows.win_template:
+        dest: "{{ pdq_deploy_running.repository.drive }}:\\Sync-Repository.cmd"
+        newline_sequence: '\r\n'
+        src: 'Sync-Repository.cmd.j2'
+
     #endregion --- [ Process: Prepare The Repository Directory ] ------------------------------ #
 
     #region ------ [ Process: Share The Repository Over The Network ] ------------------------- #

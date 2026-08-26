@@ -26,6 +26,7 @@
 !/ansible/applications/pdq_deploy/files/packages/
 !/ansible/applications/pdq_deploy/meta/
 !/ansible/applications/pdq_deploy/tasks/
+!/ansible/applications/pdq_deploy/templates/
 !/ansible/applications/pdq_deploy/vars/
 !/ansible/applications/pdq_inventory/
 !/ansible/applications/pdq_inventory/defaults/
@@ -87,6 +88,7 @@
 !/ansible/applications/pdq_deploy/tasks/main.yml
 !/ansible/applications/pdq_deploy/tasks/present_windows.yml
 !/ansible/applications/pdq_deploy/tasks/validate.yml
+!/ansible/applications/pdq_deploy/templates/Sync-Repository.cmd.j2
 !/ansible/applications/pdq_deploy/vars/windows.yml
 !/ansible/applications/pdq_inventory/README.md
 !/ansible/applications/pdq_inventory/defaults/main.yml

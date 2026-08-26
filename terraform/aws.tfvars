@@ -38,9 +38,12 @@ all_systems = [
     # lives only in the AWS_EC2_SSH_PRIVATE_KEY organization secret and the runner's
     # temporary directory.
     key_name = "nwarila-ec2-key"
-    # Ratified 2026-08-12: the EC2 instance REUSES the org-owned profile as-is. This
-    # repository never creates or modifies it; the runner role only reads and passes it.
-    iam_instance_profile = "nwarila-ec2-profile"
+    # The org EC2 baseline plus read-only access to the application repository bucket, which is
+    # what lets this host pull its own repository contents down rather than receiving them from
+    # the controller. It is a SEPARATE profile, not an edit to the shared one: the org-owned
+    # nwarila-ec2-profile stays exactly as it is, and this repository still creates and modifies
+    # neither -- the runner role only reads and passes whichever is named here.
+    iam_instance_profile = "nwarila-ec2-apprepo-profile"
     aws_kms_alias        = "aws/ebs"
     # Windows_Server-2025-English-STIG-Full, owner 801119661308 — accepted from the
     # framework's vendor allowlist, the same hardened base the sibling deploy uses.

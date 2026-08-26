@@ -206,8 +206,15 @@
 
           # The repository is shared out over the network, so it gets its own volume: package
           # files are written by administrators and read by every deployment.
+          #
+          # Its contents come from the application repository bucket -- the same bucket the
+          # installer above is fetched from, because an installer PDQ deploys and an installer PDQ
+          # runs are the same kind of object. The role writes a sync script carrying these two
+          # values so an administrator can pull new content down without a deployment.
           repository:
             drive: 'F'
+            bucket: "{{ aws_account_id }}-apprepo"
+            region: "{{ aws_region }}"
 
           # The server answers consoles on the address this host actually holds, rather than on
           # everything it happens to be attached to. It comes from the inventory because the

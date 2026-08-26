@@ -4,9 +4,10 @@ Installs PDQ Deploy at a pinned version and brings it up as an all-in-one **Cent
 Windows. In one converge it installs the product, applies the licence, ensures the shared PDQ
 service account and records its credential with the product, places the database on its dedicated
 drive, creates the package repository on a second drive and enforces its directory permissions,
-publishes it as an encrypted read-only network share, writes the script that fills it, sets Central Server mode and the console
-port, applies the product preferences, reconciles the pinned variables, reconciles the declared
-packages, seeds the per-user console defaults, authorises the console users, chooses the event-log
+publishes it as an encrypted read-only network share, writes the script that fills it, sets
+Central Server mode and the console port, applies the product preferences, reconciles the pinned
+variables and the declared packages, seeds the per-user console defaults, authorises the console
+users, chooses the event-log
 severities and service-manager behaviour, and records the registration that would otherwise stop
 the first console with a popup.
 
@@ -124,9 +125,9 @@ name), and name it in `packages:`.
 Guest-side logic that a task cannot express cleanly is a first-class PowerShell script, developed
 and Pester-tested once under `scripts/` and materialized into the role by
 `scripts/materialize-role-scripts.sh` (the role tracks only the `.ps1.stub` markers). The role uses
-`Get-InstalledSoftware.ps1`, `Set-PdqSetting.ps1`, `Set-PdqVariable.ps1`, and
-`Set-PdqRegistration.ps1`, all shared with `pdq_inventory`, plus Deploy's own
-`Set-RepositoryAcl.ps1` for the package directory and `Set-PdqPackage.ps1` /
+`Get-InstalledSoftware.ps1`, `Set-PdqSetting.ps1`, `Set-PdqVariable.ps1`,
+`Remove-PdqVariable.ps1`, and `Set-PdqRegistration.ps1`, all shared with `pdq_inventory`, plus
+Deploy's own `Set-RepositoryAcl.ps1` for the package directory and `Set-PdqPackage.ps1` /
 `Remove-PdqPackage.ps1` for the packages.
 
 ## Verification

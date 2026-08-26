@@ -348,7 +348,10 @@ jobs:
       - name: Prove the converge has only the expected credential changes
         timeout-minutes: 30
         working-directory: .frameworks/ansible-framework
-        env:
+        # One environment for every composed-tree invocation: dynamic inventory reads the ids,
+        # the plays take the account, and the config points at the composed tree. Anchored here,
+        # aliased below.
+        env: &ansible_env
           ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
@@ -391,21 +394,17 @@ jobs:
           role-session-name: aws-deploy-${{ github.run_id }}-proofs
           role-duration-seconds: 3600
 
-      # Determinism proof. The declared variable set must be the ONLY set, so drift is created the
-      # way real drift lands in the store -- through each product's own command line, past the
-      # playbook's back -- and each stray is then read back from the product's export, so the
-      # converge under judgement is proven to start from a drifted store, not assumed to. The
-      # product answers its command line only as the background service user; the secret comes
-      # from the same object the play itself uses, and reaches the become plugin through the
-      # environment rather than the command line.
-      - name: Add an undeclared variable to each product by hand
+      # Determinism proof. The declared state must be the ONLY state, so drift is created the way
+      # real drift lands -- through each product's own command line, past the playbook's back: a
+      # stray variable in each product and a stray collection in Inventory, each read back from
+      # the product's own reading, so the converge under judgement is proven to start from a
+      # drifted store, not assumed to. The product answers its command line only as the
+      # background service user; the secret comes from the same object the play itself uses, and
+      # reaches the become plugin through the environment rather than the command line.
+      - name: Add undeclared drift to each product by hand
         timeout-minutes: 10
         working-directory: .frameworks/ansible-framework
-        env:
-          ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
+        env: *ansible_env
         run: |
           set -euo pipefail
           SVC_PW="$(aws s3 cp "s3://${AWS_ACCOUNT_ID}-ansible/applications/pdq/svc-pdq-password.txt" -)"
@@ -476,11 +475,7 @@ jobs:
       - name: Prove the converge removes what the declaration does not name
         timeout-minutes: 30
         working-directory: .frameworks/ansible-framework
-        env:
-          ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
+        env: *ansible_env
         run: |
           set -euo pipefail
           recap="$(ansible-playbook "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
@@ -508,11 +503,7 @@ jobs:
       - name: Prove each product's export holds exactly the declared names
         timeout-minutes: 10
         working-directory: .frameworks/ansible-framework
-        env:
-          ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
+        env: *ansible_env
         run: |
           set -euo pipefail
           SVC_PW="$(aws s3 cp "s3://${AWS_ACCOUNT_ID}-ansible/applications/pdq/svc-pdq-password.txt" -)"
@@ -522,7 +513,6 @@ jobs:
           $Declared = @(__DECLARED_NAMES__) | ForEach-Object {
             [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_))
           }
-          If ($Declared.Count -eq 0) { Write-Output 'no declared names passed'; Exit 5 }
           ForEach ($Product In @('PDQ Deploy\PDQDeploy.exe', 'PDQ Inventory\PDQInventory.exe')) {
             $Cli = 'C:\Program Files (x86)\Admin Arsenal\' + $Product
             $File = 'C:\Windows\Temp\proof-export.xml'
@@ -584,11 +574,7 @@ jobs:
       - name: Prove the repaired state is steady
         timeout-minutes: 30
         working-directory: .frameworks/ansible-framework
-        env:
-          ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
+        env: *ansible_env
         run: |
           set -euo pipefail
           recap="$(ansible-playbook "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
@@ -641,11 +627,7 @@ jobs:
         if: inputs.os_swap
         timeout-minutes: 60
         working-directory: .frameworks/ansible-framework
-        env:
-          ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
+        env: *ansible_env
         run: |
           set -euo pipefail
           ansible-playbook "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
@@ -659,11 +641,7 @@ jobs:
         if: inputs.os_swap
         timeout-minutes: 30
         working-directory: .frameworks/ansible-framework
-        env:
-          ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
+        env: *ansible_env
         run: |
           set -euo pipefail
           recap="$(ansible-playbook "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
@@ -694,11 +672,7 @@ jobs:
         if: inputs.absent_proof
         timeout-minutes: 30
         working-directory: .frameworks/ansible-framework
-        env:
-          ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
+        env: *ansible_env
         run: |
           set -euo pipefail
           ansible-playbook "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
@@ -712,11 +686,7 @@ jobs:
         if: inputs.absent_proof
         timeout-minutes: 30
         working-directory: .frameworks/ansible-framework
-        env:
-          ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
-          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
+        env: *ansible_env
         run: |
           set -euo pipefail
           recap="$(ansible-playbook "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \

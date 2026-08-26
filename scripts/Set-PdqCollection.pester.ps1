@@ -18,10 +18,10 @@
 
     Stub state lives in $global: variables because inside a function called from a child SCRIPT,
     $script: resolves to the child script's own scope, not this file's. $global:FakeCollections is the
-    product's package store, keyed by package name and holding the export text; ImportCollections
+    product's collection store, keyed by collection name and holding the export text; ImportCollections
     mutates it, so a test states an outcome rather than a sequence of calls. The export stub's exit
     code and whether it writes a file are set independently, because the product reporting one and
-    doing the other is exactly what the script has to survive. $global:FakeIgnored names a package
+    doing the other is exactly what the script has to survive. $global:FakeIgnored names a collection
     the product accepts and does NOT store -- reporting success for a write it did not make, which
     is the whole reason the script verifies.
 #>
@@ -188,9 +188,9 @@ Describe 'Set-PdqCollection' {
       $Source | Should -Match '\[System\.Management\.Automation\.ErrorRecord\]'
     }
     It 'carries the same native-command helper as its siblings' {
-      # There is no shared module -- one file per script is the org contract -- so the six copies
-      # are kept identical by checking, not by convention. A fix applied to one and not the others
-      # is the realistic hazard, and no other assertion here would notice it.
+      # There is no shared module -- one file per script is the org contract -- so the copies are
+      # kept identical by checking, not by convention: a fix applied to one and not the others is
+      # the realistic hazard, and no other assertion here would notice it.
       $Extract = {
         Param ($File)
         $Text = Get-Content -LiteralPath $File -Raw
@@ -207,7 +207,7 @@ Describe 'Set-PdqCollection' {
 
     It 'refuses a command line that is not there' {
       { & $script:ScriptPath -Definition (New-CollectionText -Name $script:Chrome) `
-          -CliPath 'C:\nope\PDQDeploy.exe' } | Should -Throw '*command line is not at*'
+          -CliPath 'C:\nope\PDQInventory.exe' } | Should -Throw '*command line is not at*'
     }
   }
 
@@ -259,7 +259,7 @@ Describe 'Set-PdqCollection' {
       $global:FakeCliCalls.Count | Should -Be 0
     }
 
-    It 'names the package in its result' {
+    It 'names the collection in its result' {
       New-AnsibleContext | Out-Null
       & $script:ScriptPath -Definition (New-CollectionText -Name $script:Chrome) -CliPath $script:CliPath | Out-Null
       $global:Ansible.Result.name | Should -Be $script:Chrome
@@ -275,7 +275,7 @@ Describe 'Set-PdqCollection' {
   }
 
   Context 'deciding what to write' {
-    It 'writes nothing when the product already holds the declared package' {
+    It 'writes nothing when the product already holds the declared collection' {
       $global:FakeCollections[$script:Chrome] = New-CollectionText -Name $script:Chrome
       $Context = New-AnsibleContext
       & $script:ScriptPath -Definition (New-CollectionText -Name $script:Chrome) -CliPath $script:CliPath | Out-Null
@@ -284,7 +284,7 @@ Describe 'Set-PdqCollection' {
     }
 
     It 'ignores the byte-order mark and the line-ending style when comparing' {
-      # The same package, stored the way another tool would write it: no mark, Unix endings.
+      # The same collection, stored the way another tool would write it: no mark, Unix endings.
       $global:FakeCollections[$script:Chrome] =
       (New-CollectionText -Name $script:Chrome).TrimStart([System.Char]0xFEFF).Replace("`r`n", "`n")
       $Context = New-AnsibleContext
@@ -300,7 +300,7 @@ Describe 'Set-PdqCollection' {
       $Context.Changed | Should -BeTrue
     }
 
-    It 'imports a package the product does not hold, reported through exit 3' {
+    It 'imports a collection the product does not hold, reported through exit 3' {
       $Context = New-AnsibleContext
       & $script:ScriptPath -Definition (New-CollectionText -Name $script:Chrome) -CliPath $script:CliPath | Out-Null
       $Context.Changed | Should -BeTrue
@@ -309,7 +309,7 @@ Describe 'Set-PdqCollection' {
       $global:FakeCollections.Keys | Should -Contain $script:Chrome
     }
 
-    It 'imports again when the product holds the package differently' {
+    It 'imports again when the product holds the collection differently' {
       $global:FakeCollections[$script:Chrome] = New-CollectionText -Name $script:Chrome -Detail 'Install v1'
       $Context = New-AnsibleContext
       & $script:ScriptPath -Definition (New-CollectionText -Name $script:Chrome -Detail 'Install v2') `
@@ -326,7 +326,7 @@ Describe 'Set-PdqCollection' {
       $global:FakeExportWritesFile = $false
       { & $script:ScriptPath -Definition (New-CollectionText -Name $script:Chrome) -CliPath $script:CliPath } |
         Should -Throw '*Exporting the collection*exited 1*'
-      # The package it could not read is the package it must not overwrite.
+      # The collection it could not read is the collection it must not overwrite.
       @($global:FakeCliCalls -like 'ImportCollections*').Count | Should -Be 0
     }
 
@@ -360,7 +360,7 @@ Describe 'Set-PdqCollection' {
       @($global:FakeCliCalls -like 'ExportCollections*').Count | Should -Be 1
     }
 
-    It 'fails when the package does not read back as declared, and still reports the write' {
+    It 'fails when the collection does not read back as declared, and still reports the write' {
       $global:FakeIgnored = @($script:Chrome)
       $Context = New-AnsibleContext
       & $script:ScriptPath -Definition (New-CollectionText -Name $script:Chrome) -CliPath $script:CliPath | Out-Null
@@ -404,7 +404,7 @@ Describe 'Set-PdqCollection' {
       @(Get-ChildItem -LiteralPath $script:Tmpdir -File).Count | Should -Be 0
     }
 
-    It 'reports unchanged in check mode when the package is already correct' {
+    It 'reports unchanged in check mode when the collection is already correct' {
       $global:FakeCollections[$script:Chrome] = New-CollectionText -Name $script:Chrome
       $Context = New-AnsibleContext -CheckMode
       & $script:ScriptPath -Definition (New-CollectionText -Name $script:Chrome) -CliPath $script:CliPath | Out-Null

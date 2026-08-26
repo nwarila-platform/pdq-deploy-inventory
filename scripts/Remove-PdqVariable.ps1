@@ -317,12 +317,12 @@ ForEach ($HeldName In $Held) {
   }
 }
 
-$Extra = @($Held | Where-Object { -not $DeclaredSet.Contains($PSItem) })
+$Strangers = @($Held | Where-Object { -not $DeclaredSet.Contains($PSItem) })
 $Kept = @($Held | Where-Object { $DeclaredSet.Contains($PSItem) })
 
 $Removed = [System.Collections.Generic.List[System.String]]::new()
 
-If ($Extra.Count -gt 0) {
+If ($Strangers.Count -gt 0) {
   # Everything read-only runs in check mode too, so "would remove" is a claim about a host where
   # removal is actually possible; only the DELETE and the after-proof are withheld.
   #
@@ -393,14 +393,14 @@ If ($Extra.Count -gt 0) {
     $Statements = [System.Collections.Generic.List[System.String]]::new()
     $Statements.Add('PRAGMA busy_timeout = 5000;')
     $Statements.Add('BEGIN IMMEDIATE;')
-    ForEach ($Stranger In $Extra) {
+    ForEach ($Stranger In $Strangers) {
       $Statements.Add(("DELETE FROM CustomVariables WHERE CustomVariableId = {0} AND hex(Name) = '{1}';" -f `
         $RowByName[$Stranger].Id, $RowByName[$Stranger].Hex))
     }
     $Statements.Add('COMMIT;')
     $Null = Invoke-NativeCommand -Operation:'Removing the undeclared variables' -FilePath:$Sqlite `
       -Argument:@($DatabasePath, ($Statements -join ' '))
-    $Removed.AddRange([System.String[]]$Extra)
+    $Removed.AddRange([System.String[]]$Strangers)
   }
 }
 
@@ -410,9 +410,9 @@ If (-not $Ansible.CheckMode) {
   # catches a delete the database accepted and did not perform, and equally a declared variable
   # that vanished while this script was the only thing writing.
   $Remaining = Get-ExportedVariableName
-  $Strangers = @($Remaining | Where-Object { -not $DeclaredSet.Contains($PSItem) })
-  If ($Strangers.Count -gt 0) {
-    Throw ('The product still holds the undeclared variable(s) {0}' -f ($Strangers -join ', '))
+  $Survivors = @($Remaining | Where-Object { -not $DeclaredSet.Contains($PSItem) })
+  If ($Survivors.Count -gt 0) {
+    Throw ('The product still holds the undeclared variable(s) {0}' -f ($Survivors -join ', '))
   }
   $RemainingSet = [System.Collections.Generic.HashSet[System.String]]::new(
     [System.String[]]$Remaining, [System.StringComparer]::OrdinalIgnoreCase
@@ -424,18 +424,18 @@ If (-not $Ansible.CheckMode) {
 }
 
 $Result = [PSCustomObject]@{
-  changed    = [System.Boolean]($Extra.Count -gt 0)
+  changed    = [System.Boolean]($Strangers.Count -gt 0)
   check_mode = [System.Boolean]$Ansible.CheckMode
   declared   = [System.Int32]$DeclaredSet.Count
   kept       = [System.String[]]$Kept
-  msg        = If ($Extra.Count -eq 0) {
+  msg        = If ($Strangers.Count -eq 0) {
     'No undeclared variables; {0} kept' -f $Kept.Count
   } ElseIf ($Ansible.CheckMode) {
-    'Would remove {0}' -f ($Extra -join ', ')
+    'Would remove {0}' -f ($Strangers -join ', ')
   } Else {
     'Removed {0}' -f ($Removed -join ', ')
   }
-  removed    = [System.String[]]$(If ($Ansible.CheckMode) { $Extra } Else { $Removed })
+  removed    = [System.String[]]$(If ($Ansible.CheckMode) { $Strangers } Else { $Removed })
 }
 
 #endregion --- [ Main ] ---------------------------------------------------------------------- #

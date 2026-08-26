@@ -941,14 +941,13 @@
     # The other half of the variable promise. The import earlier put every declared variable in
     # place; this removes every variable the declaration does not name, so the declared set is the
     # WHOLE set and a converge states the product's end state rather than a lower bound on it.
-    # It runs AFTER the package tasks deliberately: an exported package definition carries a
-    # variables block of its own, so the last word about the store must come after the last task
-    # that could touch it.
     # There is no switch for that: a role that states an end state and then leaves strangers
     # standing has not stated the end state. Removal is proved from the product's own export,
     # re-read after the write, so a delete the database accepted and did not perform fails the run.
-    # Runs unconditionally -- an empty declaration declares that the product holds NO custom
-    # variables, which on a fresh install is already true and changes nothing.
+    # It runs AFTER the package tasks deliberately -- an exported package definition carries a
+    # variables block of its own, so the last word about the store must come after the last task
+    # that could touch it -- and unconditionally: an empty declaration declares that the product
+    # holds NO custom variables, which on a fresh install is already true and changes nothing.
     # The .ps1 is MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role
     # tracks only files/Remove-PdqVariable.ps1.stub).
 

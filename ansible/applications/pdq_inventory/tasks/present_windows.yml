@@ -842,8 +842,8 @@
     # place; this removes every top-level collection that is neither owned, nor the product's own
     # furniture, nor the shipped Collection Library's -- so the declared set is the WHOLE set of
     # what this repository stands behind, and drift is removed together with its children. The
-    # library is proven untouched on every run: the script counts it before and after and fails
-    # if the two disagree. A collection a scan profile or auto report references is refused
+    # library is proven untouched on every run: the script compares its exact row identities
+    # before and after and fails if they differ. A collection a scan profile or auto report references is refused
     # rather than removed. Runs unconditionally -- an empty declaration owns nothing, which on a
     # fresh install changes nothing. The .ps1 is MATERIALIZED from scripts/ by
     # scripts/materialize-role-scripts.sh (the role tracks only files/Remove-PdqCollection.ps1.stub).

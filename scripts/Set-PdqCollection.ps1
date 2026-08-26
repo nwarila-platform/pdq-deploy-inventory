@@ -206,7 +206,7 @@ If (-not (Test-Path -LiteralPath:$CliPath -PathType:'Leaf')) {
   Throw ('The PDQ Inventory command line is not at ''{0}''' -f $CliPath)
 }
 
-# What the product varies between writes of the same package, plus the trailing whitespace Ansible
+# What the product varies between writes of the same collection, plus the trailing whitespace Ansible
 # has already stripped from the declaration on its way here.
 Function ConvertTo-ComparableText {
   Param ([System.String] $Text)
@@ -214,7 +214,7 @@ Function ConvertTo-ComparableText {
 }
 
 # What gets COMPARED: the same document with the console's filing removed, so two products holding
-# the same package in different folders agree. Both sides go through it, so encoding and formatting
+# the same collection in different folders agree. Both sides go through it, so encoding and formatting
 # cannot differ either -- this compares the document, not the bytes that happened to carry it.
 Function ConvertTo-ComparableCollection {
   Param ([System.String] $Text)
@@ -391,7 +391,7 @@ If ((ConvertTo-ComparableCollection -Text:(Get-CollectionText -Name:$Name)) -cne
 
     # The product was told to write, so the host changed whatever the next read says. Reporting the
     # change is not a claim that it is correct -- that is the read below, taken from the product
-    # rather than from the import's own report, because a package the product accepted and did not
+    # rather than from the import's own report, because a collection the product accepted and did not
     # store would otherwise pass as applied.
     $Changed = $True
     $Ignored = (ConvertTo-ComparableCollection -Text:(Get-CollectionText -Name:$Name)) -cne $DeclaredKey
@@ -425,7 +425,7 @@ Write-Debug -Message:'Entering Stage: Output'
 $Ansible.Changed = $Result.changed
 $Ansible.Result = $Result
 
-# The result is published either way, so a caller can see which package failed to read back, and
+# The result is published either way, so a caller can see which collection failed to read back, and
 # that the host was written to, before the failure is raised.
 If ($Result.ignored) {
   $Ansible.Failed = $True

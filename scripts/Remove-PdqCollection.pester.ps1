@@ -198,6 +198,9 @@ Describe 'Remove-PdqCollection' {
       & $script:ScriptPath -Definition @() -BuiltIn $script:BuiltIn -CliPath $script:CliPath | Out-Null
       $Context.Changed | Should -BeTrue
       $Context.Result.removed | Should -Be @('Hand Made')
+      # Kept counts the declared and built-in top level this script stands behind; the library's
+      # own top rows are reported through the library figure, never counted twice.
+      $Context.Result.kept | Should -Be 2
       @($global:FakeRows | ForEach-Object Name) | Should -Not -Contain 'Hand Made'
       @($global:FakeRows | ForEach-Object Name) | Should -Not -Contain 'Hand Made Child'
       @($global:FakeRows | ForEach-Object Name) | Should -Contain 'Servers'
@@ -261,7 +264,7 @@ Describe 'Remove-PdqCollection' {
         Should -Throw '*invents for itself*'
     }
 
-    It 'fails when the library does not count the same after the run' {
+    It 'fails when the library''s row identities differ after the run' {
       Add-FakeRow -Id '10' -Parent '' -Type 'DynamicCollection' -Name 'Hand Made'
       $global:FakeLibraryVanishes = $True
       { & $script:ScriptPath -Definition @() -BuiltIn $script:BuiltIn -CliPath $script:CliPath } |

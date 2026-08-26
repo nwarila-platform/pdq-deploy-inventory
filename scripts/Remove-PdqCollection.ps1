@@ -260,7 +260,7 @@ Function Invoke-NativeCommand {
 }
 
 # The declaration, read once: each definition's own Name element is a collection this repository
-# owns. Matched case-insensitively, agreeing with the import step's by-name matching.
+# owns. Matched case-insensitively, agreeing with the import script's by-name matching.
 $DeclaredSet = [System.Collections.Generic.HashSet[System.String]]::new([System.StringComparer]::OrdinalIgnoreCase)
 ForEach ($Text In $Definition) {
   $Document = [System.Xml.XmlDocument]::new()
@@ -493,14 +493,18 @@ If (-not $Ansible.CheckMode) {
   }
 }
 
+# Kept counts what this script actually kept: the declared and built-in top level. The library's
+# own top rows are reported through the library figure, not counted twice.
+$KeptCount = @($TopLevel | Where-Object { $PSItem.Type -cne 'LibraryCollection' }).Count - $Strangers.Count
+
 $Result = [PSCustomObject]@{
   changed    = [System.Boolean]($Strangers.Count -gt 0)
   check_mode = [System.Boolean]$Ansible.CheckMode
   declared   = [System.Int32]$DeclaredSet.Count
-  kept       = [System.Int32]($TopLevel.Count - $Strangers.Count)
+  kept       = [System.Int32]$KeptCount
   library    = [System.Int32]$LibraryCount
   msg        = If ($Strangers.Count -eq 0) {
-    'No undeclared collections; {0} kept, the library''s {1} untouched' -f ($TopLevel.Count), $LibraryCount
+    'No undeclared collections; {0} kept, the library''s {1} untouched' -f $KeptCount, $LibraryCount
   } ElseIf ($Ansible.CheckMode) {
     'Would remove {0}' -f (@($Strangers | ForEach-Object Name) -join ', ')
   } Else {

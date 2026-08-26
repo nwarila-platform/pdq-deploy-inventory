@@ -428,9 +428,9 @@ Describe 'Remove-PdqVariable' {
     }
 
     It 'carries the same native-command helper as its siblings' {
-      # There is no shared module -- one file per script is the org contract -- so the six copies
-      # are kept identical by checking, not by convention. A fix applied to one and not the others
-      # is the realistic hazard, and no other assertion here would notice it.
+      # There is no shared module -- one file per script is the org contract -- so the copies are
+      # kept identical by checking, not by convention: a fix applied to one and not the others is
+      # the realistic hazard, and no other assertion here would notice it.
       $Extract = {
         Param ($File)
         $Text = Get-Content -LiteralPath $File -Raw

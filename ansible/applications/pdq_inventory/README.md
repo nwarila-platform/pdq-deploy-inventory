@@ -4,15 +4,17 @@ Installs PDQ Inventory at a pinned version and brings it up as an all-in-one **C
 Windows. In one converge it installs the product, applies the licence, runs the background service
 under the shared PDQ service account, places the database on its dedicated drive, sets Central
 Server mode and the console port, applies the product's preferences, reconciles the pinned
-variables -- adding what is missing, correcting what differs, and removing what the declaration
-does not name, each removal proven from a fresh export --
-reconciles the owned collections the same way -- each one stated as its exported XML, imported
-only on difference, proven by re-export, with every unowned top-level collection removed and the
-shipped Collection Library counted before and after so a converge that touched it fails --
-seeds the per-user console defaults, authorises the console users, chooses the event-log severities,
-and records the registration that would otherwise stop the first console with a popup. PDQ
-Inventory is a scanner, so — unlike `pdq_deploy` — it publishes **no package repository and no
-network share**.
+variables and the owned collections, seeds the per-user console defaults, authorises the console
+users, chooses the event-log severities, and records the registration that would otherwise stop
+the first console with a popup. PDQ Inventory is a scanner, so — unlike `pdq_deploy` — it
+publishes **no package repository and no network share**.
+
+Both declarations are complete. The variable map is the whole set: a converge adds what is
+missing, corrects what differs, removes what the map does not name, and proves each removal from
+a fresh export. A collection is stated as its exported XML, imported only on difference and
+proven by re-export; every top-level collection the role does not own is removed with its
+children, except the product's own built-in furniture and the shipped Collection Library, whose
+rows are compared identity by identity before and after so a converge that touched them fails.
 
 Everything moves through the controller: it fetches each artifact from S3 and hands the installer
 to the target, so the guest never receives cloud credentials. The installer is verified against
@@ -76,8 +78,9 @@ reported change rather than silent drift.
 Guest-side logic that a task cannot express cleanly is a first-class PowerShell script, developed
 and Pester-tested once under `scripts/` and materialized into the role by
 `scripts/materialize-role-scripts.sh` (the role tracks only the `.ps1.stub` markers). The role uses
-`Get-InstalledSoftware.ps1`, `Set-PdqSetting.ps1`, `Set-PdqVariable.ps1`, and
-`Set-PdqRegistration.ps1`, all shared with `pdq_deploy`.
+`Get-InstalledSoftware.ps1`, `Set-PdqSetting.ps1`, `Set-PdqVariable.ps1`,
+`Remove-PdqVariable.ps1`, and `Set-PdqRegistration.ps1`, all shared with `pdq_deploy`, plus
+Inventory's own `Set-PdqCollection.ps1` / `Remove-PdqCollection.ps1` for the collections.
 
 ## Verification
 

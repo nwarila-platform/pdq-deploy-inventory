@@ -260,6 +260,18 @@ Describe 'Set-PdqPackage' {
       $Context.Changed | Should -BeFalse
     }
 
+    It 'ignores the snapshot of variable values the export embeds' {
+      # The product exports every referenced custom variable's CURRENT value inside the package;
+      # the variable store owns those values, so a moved pin must not dirty the package.
+      $Snapshot = (New-PackageText -Name $script:Chrome).Replace(
+        '  </Package>',
+        "    <CustomVariables type=`"list`"><CustomVariable><Name>Google-LLC_Google-Chrome</Name><Value>147.0.7727.56</Value></CustomVariable></CustomVariables>`r`n  </Package>")
+      $global:FakePackages[$script:Chrome] = $Snapshot
+      $Context = New-AnsibleContext
+      & $script:ScriptPath -Definition (New-PackageText -Name $script:Chrome) -CliPath $script:CliPath | Out-Null
+      $Context.Changed | Should -BeFalse
+    }
+
     It 'treats case-only drift as a change, not a match' {
       $global:FakePackages[$script:Chrome] = New-PackageText -Name $script:Chrome -Detail 'silent install'
       $Context = New-AnsibleContext

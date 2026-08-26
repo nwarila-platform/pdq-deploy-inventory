@@ -15,7 +15,7 @@
             <Table>Application</Table>
             <Column>Version</Column>
             <Comparison>VersionLowerThan</Comparison>
-            <Value>@(GoogleLlc_GoogleChrome)</Value>
+            <Value>@(Google-LLC_Google-Chrome)</Value>
           </ValueFilter>
         </Filters>
       </RootFilter>

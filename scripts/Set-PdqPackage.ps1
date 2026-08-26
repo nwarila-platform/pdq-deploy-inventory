@@ -105,12 +105,18 @@ New-Variable -Force -Name:'NAME_PATTERN' -Option:('Private', 'ReadOnly') -Value:
 # saying so, so these three never survive a round trip: compared, they would report a change on
 # every converge and then fail the verification that follows it. Measured on a fresh target
 # 2026-08-25 -- FolderId 4 -> null, and Path 'Packages\Google LLC\...' -> the bare name.
+#
+# CustomVariables is different in kind but equally derived: the export EMBEDS a snapshot of every
+# referenced custom variable's CURRENT value. The variable store is the source of truth for those
+# values and is itself reconciled by this repository, so the snapshot is not part of the package's
+# declaration and would otherwise dirty every package each time a pin moves.
 # Not Private: the comparison function below is a child scope and has to read it.
 New-Variable -Force -Name:'PLACEMENT_ELEMENTS' -Option:'ReadOnly' -Value:(
   [System.String[]]@(
     '/AdminArsenal.Export/Package/FolderId'
     '/AdminArsenal.Export/Package/Path'
     '/AdminArsenal.Export/Package/PackageDisplaySettings/SortOrder'
+    '/AdminArsenal.Export/Package/CustomVariables'
   )
 )
 

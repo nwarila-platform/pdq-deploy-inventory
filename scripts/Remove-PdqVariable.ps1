@@ -69,7 +69,7 @@
         so one script serves either.
 
     .EXAMPLE
-        .\Remove-PdqVariable.ps1 -Name @('GoogleLlc_GoogleChrome') -CliPath $DeployCliPath
+        .\Remove-PdqVariable.ps1 -Name @('Google-LLC_Google-Chrome') -CliPath $DeployCliPath
 
     .OUTPUTS
         One object carrying removed, kept, declared, changed, check_mode and msg.

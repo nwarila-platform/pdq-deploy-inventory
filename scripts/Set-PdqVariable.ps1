@@ -45,7 +45,7 @@
         custom-variable model answers on both, so one script serves each product.
 
     .EXAMPLE
-        .\Set-PdqVariable.ps1 -Variable @{ 'GoogleLlc_GoogleChrome' = '129.0.6668.90' } -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
+        .\Set-PdqVariable.ps1 -Variable @{ 'Google-LLC_Google-Chrome' = '147.0.7727.56' } -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
 
     .OUTPUTS
         One object carrying applied, unchanged, ignored, requested, changed, check_mode and msg.

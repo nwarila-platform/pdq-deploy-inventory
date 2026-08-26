@@ -137,23 +137,72 @@
   any_errors_fatal: true
   vars:
     # The pinned application versions, defined ONCE here and handed to BOTH products below (they
-    # share one custom-variable model). Each key is the application's Add/Remove Programs identity
-    # -- <Publisher>_<DisplayName>, Title Case, special characters spelled out, matching the AppRepo
-    # layout -- and each value is the version to pin, referenced from deployment packages by
-    # name. The map is the COMPLETE set: only a name that is absent, or whose value differs, is
-    # written, each is proved to read back, and a custom variable this map does not name is
-    # removed on the next converge -- proven from the product's own export.
+    # share one custom-variable model). The names are the product's own: each is spelled exactly
+    # as the fleet's variable export spells it -- <Publisher>_<Product>, words joined by dashes --
+    # so a name here, a name in a package or collection definition, and a name in the console
+    # are the same string, and each value is the version to pin. The map is the COMPLETE set:
+    # only a name that is absent, or whose value differs, is written, each is proved to read
+    # back, and a custom variable this map does not name is removed on the next converge --
+    # proven from the product's own export.
+    #
+    # Taken from the fleet's export of 2026-08-25 (PDQ Inventory 19.5.0.0). ONE name from that
+    # export is deliberately absent: a licence variable, which is withdrawn from
+    # the fleet. Until it is reinstated by a caller that supplies it, this
+    # play removes it from any product that still holds it.
     pdq_variables:
-      NodeJsFoundation_NodeJs18: '18.20.4'
-      NodeJsFoundation_NodeJs20: '20.17.0'
-      NodeJsFoundation_NodeJs22: '22.9.0'
-      PythonSoftwareFoundation_Python311: '3.11.9'
-      PythonSoftwareFoundation_Python312: '3.12.7'
-      PythonSoftwareFoundation_Python313: '3.13.0'
-      GoogleLlc_GoogleChrome: '151.0.7922.138'
-      Mozilla_MozillaFirefox: '131.0'
-      NotepadPlusPlusTeam_NotepadPlusPlus: '8.7.1'
-      MicrosoftCorporation_MicrosoftVisualStudioCode: '1.94.2'
+      Adobe-Systems-Inc_Adobe-Acrobat-Reader-DC: '25.1.20997.0'
+      Adobe-Systems-Inc_Adobe-Connect: '2025.9.15.64'
+      Amazon-Com-Inc_Amazon-Cloudwatch-Agent: '1.4.37920'
+      Amazon-Web-Services_AWS-Command-Line-Interface-v2: '2.34.6.0'
+      Amazon-Web-Services_Amazon-EC2Launch: '2.4.0.0'
+      Amazon-Web-Services_Amazon-SSM-Agent: '3.3.3797.0'
+      Amazon-Web-Services_aws-cfn-bootstrap: '2.0.34'
+      Anaconda-Inc_Anaconda3: '2025.12-1'
+      Devolutions-Inc_Remote-Desktop-Manager: '2026.1.18.0'
+      Google-LLC_Google-Chrome: '147.0.7727.56'
+      Igor-Pavlov_7-Zip: '26.00.00.0'
+      Martin-Prikryl_WinSCP: '6.5.6'
+      Mathwork_MatLab: 'r2023b'
+      Microsoft-Corporation_Microsoft-Edge: '147.0.3912.60'
+      Microsoft-Corporation_Microsoft-NetBanner: '2.3.181'
+      Microsoft-Corporation_Microsoft-ODBC-Driver-17: '17.10.6.1'
+      Microsoft-Corporation_Microsoft-ODBC-Driver-18: '18.6.1.1'
+      Microsoft-Corporation_Microsoft-Office-LTSC-Professional-Plus-2021: '16.0.14334.20570'
+      Microsoft-Corporation_Microsoft-Office-Professional-Plus-2019: '16.0.10417.20108'
+      Microsoft-Corporation_Microsoft-OpenJDK-11: '11.0.30.7'
+      Microsoft-Corporation_Microsoft-OpenJDK-17: '17.0.18.8'
+      Microsoft-Corporation_Microsoft-OpenJDK-21: '21.0.10.7'
+      Microsoft-Corporation_Microsoft-OpenJDK-25: '25.0.2.10'
+      Microsoft-Corporation_Microsoft-Project-Professional-2019: '16.0.10417.20108'
+      Microsoft-Corporation_Microsoft-Project-Professional-2021: '16.0.14334.20570'
+      Microsoft-Corporation_Microsoft-Visual-C-v14: '14.50.35719.0'
+      Microsoft-Corporation_Microsoft-Visual-Studio-Code: '1.115.0'
+      Microsoft-Corporation_Microsoft-Windows-Desktop-Runtime: '10.0.5.50000'
+      Microsoft-Corporation_PowerShell-7: '7.6.0.0'
+      Microsoft-Corporation_Windows-Print-Services-Extension: '14182.0.0.0'
+      Mozilla_Mozilla-Firefox-ESR: '140.9.1'
+      No-Magic-Inc_Cameo-Enterprise-Architecture: '2022.2.3'
+      No-Magic-Inc_Cameo-Systems-Modeler: '2022.2.3'
+      Node.js-Foundation_Node.js-21: '21.7.3'
+      Node.js-Foundation_Node.js-22: '22.22.2'
+      Node.js-Foundation_Node.js-24: '24.14.1'
+      Node.js-Foundation_Node.js-25: '25.9.0'
+      Notepad-Team_Notepad: '8.9.3'
+      PDQ-com_PDQ-Deploy: '19.7.6.0'
+      PDQ-com_PDQ-Inventory: '19.7.6.0'
+      Prometheus-Community_Windows-Exporter: '0.31.6'
+      Python-Software-Foundation_Python-3.10: '3.10.11150.0'
+      Python-Software-Foundation_Python-3.11: '3.11.9150.0'
+      Python-Software-Foundation_Python-3.12: '3.12.7150.0'
+      Python-Software-Foundation_Python-3.13: '3.13.11150.0'
+      Python-Software-Foundation_Python-3.14: '3.14.2150.0'
+      Simon-Tatham_PuTTY: '0.83.0.0'
+      Splunk-Inc_UniversalForwarder: '9.4.8.0'
+      Tableau-Desktop: '2023-3-0'
+      Tableau-Prep: '2023-3-3'
+      The-Git-Development-Community_Git: '2.53.0.2'
+      Trellix_Trellix-Agent: '5.8.5.495'
+      Wazuh-Inc_Wazuh-Agent: '4.14.4'
 
 
   #region ------ [ Roles ] -------------------------------------------------------------------- #

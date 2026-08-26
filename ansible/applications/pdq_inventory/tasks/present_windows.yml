@@ -397,11 +397,12 @@
     # every ending to CRLF whatever the object used. No guard on an empty match is needed, because
     # the digest above pins the exact bytes.
     #
-    # The product REWRITES what it is given (the same behaviour as PDQ
-    # Deploy): a marker block comes back reflowed, the same characters in a different shape.
-    # Comparing literally would therefore report a change on every converge and bounce the service
-    # with it, so the comparison ignores whitespace and asks only whether the licence itself
-    # differs. A licence removed or replaced by hand is still restored.
+    # The product REWRITES what it is given: a multi-line licence block comes back as one line with
+    # every break stripped (measured on PDQ Deploy, seventeen lines to one 620-character line),
+    # the same characters in a different shape. Comparing literally would therefore report a
+    # change on every converge and bounce the service with it, so the comparison ignores
+    # whitespace and asks only whether the licence itself differs. A licence removed or replaced
+    # by hand is still restored.
 
     - name: 'PROCESS | Read The Licence Already Stored'
       no_log: true
@@ -480,8 +481,8 @@
     # otherwise converged host still walks the Initialize wizard. Written through the REGISTRY,
     # not the SetServiceMode command line: that command refuses while the service is running
     # ("close the Console and Background Service"), whereas the registry value is read at start,
-    # so the restart below picks it up (registry Mode=Server flips
-    # SystemInfo's ServiceMode to Server). Written before the service region for the same reason.
+    # so the restart below picks it up -- registry Mode=Server flips SystemInfo's ServiceMode to
+    # Server. Written before the service region for the same reason.
 
     - name: 'PROCESS | Put The Console In Central Server Mode'
       notify: 'pdq-inventory-restart-required'
@@ -496,11 +497,11 @@
     #endregion --- [ Process: Put The Console In Central Server Mode ] ------------------------ #
 
     #region ------ [ Process: Set The Central Server Port ] ----------------------------------- #
-    # The port client consoles connect to. 7337 is the product's own default (Protocol\ServerPort).
-    # Deliberately NOT written beside it:
-    # LocalTcpPort, which the product assigns per host from the dynamic range, and
-    # ServicePrincipalName, which the wizard leaves at a value whose contract is not understood --
-    # pinning a value we cannot explain is worse than leaving the product's own.
+    # The port client consoles connect to. 7337 is the product's own default, measured
+    # (Protocol\ServerPort). Deliberately NOT written beside it: LocalTcpPort, which the product
+    # assigns per host from the dynamic range, and ServicePrincipalName, which the wizard leaves at
+    # a value whose contract is not understood -- pinning a value we cannot explain is worse than
+    # leaving the product's own.
 
     - name: 'PROCESS | Set The Central Server Port'
       notify: 'pdq-inventory-restart-required'
@@ -574,8 +575,9 @@
     # on for every profile on this image, so without this rule the service listens and nothing
     # arrives. Scoped BOTH ways, as the product's own wizard scopes it -- to the service
     # executable and to the port -- so the exception admits that one program on that one port
-    # rather than opening the port to whatever else may bind it later. This names the rule
-    # directly, which is also what makes it idempotent and removable.
+    # rather than opening the port to whatever else may bind it later. The wizard names its
+    # rule by GUID (measured on PDQ Deploy); this names it directly, which is also what makes
+    # it idempotent and removable.
 
     - name: 'PROCESS | Open The Firewall For Client Consoles'
       community.windows.win_firewall_rule:
@@ -598,13 +600,15 @@
     # administrator on the console machine and the SeServiceLogonRight, both of which are already
     # in place. A local account carries the '.\' prefix -- the same convention the product's own
     # console uses when the domain field is left blank. The silent installer leaves the service
-    # DISABLED and never started, so the start mode and running state are
-    # set here as well, or nothing downstream can restart it and the product never reaches a
-    # working state. DELAYED auto-start, matching what the product's own SetServiceCredentials
-    # configures, so a settled host does not fight its own credential recording. update_password
-    # is on_create so a settled host reports ok rather than rewriting the credential every
-    # converge; the module sets the password regardless whenever the account itself changes, so
-    # the first converge is complete.
+    # DISABLED and never started, so the start mode
+    # and running state are set here as well, or nothing downstream can restart it and the
+    # product never reaches a working state. DELAYED auto-start, not plain auto, because that is
+    # what the product's own SetServiceCredentials silently configures (via
+    # sc qc; WMI hides the distinction): declaring anything else made every credential recording
+    # poison the next converge's comparison, which then "corrected" the mode back and bounced the
+    # service once per fresh build. update_password is on_create so a settled
+    # host reports ok rather than rewriting the credential every converge; the module sets the
+    # password regardless whenever the account itself changes, so the first converge is complete.
 
     - name: 'PROCESS | Run The Background Service As The Service Account'
       no_log: true
@@ -643,8 +647,10 @@
     #region ------ [ Process: Record The Service Credential With The Product ] ---------------- #
     # Setting the account on the Windows service is not enough: the product keeps its OWN record
     # of that credential, and a console finding it absent runs its initialisation wizard even
-    # though everything else is configured. Only the vendor's command can write it: the value is
-    # an encrypted blob, and this is the command whose job that is.
+    # though everything else is configured. On a host built entirely by this
+    # role -- the service ran as svc-pdq and the product still had no idea. Only the vendor's
+    # command can write it: the value is an encrypted blob, and this is the command whose job
+    # that is.
     #
     # The password is fed on STDIN and never appears in an argument. That matters more than it
     # looks: this image audits process creation WITH command lines, so a password passed as
@@ -698,7 +704,7 @@
     #region ------ [ Process: Apply The Product Settings ] ------------------------------------ #
     # The whole preference tree crosses as ONE parameter, shaped exactly as the console's
     # Preferences window is, and the script owns the routing and the arithmetic: it sets aside
-    # the names other tasks own (the per-user alerts page and interface splash/theme seeds, the event-log
+    # the pages other tasks write (the per-user alerts and interface pages, the event-log
     # switches) and places the backup and verbose-log locations beside the database unless the
     # caller named somewhere else. What the product accepts and drops is still caught by the
     # script's export-verify pass, and censoring is still off because every value here is
@@ -871,12 +877,11 @@
     #region ------ [ Process: Authorize The Console Users ] ----------------------------------- #
     # Who may open the console. A silent install authorises no one, and RBAC being off leaves it
     # that way -- the product requires each account or group to be an explicit Console User, not
-    # merely a local administrator (ConsoleUsers empty on a fresh licensed
-    # host). Applied through the command line as the service account, the only identity the
-    # product answers. -Add reports success whether or not the name was already authorised, so the
-    # current list is read first and only missing names are added, keeping the run idempotent.
-    # Runs in the command-line zone because the service must be up -- the same reason the settings
-    # above do.
+    # merely a local administrator (PDQ documents this, and it is why an un-listed host opens to no
+    # one). Applied through the command line as the service account, the only identity the product
+    # answers. -Add reports success whether or not the name was already authorised, so the current
+    # list is read first and only missing names are added, keeping the run idempotent. Runs in the
+    # command-line zone because the service must be up -- the same reason the settings above do.
 
     - name: 'PROCESS | Authorize The Console Users'
       become: true
@@ -919,13 +924,13 @@
     #endregion --- [ Process: Authorize The Console Users ] ----------------------------------- #
 
     #region ------ [ Process: Choose The Event Log Severities ] ------------------------------- #
-    # Which severities reach the Windows Application event log. A silent install writes no PDQ
-    # Inventory registry at all, so the product's Logging key does not exist
-    # until a console first saves the preferences page -- without this, what a server records would
-    # depend on whether anyone ever opened a console. All four are written to
+    # Which severities reach the Windows Application event log. A silent install writes no
+    # PDQ Inventory registry at all, so the product's Logging key does not exist until a console
+    # first saves the preferences page -- without this, what a server records would depend on
+    # whether anyone ever opened a console. All four are written to
     # HKLM:\SOFTWARE\Admin Arsenal\Logging\PDQ Inventory and read back after the converge, so the
-    # state is the playbook's whatever the console did or did not do. One
-    # action -- choose the severities -- split over a loop because each is its own value.
+    # state is the playbook's whatever the console did or did not do. One action -- choose the
+    # severities -- split over a loop because each is its own value.
 
     - name: 'PROCESS | Choose The Event Log Severities'
       loop:
@@ -1121,8 +1126,8 @@
     # The registry write is a means, not the goal -- the product either accepts the payload or
     # stays in Free mode, and only the product can say which. SystemInfo is a local read that
     # needs no console authorisation, unlike the commands that talk to the background service.
-    # Enterprise also gates Server mode and the console users, so a console silently left in Free
-    # mode is a broken build, not a lesser one.
+    # Enterprise also gates Server mode, so a console silently left in Free mode is a broken
+    # build, not a lesser one.
 
     - name: 'END | Read The Licence Mode From The Product'
       changed_when: false
@@ -1160,11 +1165,11 @@
     #endregion --- [ End: Prove The Background Service Exists ] ------------------------------- #
 
     #region ------ [ End: Prove The Service Runs As The Service Account ] --------------------- #
-    # Existing is not enough: the identity is what reads the licence and what runs the scans, so a
-    # service left on its installation default is both unlicensed and unable to work while looking
-    # perfectly healthy. SCM reports the account in resolved form, MACHINE\name, so the machine
-    # half is dropped and the account compared -- that is the half this role sets, and it is what
-    # separates svc-pdq from the LocalSystem the installer chose.
+    # Existing is not enough: the identity is what reads the licence and what runs the scans,
+    # so a service left on its installation default is both unlicensed and unable to scan
+    # while looking perfectly healthy. SCM reports the account in resolved form, MACHINE\name,
+    # so the machine half is dropped and the account compared -- that is the half this role
+    # sets, and it is what separates svc-pdq from the SYSTEM the installer chose.
 
     - name: 'END | Prove The Background Service Runs As The Service Account'
       ansible.builtin.assert:

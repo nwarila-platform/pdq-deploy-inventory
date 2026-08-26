@@ -286,3 +286,38 @@ pdq_inventory_defaults:
     directory: 'PDQ Inventory'
 
   #endregion --- [ Product identity ] -------------------------------------------------------- #
+
+  #region ------ [ Declared collections ] ---------------------------------------------------- #
+  # The definition files this role expects to find in files/collections/, named so that a missing
+  # one is caught. The declaration is COMPLETE at the top level of the collection tree: a
+  # top-level collection the product holds that neither this list nor the two vendor-owned sets
+  # below account for is removed. Naming them twice is the point: the files say what the
+  # collection IS, this list says what must be there, and a converge where they disagree stops
+  # instead of deleting. An EMPTY list is how a caller states that this repository owns no
+  # collections.
+  collections:
+    - 'Chrome Below Pinned Version.xml'
+
+  # The top-level collections the pinned product ships OUTSIDE its Collection Library -- the
+  # furniture of a fresh 20.1.8.0 install, read from a converged host 2026-08-26. Owned by the
+  # vendor, never removed, and stated here rather than discovered so a product upgrade that
+  # changes the furniture changes this reviewed list instead of silently widening what may be
+  # deleted. The Collection Library itself needs no list: its rows announce themselves and are
+  # never touched.
+  built_in_collections:
+    - 'Online Systems'
+    - 'Reboot Timeline'
+    - 'Servers'
+    - 'Microsoft Office'
+    - 'Workstations'
+    - 'Systems with Smart Card Readers'
+    - 'Microsoft .NET Framework 4.7.2+'
+    - 'Requires .NET to Scan'
+    - 'Non-Standard Shares'
+    - 'Internet Explorer'
+    - 'Memory'
+    - 'Reboot Required'
+    - 'PowerShell'
+    - 'Allow Scan'
+
+  #endregion --- [ Declared collections ] ---------------------------------------------------- #

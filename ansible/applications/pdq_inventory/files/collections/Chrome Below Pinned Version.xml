@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AdminArsenal.Export Code="PDQInventory" Name="PDQ Inventory" Version="20.1.8.0" MinimumVersion="4.0">
+  <Collection>
+    <ReportDefinition name="Definition">
+      <RootFilter name="Filter">
+        <Comparison>All</Comparison>
+        <Filters type="list">
+          <ValueFilter>
+            <Table>Application</Table>
+            <Column>Name</Column>
+            <Comparison>StartsWith</Comparison>
+            <Value>Google Chrome</Value>
+          </ValueFilter>
+          <ValueFilter>
+            <Table>Application</Table>
+            <Column>Version</Column>
+            <Comparison>VersionLowerThan</Comparison>
+            <Value>@(GoogleLlc_GoogleChrome)</Value>
+          </ValueFilter>
+        </Filters>
+      </RootFilter>
+      <ReportDefinitionTypeName>BasicReportDefinition</ReportDefinitionTypeName>
+      <Columns type="list">
+        <Column>
+          <Column>ComputerId</Column>
+          <Summary></Summary>
+          <Table>Computer</Table>
+          <Title></Title>
+        </Column>
+      </Columns>
+    </ReportDefinition>
+    <IsDrilldown value="false" />
+    <ImportedPath></ImportedPath>
+    <TypeName>DynamicCollection</TypeName>
+    <Created>2026-08-26T00:00:00.0000000+00:00</Created>
+    <Description>Computers holding Google Chrome below the pinned version</Description>
+    <Error></Error>
+    <IsEnabled value="true" />
+    <Modified>2026-08-26T00:00:00.0000000+00:00</Modified>
+    <Name>Chrome Below Pinned Version</Name>
+    <Children type="list" />
+  </Collection>
+</AdminArsenal.Export>

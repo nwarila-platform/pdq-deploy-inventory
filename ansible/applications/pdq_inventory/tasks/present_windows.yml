@@ -70,6 +70,9 @@
     __installer_name__: "{{ pdq_inventory_running.installer.path | basename }}"
     __guest_installer__: "{{ pdq_inventory_running.install.staging_dir }}\\{{ __installer_name__ }}"
     __action_required__: "{{ __pdq_inventory_arp__.result.action_required }}"
+    # Anchored on THIS role. A bare 'collections/*.xml' is resolved against the whole search path,
+    # so a role whose own files/ did not arrive silently matches another tree's.
+    __collection_glob__: "{{ role_path }}/files/collections/*.xml"
 
   # Begin The 'Process' Block
   block:
@@ -787,6 +790,83 @@
         script: "{{ lookup('ansible.builtin.file', 'Remove-PdqVariable.ps1') }}"
 
     #endregion --- [ Process: Remove The Undeclared Variables ] ------------------------------- #
+
+    #region ------ [ Process: Import The Declared Collections ] ------------------------------- #
+    # Each XML file under files/collections/ is a collection this repository owns, exported from
+    # the console and committed as-is, so the repository states the collection rather than
+    # describing it. A filter references the pinned variables imported above by name, which is why
+    # this runs after them. The script imports a definition only when the product does not hold it
+    # or holds it differently, and proves the import by exporting the collection again, so a
+    # converged host writes nothing and a collection the command line silently drops fails the
+    # run. One call per definition, so the recap names the collection that changed. The .ps1 is
+    # MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role tracks only
+    # files/Set-PdqCollection.ps1.stub).
+
+    - name: 'PROCESS | Require Every Declared Collection To Be Present'
+      vars:
+        __found__: "{{ query('ansible.builtin.fileglob', __collection_glob__) | map('basename') | sort }}"
+
+      ansible.builtin.assert:
+        fail_msg: >-
+          The collection definitions on disk are not the ones this role declares.
+          Declared: {{ pdq_inventory_running.collections | sort | join(', ') | default('(none)', true) }}.
+          Found: {{ __found__ | join(', ') | default('(none)', true) }}.
+        quiet: true
+        that:
+          - __found__ == (pdq_inventory_running.collections | sort)
+
+    - name: 'PROCESS | Import The Declared Collections'
+      become: true
+      become_method: 'ansible.builtin.runas'
+      become_user: "{{ pdq_inventory_running.service_account.name }}"
+      loop: "{{ query('ansible.builtin.fileglob', __collection_glob__) | sort }}"
+      loop_control:
+        label: "{{ item | basename }}"
+      register: '__pdq_inventory_collections__'
+      vars:
+        ansible_become_flags: 'logon_type=batch'
+        ansible_become_password: "{{ __pdq_inventory_secret__.contents }}"
+
+      ansible.windows.win_powershell:
+        depth: 3
+        error_action: 'stop'
+        parameters:
+          Definition: "{{ lookup('ansible.builtin.file', item) }}"
+          CliPath: "{{ pdq_inventory_running.cli_path }}"
+        script: "{{ lookup('ansible.builtin.file', 'Set-PdqCollection.ps1') }}"
+
+    #endregion --- [ Process: Import The Declared Collections ] ------------------------------- #
+
+    #region ------ [ Process: Remove The Undeclared Collections ] ----------------------------- #
+    # The other half of the collection promise. The import above put every owned collection in
+    # place; this removes every top-level collection that is neither owned, nor the product's own
+    # furniture, nor the shipped Collection Library's -- so the declared set is the WHOLE set of
+    # what this repository stands behind, and drift is removed together with its children. The
+    # library is proven untouched on every run: the script counts it before and after and fails
+    # if the two disagree. A collection a scan profile or auto report references is refused
+    # rather than removed. Runs unconditionally -- an empty declaration owns nothing, which on a
+    # fresh install changes nothing. The .ps1 is MATERIALIZED from scripts/ by
+    # scripts/materialize-role-scripts.sh (the role tracks only files/Remove-PdqCollection.ps1.stub).
+
+    - name: 'PROCESS | Remove The Undeclared Collections'
+      become: true
+      become_method: 'ansible.builtin.runas'
+      become_user: "{{ pdq_inventory_running.service_account.name }}"
+      vars:
+        ansible_become_flags: 'logon_type=batch'
+        ansible_become_password: "{{ __pdq_inventory_secret__.contents }}"
+
+      ansible.windows.win_powershell:
+        depth: 3
+        error_action: 'stop'
+        parameters:
+          Definition: >-
+            {{ __pdq_inventory_collections__.results | map(attribute='result.definition') | list }}
+          BuiltIn: "{{ pdq_inventory_running.built_in_collections }}"
+          CliPath: "{{ pdq_inventory_running.cli_path }}"
+        script: "{{ lookup('ansible.builtin.file', 'Remove-PdqCollection.ps1') }}"
+
+    #endregion --- [ Process: Remove The Undeclared Collections ] ----------------------------- #
 
     #region ------ [ Process: Authorize The Console Users ] ----------------------------------- #
     # Who may open the console. A silent install authorises no one, and RBAC being off leaves it

@@ -6,6 +6,9 @@ under the shared PDQ service account, places the database on its dedicated drive
 Server mode and the console port, applies the product's preferences, reconciles the pinned
 variables -- adding what is missing, correcting what differs, and removing what the declaration
 does not name, each removal proven from a fresh export --
+reconciles the owned collections the same way -- each one stated as its exported XML, imported
+only on difference, proven by re-export, with every unowned top-level collection removed and the
+shipped Collection Library counted before and after so a converge that touched it fails --
 seeds the per-user console defaults, authorises the console users, chooses the event-log severities,
 and records the registration that would otherwise stop the first console with a popup. PDQ
 Inventory is a scanner, so — unlike `pdq_deploy` — it publishes **no package repository and no

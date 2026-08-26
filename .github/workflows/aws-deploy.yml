@@ -433,7 +433,23 @@ jobs:
             $Held = @($Xml.SelectNodes('//CustomVariable/Name') | ForEach-Object InnerText)
             If ($Held -cnotcontains $Product[1]) { Write-Output ($Product[1] + ' did not land'); Exit 6 }
           }
-          Write-Output 'both strays exist, witnessed from each product''s own export'
+          $Stray = @(
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<AdminArsenal.Export Code="PDQInventory" Name="PDQ Inventory" Version="20.1.8.0" MinimumVersion="4.0">'
+            '  <Collection>'
+            '    <Name>UndeclaredByHand Collection</Name>'
+            '  </Collection>'
+            '</AdminArsenal.Export>'
+          ) -join "`n"
+          Set-Content 'C:\Windows\Temp\stray-collection.xml' $Stray
+          $Inv = 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
+          & $Inv ImportCollections -Path 'C:\Windows\Temp\stray-collection.xml' 2>&1 | Out-Null
+          Remove-Item 'C:\Windows\Temp\stray-collection.xml' -Force
+          If ($LASTEXITCODE -ne 0) { Write-Output 'stray collection import failed'; Exit 5 }
+          & $Inv ExportCollections -Name 'UndeclaredByHand Collection' -Path 'C:\Windows\Temp\stray-out' -Overwrite 2>&1 | Out-Null
+          If ($LASTEXITCODE -ne 0) { Write-Output 'stray collection did not land'; Exit 4 }
+          Remove-Item 'C:\Windows\Temp\stray-out' -Recurse -Force
+          Write-Output 'all three strays exist, witnessed from each product''s own reading'
           Exit 0
           PS1
           ansible pdq_servers -m ansible.builtin.script -a /tmp/add-drift.ps1 \
@@ -442,8 +458,9 @@ jobs:
             -e 'ansible_become_password={{ lookup("env", "SVC_PW") }}' \
             --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"
 
-      # One credential change per role plus one removal per role: exactly four, or the converge
-      # either failed to remove the drift or changed something it had no business changing.
+      # One credential change per role, one variable removal per role, and one collection removal:
+      # exactly five, or the converge either failed to remove the drift or changed something it
+      # had no business changing.
       - name: Prove the converge removes what the declaration does not name
         timeout-minutes: 30
         working-directory: .frameworks/ansible-framework
@@ -467,11 +484,11 @@ jobs:
             exit 1
           fi
           if printf '%s\n' "${hosts}" \
-            | grep -qvE 'changed=4 +unreachable=0 +failed=0\b'; then
-            echo "::error::drift converge did not report exactly two credential changes plus two removals" >&2
+            | grep -qvE 'changed=5 +unreachable=0 +failed=0\b'; then
+            echo "::error::drift converge did not report exactly two credential changes plus three removals" >&2
             exit 1
           fi
-          echo "drift converge removed one undeclared variable per product and nothing else"
+          echo "drift converge removed one undeclared variable per product, one undeclared collection, and nothing else"
 
       # The removal claim is then witnessed from each product's own export, not from the
       # converge's report of itself: the exported name set must EQUAL the declared name set --
@@ -518,7 +535,13 @@ jobs:
               Exit 1
             }
           }
-          Write-Output 'both products hold exactly the declared names'
+          $Inv = 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
+          & $Inv ExportCollections -Name 'Chrome Below Pinned Version' -Path 'C:\Windows\Temp\decl-out' -Overwrite 2>&1 | Out-Null
+          If ($LASTEXITCODE -ne 0) { Write-Output 'the declared collection is not there'; Exit 3 }
+          Remove-Item 'C:\Windows\Temp\decl-out' -Recurse -Force
+          & $Inv ExportCollections -Name 'UndeclaredByHand Collection' -Path 'C:\Windows\Temp\stray-out2' -Overwrite 2>&1 | Out-Null
+          If ($LASTEXITCODE -ne 3) { Write-Output 'the hand-added collection is still there'; Exit 2 }
+          Write-Output 'both products hold exactly the declared names, and the collections match the declaration'
           Exit 0
           PS1
           # The declared names are read from the playbook itself and spliced in BASE64-ENCODED:

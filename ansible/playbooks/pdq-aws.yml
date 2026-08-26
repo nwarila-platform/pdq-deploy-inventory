@@ -145,10 +145,7 @@
     # back, and a custom variable this map does not name is removed on the next converge --
     # proven from the product's own export.
     #
-    # Taken from the fleet's export of 2026-08-25 (PDQ Inventory 19.5.0.0). ONE name from that
-    # export is deliberately absent: a licence variable, which is withdrawn from
-    # the fleet. Until it is reinstated by a caller that supplies it, this
-    # play removes it from any product that still holds it.
+    # Taken from the fleet's export of 2026-08-25 (PDQ Inventory 19.5.0.0).
     pdq_variables:
       Adobe-Systems-Inc_Adobe-Acrobat-Reader-DC: '25.1.20997.0'
       Adobe-Systems-Inc_Adobe-Connect: '2025.9.15.64'

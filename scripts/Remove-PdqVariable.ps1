@@ -351,7 +351,10 @@ If ($Extra.Count -gt 0) {
   # by anything a name may contain, and the id because no name may ever enter SQL. The names the
   # export listed must all be here -- the two readings disagreeing means the schema or the
   # product has moved, and a prune against a moved product is refused, not attempted.
-  $IdByName = @{}
+  # An ORDINAL dictionary, deliberately: a default hashtable folds keys case-insensitively, and
+  # two rows differing only by case would then collapse onto one id -- the wrong row deleted. The
+  # case-fold refusal above covers what the export shows; this covers what it might not.
+  $IdByName = [System.Collections.Generic.Dictionary[System.String, System.String]]::new([System.StringComparer]::Ordinal)
   ForEach ($Row In (Invoke-NativeCommand -Operation:'Reading the variable table' -FilePath:$Sqlite `
         -Argument:@($DatabasePath, 'PRAGMA busy_timeout = 5000; SELECT CustomVariableId, hex(Name) FROM CustomVariables;')).Output) {
     $Parts = ([System.String]$Row).Split('|')

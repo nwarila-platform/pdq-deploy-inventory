@@ -379,6 +379,17 @@ jobs:
           fi
           echo "second converge reported exactly the two expected credential changes"
 
+      # The proofs below add two more converges to the pipeline, which pushes the tail past the
+      # first session's 3,600 seconds -- so they run on a fresh session of their own.
+      - name: Refresh AWS credentials for the determinism proofs (OIDC)
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ env.DEPLOY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ secrets.AWS_ACCOUNT_ID }}
+          role-session-name: aws-deploy-${{ github.run_id }}-proofs
+          role-duration-seconds: 3600
+
       # Determinism proof. The declared variable set must be the ONLY set, so drift is created the
       # way real drift lands in the store -- through each product's own command line, past the
       # playbook's back -- and each stray is then read back from the product's export, so the
@@ -482,7 +493,7 @@ jobs:
           export SVC_PW
           cat > /tmp/prove-clean.ps1 <<'PS1'
           $ErrorActionPreference = 'Continue'
-          $Declared = @($args | Sort-Object)
+          $Declared = @($args)
           If ($Declared.Count -eq 0) { Write-Output 'no declared names passed'; Exit 5 }
           ForEach ($Product In @('PDQ Deploy\PDQDeploy.exe', 'PDQ Inventory\PDQInventory.exe')) {
             $Cli = 'C:\Program Files (x86)\Admin Arsenal\' + $Product
@@ -498,11 +509,13 @@ jobs:
             } Finally {
               Remove-Item $File -Force
             }
-            $Held = @($Xml.SelectNodes('//CustomVariable/Name') | ForEach-Object InnerText | Sort-Object)
-            If (($Held -join "`n") -cne ($Declared -join "`n")) {
+            $Held = @($Xml.SelectNodes('//CustomVariable/Name') | ForEach-Object InnerText)
+            $Extra = @($Held | Where-Object { $Declared -cnotcontains $_ })
+            $Missing = @($Declared | Where-Object { $Held -cnotcontains $_ })
+            If ($Extra.Count -or $Missing.Count -or $Held.Count -ne $Declared.Count) {
               Write-Output ('exported names differ from the declaration in ' + $Product)
-              Write-Output ('  declared: ' + ($Declared -join ', '))
-              Write-Output ('  exported: ' + ($Held -join ', '))
+              Write-Output ('  not declared: ' + ($Extra -join ', '))
+              Write-Output ('  not held:     ' + ($Missing -join ', '))
               Exit 1
             }
           }

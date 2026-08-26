@@ -256,7 +256,12 @@ jobs:
           fi
           # getent rather than dig: it is part of glibc and always present, and it answers from
           # the same resolver the rest of the job uses.
-          debug_ip="$(getent ahostsv4 "${DEBUG_HOSTNAME}" | awk '{ print $1; exit }')"
+          # `|| true` so the check below is the ONE gate: a name that does not resolve and a name
+          # that resolves to something that is not an address fail the same way to a reader, and
+          # without it the first kills the step on pipefail before this message can explain
+          # itself. The check proves the SHAPE of an address, not that it is routable -- a name
+          # pointing somewhere private yields a rule that simply reaches nobody.
+          debug_ip="$(getent ahostsv4 "${DEBUG_HOSTNAME}" | awk '{ print $1; exit }' || true)"
           ipv4_octet='(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])'
           if [[ ! "${debug_ip}" =~ ^${ipv4_octet}\.${ipv4_octet}\.${ipv4_octet}\.${ipv4_octet}$ ]]; then
             echo "::error::The operator hostname did not resolve to a bare IPv4 address."
@@ -869,7 +874,9 @@ jobs:
             exit 0
           fi
 
-          message="Lifecycle result: ${LIFECYCLE_RESULT}. Inspect ${RUN_URL}. Cleanup was attempted when initialization succeeded; inspect the destroy and post-cleanup steps."
+          message="Lifecycle result: ${LIFECYCLE_RESULT}. Inspect ${RUN_URL}."
+          message="${message} Cleanup was attempted when initialization succeeded;"
+          message="${message} inspect the destroy and post-cleanup steps."
           if [ -z "${issue_number}" ]; then
             gh issue create --repo "${GITHUB_REPOSITORY}" \
               --label "${INCIDENT_LABEL}" --title "${INCIDENT_TITLE}" \

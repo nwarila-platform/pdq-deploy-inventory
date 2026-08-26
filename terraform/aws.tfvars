@@ -8,9 +8,11 @@
 # ansible-framework plus this repository's roles.
 #
 # REACHABILITY — DIRECT SSH OVER A PUBLIC IPv4. The workflow discovers the runner's public IPv4
-# and passes it as the framework's runtime-only runner_ip variable. The framework attaches one
-# security group scoped to that address to every interface. The instance receives a public IPv4
-# at launch; no Elastic IP is involved. The account has no NAT and no VPC endpoints.
+# and passes it as the framework's runtime-only runner_ip variable. When an operator hostname is
+# configured it resolves that too and passes debug_ip, which adds RDP for a person working on the
+# host. The framework attaches one security group carrying both to every interface. The instance
+# receives a public IPv4 at launch; no Elastic IP is involved. The account has no NAT and no VPC
+# endpoints.
 #
 # The dependency worth knowing: MapPublicIpOnLaunch is an attribute of a shared subnet no
 # repository owns. Direct SSH requires the instance's launch-time public address as well as the
@@ -23,8 +25,9 @@
 # =========================================================================================== #
 
 # environment and the deployment identity (repository, repository_id, commit_sha, run_id) are
-# deliberately NOT in this file: the workflow passes them with -var, the highest-precedence
-# source, so the identity that drives the provider's tags cannot be overridden here.
+# deliberately NOT in this file: the workflow passes them as -var flags placed AFTER this file on
+# the command line. Terraform resolves repeated command-line assignments in the order given, so it
+# is that ordering, not the kind of flag, that keeps this file from renaming the deployment.
 
 all_systems = [
   {

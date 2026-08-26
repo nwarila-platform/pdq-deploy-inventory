@@ -195,7 +195,6 @@
       The-Git-Development-Community_Git: '2.53.0.2'
       Wazuh-Inc_Wazuh-Agent: '4.14.4'
 
-
   #region ------ [ Roles ] -------------------------------------------------------------------- #
   roles:
 

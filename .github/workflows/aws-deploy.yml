@@ -235,6 +235,37 @@ jobs:
           echo "RUNNER_IP=${runner_ip}" >> "${GITHUB_ENV}"
           echo 'runner public IPv4 validated'
 
+      # The operator's own address, so a held host can be reached directly rather than through a
+      # tunnel. The secret carries a NAME, not an address: the name is stable and private, the
+      # address behind it changes with the operator's connection, and resolving here means only
+      # the address reaches Terraform -- masked, exactly as the runner's is. Nothing records
+      # where the operator sits.
+      #
+      # Absent secret means no operator access, not a failed run: the framework's debug_ip is
+      # optional and a pipeline with nobody watching should grant nobody anything. A name that
+      # is set and will not resolve DOES fail, because the alternative is a host that silently
+      # cannot be reached by the person who asked for it.
+      - name: Resolve the operator address for direct access
+        env:
+          DEBUG_HOSTNAME: ${{ secrets.AWS_DEBUG_HOSTNAME }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DEBUG_HOSTNAME}" ]; then
+            echo 'no operator hostname configured; this run grants no direct access'
+            exit 0
+          fi
+          # getent rather than dig: it is part of glibc and always present, and it answers from
+          # the same resolver the rest of the job uses.
+          debug_ip="$(getent ahostsv4 "${DEBUG_HOSTNAME}" | awk '{ print $1; exit }')"
+          ipv4_octet='(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])'
+          if [[ ! "${debug_ip}" =~ ^${ipv4_octet}\.${ipv4_octet}\.${ipv4_octet}\.${ipv4_octet}$ ]]; then
+            echo "::error::The operator hostname did not resolve to a bare IPv4 address."
+            exit 1
+          fi
+          echo "::add-mask::${debug_ip}"
+          echo "DEBUG_IP=${debug_ip}" >> "${GITHUB_ENV}"
+          echo 'operator IPv4 resolved and validated'
+
       - name: Terraform init
         id: tf-init
         working-directory: .frameworks/aws-terraform-framework/terraform
@@ -264,6 +295,7 @@ jobs:
             -var "repository=${GITHUB_REPOSITORY}"                           \
             -var "run_id=${GITHUB_RUN_ID}"                                   \
             -var "runner_ip=${RUNNER_IP}"                                    \
+            ${DEBUG_IP:+-var "debug_ip=${DEBUG_IP}"}                         \
             -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars"
 
       # The environment and deployment identity are individual -var flags — the highest-
@@ -281,6 +313,7 @@ jobs:
             -var "repository=${GITHUB_REPOSITORY}"                           \
             -var "run_id=${GITHUB_RUN_ID}"                                   \
             -var "runner_ip=${RUNNER_IP}"                                    \
+            ${DEBUG_IP:+-var "debug_ip=${DEBUG_IP}"}                         \
             -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars"
 
       # This repo's roles overlay onto the pinned framework tree. A framework-TRACKED role
@@ -618,6 +651,7 @@ jobs:
             -var "repository=${GITHUB_REPOSITORY}"                           \
             -var "run_id=${GITHUB_RUN_ID}"                                   \
             -var "runner_ip=${RUNNER_IP}"                                    \
+            ${DEBUG_IP:+-var "debug_ip=${DEBUG_IP}"}                         \
             -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars"
 
       # The OS is new, so this is a first converge again and takes as long as one. The second
@@ -768,6 +802,7 @@ jobs:
           terraform destroy -input=false -auto-approve -lock-timeout=300s    \
             -var-file="${GITHUB_WORKSPACE}/terraform/aws.tfvars"             \
             -var "runner_ip=${RUNNER_IP}"                                    \
+            ${DEBUG_IP:+-var "debug_ip=${DEBUG_IP}"}                         \
             -var "environment=test"                                          \
             -var "repository=${GITHUB_REPOSITORY}"                           \
             -var "repository_id=${GITHUB_REPOSITORY_ID}"                     \

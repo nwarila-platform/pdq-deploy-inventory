@@ -81,6 +81,8 @@ Describe 'Remove-PdqVariable' {
     $global:FakeSqliteExit = 0
     $global:FakeCliCalls = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeSqlBatches = [System.Collections.Generic.List[System.String]]::new()
+    $global:FakeTableHides = @()
+    $global:FakeDeleted = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeDbPath = $script:DbPath
     $global:LASTEXITCODE = 0
     Remove-AnsibleContext
@@ -129,13 +131,31 @@ Describe 'Remove-PdqVariable' {
       If ($args.Count -ne 2) {
         Throw ('unexpected sqlite3 arguments: {0}' -f ($args -join ' '))
       }
-      $global:FakeSqlBatches.Add($args[1])
-      ForEach ($Match In [System.Text.RegularExpressions.Regex]::Matches(
-          $args[1], "DELETE FROM CustomVariables WHERE Name = '((?:[^']|'')*)';")) {
-        $Target = $Match.Groups[1].Value.Replace("''", "'")
-        If ($global:FakeUndeletable -notcontains $Target) {
-          $Null = $global:FakeVariables.Remove($Target)
+      If ($args[1] -like '*SELECT CustomVariableId, hex(Name) FROM CustomVariables;*') {
+        # Row ids are the name's position plus one, stable for the test's lifetime, hex exactly
+        # as SQLite renders it: upper-case, of the UTF-8 bytes. A name in FakeTableHides is
+        # withheld -- the export and the table disagreeing is a state the script must refuse.
+        For ($I = 0; $I -lt $global:FakeVariables.Count; $I++) {
+          $Held = $global:FakeVariables[$I]
+          If ($global:FakeTableHides -contains $Held) { Continue }
+          $Hex = -join ([System.Text.Encoding]::UTF8.GetBytes($Held) | ForEach-Object { $_.ToString('X2') })
+          '{0}|{1}' -f ($I + 1), $Hex
         }
+        $global:LASTEXITCODE = 0
+        Return
+      }
+      $global:FakeSqlBatches.Add($args[1])
+      $Match = [System.Text.RegularExpressions.Regex]::Match(
+        $args[1], 'DELETE FROM CustomVariables WHERE CustomVariableId IN \(([0-9, ]+)\);')
+      If ($Match.Success) {
+        ForEach ($Id In ($Match.Groups[1].Value -split ',\s*')) {
+          $Target = $global:FakeVariables[[System.Int32]$Id - 1]
+          If ($global:FakeUndeletable -notcontains $Target) {
+            $global:FakeDeleted.Add($Target)
+          }
+        }
+        # Removal happens after the loop so the position-derived ids stay stable within one batch.
+        ForEach ($Gone In $global:FakeDeleted) { $Null = $global:FakeVariables.Remove($Gone) }
       }
       $global:LASTEXITCODE = $global:FakeSqliteExit
     } | Out-Null
@@ -153,7 +173,8 @@ Describe 'Remove-PdqVariable' {
 
   AfterAll {
     Remove-Variable -Name 'FakeVariables', 'FakeUndeletable', 'FakeExportExit', 'FakeExportNoFile',
-      'FakeNoDbLine', 'FakeSqliteExit', 'FakeCliCalls', 'FakeSqlBatches', 'FakeDbPath' `
+      'FakeNoDbLine', 'FakeSqliteExit', 'FakeCliCalls', 'FakeSqlBatches', 'FakeDbPath',
+      'FakeTableHides', 'FakeDeleted' `
       -Scope 'Global' -Force -ErrorAction 'SilentlyContinue'
   }
 
@@ -238,24 +259,42 @@ Describe 'Remove-PdqVariable' {
   }
 
   Context 'the database write' {
-    It 'wraps every delete in one immediate transaction under a busy timeout' {
+    It 'deletes by validated integer id in one immediate transaction, never by name' {
       $global:FakeVariables.Add('Stray One')
       $global:FakeVariables.Add('Stray Two')
       New-AnsibleContext | Out-Null
       & $script:ScriptPath -Name @() -CliPath $script:CliPath | Out-Null
       $global:FakeSqlBatches.Count | Should -Be 1
-      $global:FakeSqlBatches[0] | Should -Match '^PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE; (DELETE FROM CustomVariables WHERE Name = ''[^;]+''; ){2}COMMIT;$'
+      $global:FakeSqlBatches[0] | Should -Match '^PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE; DELETE FROM CustomVariables WHERE CustomVariableId IN \(1, 2\); COMMIT;$'
+      $global:FakeSqlBatches[0] | Should -Not -Match 'Stray'
     }
 
-    It 'escapes a name that holds an apostrophe, and removes exactly that name' {
-      $Awkward = "O'Brien's Build"
+    It 'removes a name no SQL literal could carry safely, because no name enters SQL' {
+      $Awkward = "O'Brien`"s`r`nBuild|x"
       $global:FakeVariables.Add($Awkward)
       $global:FakeVariables.Add($script:Chrome)
       $Context = New-AnsibleContext
       & $script:ScriptPath -Name @($script:Chrome) -CliPath $script:CliPath | Out-Null
       $Context.Result.removed | Should -Be @($Awkward)
       $global:FakeVariables | Should -Be @($script:Chrome)
-      $global:FakeSqlBatches[0] | Should -Match "O''Brien''s Build"
+      $global:FakeSqlBatches[0] | Should -Not -Match 'Brien'
+    }
+
+    It 'refuses to prune when the export and the table disagree about a name' {
+      $global:FakeVariables.Add($script:Firefox)
+      $global:FakeTableHides = @($script:Firefox)
+      { & $script:ScriptPath -Name @() -CliPath $script:CliPath } |
+        Should -Throw '*readings disagree*'
+      $global:FakeSqlBatches.Count | Should -Be 0
+      $global:FakeVariables.Count | Should -Be 1
+    }
+
+    It 'refuses a product holding two names that differ only by case' {
+      $global:FakeVariables.Add($script:Chrome)
+      $global:FakeVariables.Add($script:Chrome.ToUpper())
+      { & $script:ScriptPath -Name @($script:Chrome) -CliPath $script:CliPath } |
+        Should -Throw '*differing only by case*'
+      $global:FakeVariables.Count | Should -Be 2
     }
 
     It 'keeps a name the product spelled with surrounding spaces intact' {
@@ -288,6 +327,14 @@ Describe 'Remove-PdqVariable' {
       $global:FakeDbPath = 'C:\PDQ Data\Not-There.db'
       { & $script:ScriptPath -Name @() -CliPath $script:CliPath } |
         Should -Throw '*database is not at*'
+    }
+
+    It 'fails check mode on a host where removal is impossible, rather than promising it' {
+      $global:FakeVariables.Add($script:Firefox)
+      Remove-Item -LiteralPath $script:SqlitePath -Force
+      New-AnsibleContext -CheckMode | Out-Null
+      { & $script:ScriptPath -Name @() -CliPath $script:CliPath } |
+        Should -Throw '*database tool is not at*'
     }
 
     It 'does not touch the database in check mode, and reports what it would remove' {

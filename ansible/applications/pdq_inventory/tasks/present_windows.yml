@@ -766,8 +766,7 @@
     # standing has not stated the end state. Removal is proved from the product's own export,
     # re-read after the write, so a delete the database accepted and did not perform fails the run.
     # Runs unconditionally -- an empty declaration declares that the product holds NO custom
-    # variables, which on a fresh install is already true and changes nothing. Names declared
-    # without a value are unmanaged by the import and are therefore not declared here either.
+    # variables, which on a fresh install is already true and changes nothing.
     # The .ps1 is MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role
     # tracks only files/Remove-PdqVariable.ps1.stub).
 
@@ -783,9 +782,7 @@
         depth: 3
         error_action: 'stop'
         parameters:
-          Name: >-
-            {{ pdq_inventory_running.variables | dict2items
-               | rejectattr('value', 'none') | map(attribute='key') | list }}
+          Name: "{{ pdq_inventory_running.variables | list }}"
           CliPath: "{{ pdq_inventory_running.cli_path }}"
         script: "{{ lookup('ansible.builtin.file', 'Remove-PdqVariable.ps1') }}"
 

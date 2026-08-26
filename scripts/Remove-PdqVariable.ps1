@@ -17,9 +17,17 @@
         deletes one, so removal goes through the product's OWN database tooling: the sqlite3.exe
         the vendor ships beside the command line, against the database path the product itself
         reports through SystemInfo -- the same path, tool and transaction discipline the
-        registration script already uses to write this database. Each undeclared name is deleted
-        in one immediate transaction under a busy timeout, so a lock waits rather than fails and
-        a mid-batch failure leaves no partial prune behind.
+        registration script already uses to write this database, live, with the service running.
+        The vendor frames direct database work as support-directed; this script accepts that
+        trade knowingly, because the write is one DELETE scoped to a single table nothing
+        references, inside one immediate transaction, and the outcome is judged afterwards from
+        the product's own reading rather than from the write's report of itself.
+
+        No name ever enters SQL. The table is first read back as row id plus hex-encoded name --
+        hex so the parse cannot be confused by anything a name may contain -- each undeclared
+        name is matched to its id in memory, and the DELETE names only validated integer ids.
+        A name the export listed that the table read does not hold stops the run before any
+        mutation: the two readings disagreeing means the schema or the product has moved.
 
         The product's own export is the verify oracle on both sides of the write: what it holds
         decides what is removed, and the export is read AGAIN afterwards, so a delete the database
@@ -28,7 +36,9 @@
 
         Names are matched case-insensitively, agreeing with the import script, which treats a
         name differing only by case as the same variable. Matching exactly here would delete a
-        variable the import had just accepted as satisfying the declaration.
+        variable the import had just accepted as satisfying the declaration. Two held names that
+        collapse to one case-insensitive identity are refused before any mutation: which one the
+        declaration means is not this script's guess to make.
 
         One process stage (read -> act -> verify -> one result); shipped by the org three-file
         convention (the scripts/ pair plus each role's .stub).
@@ -264,9 +274,14 @@ Function Get-ExportedVariableName {
     If (-not (Test-Path -LiteralPath:$EXPORT_PATH)) {
       Throw 'ExportVariables reported success and wrote no file'
     }
-    $Document = [System.Xml.XmlDocument]::new()
-    $Document.LoadXml((Get-Content -LiteralPath:$EXPORT_PATH -Raw))
-    Remove-Item -LiteralPath:$EXPORT_PATH -Force
+    # The export carries every variable's VALUE, so the file must not outlive the read -- the
+    # cleanup runs whether or not the parse does.
+    Try {
+      $Document = [System.Xml.XmlDocument]::new()
+      $Document.LoadXml((Get-Content -LiteralPath:$EXPORT_PATH -Raw))
+    } Finally {
+      Remove-Item -LiteralPath:$EXPORT_PATH -Force -ErrorAction:'SilentlyContinue'
+    }
     # Explicit SelectSingleNode, never the property adapter: a child named 'Name' would otherwise
     # collide with XmlNode's own Name property.
     ForEach ($Node In @($Document.SelectNodes('//CustomVariable'))) {
@@ -289,52 +304,85 @@ $DeclaredSet = [System.Collections.Generic.HashSet[System.String]]::new(
 )
 
 $Held = Get-ExportedVariableName
+
+# Two held names that are one name case-insensitively cannot be reconciled against a declaration
+# that treats them as the same variable: whichever survived would be this script's guess. Refused
+# before anything else -- including in check mode, which must not call an ambiguous state prunable.
+$Folded = [System.Collections.Generic.HashSet[System.String]]::new([System.StringComparer]::OrdinalIgnoreCase)
+ForEach ($HeldName In $Held) {
+  If (-not $Folded.Add($HeldName)) {
+    Throw ('The product holds more than one variable named {0} (differing only by case); resolve that by hand first' -f $HeldName)
+  }
+}
+
 $Extra = @($Held | Where-Object { -not $DeclaredSet.Contains($PSItem) })
 $Kept = @($Held | Where-Object { $DeclaredSet.Contains($PSItem) })
 
 $Removed = [System.Collections.Generic.List[System.String]]::new()
 
-If (-not $Ansible.CheckMode) {
-  If ($Extra.Count -gt 0) {
-    # The command line has no verb that deletes a variable, so removal goes through the vendor's
-    # own database tooling, exactly as the registration script already does: the sqlite3.exe
-    # shipped beside the command line, against the database path the product itself reports.
-    $Sqlite = Join-Path -Path (Split-Path -Path $CliPath -Parent) -ChildPath 'sqlite3.exe'
-    If (-not (Test-Path -LiteralPath:$Sqlite -PathType:'Leaf')) {
-      Throw ('The product database tool is not at ''{0}''' -f $Sqlite)
-    }
-
-    # Where the database lives is a deployment choice, so it is asked for rather than assumed: the
-    # product reports its own path and cannot be wrong about it.
-    $Info = (Invoke-NativeCommand -Operation:'Reading the product system information' `
-        -FilePath:$CliPath -Argument:@('SystemInfo')).Output
-    $DatabasePath = (
-      @($Info | Where-Object -FilterScript { $PSItem -match '^\s*Database\s*:' }) |
-        Select-Object -First 1
-    ) -replace '^\s*Database\s*:\s*', ''
-    If (-not $DatabasePath) {
-      Throw 'SystemInfo did not report a database path'
-    }
-    If (-not (Test-Path -LiteralPath:$DatabasePath)) {
-      Throw ('The database is not at {0}' -f $DatabasePath)
-    }
-
-    # One DELETE per name, the whole batch one immediate transaction under a busy timeout, so a
-    # lock waits rather than fails and a mid-batch failure leaves no partial prune behind. Names
-    # are matched exactly as the export spelled them, and every value is escaped -- a hand-added
-    # name may legally hold an apostrophe.
-    $Statements = [System.Collections.Generic.List[System.String]]::new()
-    $Statements.Add('PRAGMA busy_timeout = 5000;')
-    $Statements.Add('BEGIN IMMEDIATE;')
-    ForEach ($Stranger In $Extra) {
-      $Statements.Add(("DELETE FROM CustomVariables WHERE Name = '{0}';" -f $Stranger.Replace("'", "''")))
-    }
-    $Statements.Add('COMMIT;')
-    $Null = Invoke-NativeCommand -Operation:'Removing the undeclared variables' -FilePath:$Sqlite `
-      -Argument:@($DatabasePath, ($Statements -join ' '))
-    $Removed.AddRange([System.String[]]$Extra)
+If ($Extra.Count -gt 0) {
+  # Everything read-only runs in check mode too, so "would remove" is a claim about a host where
+  # removal is actually possible; only the DELETE and the after-proof are withheld.
+  #
+  # The command line has no verb that deletes a variable, so removal goes through the vendor's
+  # own database tooling, exactly as the registration script already does: the sqlite3.exe
+  # shipped beside the command line, against the database path the product itself reports.
+  $Sqlite = Join-Path -Path (Split-Path -Path $CliPath -Parent) -ChildPath 'sqlite3.exe'
+  If (-not (Test-Path -LiteralPath:$Sqlite -PathType:'Leaf')) {
+    Throw ('The product database tool is not at ''{0}''' -f $Sqlite)
   }
 
+  # Where the database lives is a deployment choice, so it is asked for rather than assumed: the
+  # product reports its own path and cannot be wrong about it.
+  $Info = (Invoke-NativeCommand -Operation:'Reading the product system information' `
+      -FilePath:$CliPath -Argument:@('SystemInfo')).Output
+  $DatabasePath = (
+    @($Info | Where-Object -FilterScript { $PSItem -match '^\s*Database\s*:' }) |
+      Select-Object -First 1
+  ) -replace '^\s*Database\s*:\s*', ''
+  If (-not $DatabasePath) {
+    Throw 'SystemInfo did not report a database path'
+  }
+  If (-not (Test-Path -LiteralPath:$DatabasePath)) {
+    Throw ('The database is not at {0}' -f $DatabasePath)
+  }
+
+  # The table, read as row id and HEX-ENCODED name: hex because the parse must not be confusable
+  # by anything a name may contain, and the id because no name may ever enter SQL. The names the
+  # export listed must all be here -- the two readings disagreeing means the schema or the
+  # product has moved, and a prune against a moved product is refused, not attempted.
+  $IdByName = @{}
+  ForEach ($Row In (Invoke-NativeCommand -Operation:'Reading the variable table' -FilePath:$Sqlite `
+        -Argument:@($DatabasePath, 'PRAGMA busy_timeout = 5000; SELECT CustomVariableId, hex(Name) FROM CustomVariables;')).Output) {
+    $Parts = ([System.String]$Row).Split('|')
+    If ($Parts.Count -ne 2 -or $Parts[0] -notmatch '^[0-9]+$' -or $Parts[1] -notmatch '^([0-9A-Fa-f]{2})*$') {
+      Throw ('The variable table did not read back as id and hex name: {0}' -f $Row)
+    }
+    $Bytes = [System.Byte[]]::new($Parts[1].Length / 2)
+    For ($B = 0; $B -lt $Bytes.Length; $B++) {
+      $Bytes[$B] = [System.Convert]::ToByte($Parts[1].Substring($B * 2, 2), 16)
+    }
+    $IdByName[[System.Text.Encoding]::UTF8.GetString($Bytes)] = $Parts[0]
+  }
+  $TargetId = [System.Collections.Generic.List[System.String]]::new()
+  ForEach ($Stranger In $Extra) {
+    If (-not $IdByName.ContainsKey($Stranger)) {
+      Throw ('The export lists {0} but the variable table does not hold it; refusing to prune a product whose readings disagree' -f $Stranger)
+    }
+    $TargetId.Add([System.String]$IdByName[$Stranger])
+  }
+
+  If (-not $Ansible.CheckMode) {
+    # One DELETE naming only validated integer ids, inside one immediate transaction under a busy
+    # timeout, so a lock waits rather than fails and a failure leaves no partial prune behind.
+    $Batch = 'PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE; DELETE FROM CustomVariables WHERE CustomVariableId IN ({0}); COMMIT;' -f ($TargetId -join ', ')
+    $Null = Invoke-NativeCommand -Operation:'Removing the undeclared variables' -FilePath:$Sqlite `
+      -Argument:@($DatabasePath, $Batch)
+    $Removed.AddRange([System.String[]]$Extra)
+  }
+}
+
+If (-not $Ansible.CheckMode) {
   # Read again, always, because this is where the whole promise is either true or not, and a
   # promise about the product's state may only be made from the product's state NOW. This is what
   # catches a delete the database accepted and did not perform, and equally a declared variable

@@ -99,7 +99,7 @@ pdq_inventory_defaults:
   # the removal task deletes every custom variable this map does not name, proving each removal
   # from a fresh export. Empty -- the default -- declares that the product holds NO custom
   # variables, which on a fresh install is already true, so the disk role plus this role alone
-  # still converges. A key declared with a null value is unmanaged: neither written nor kept.
+  # still converges.
   variables: {}
 
   # Every preference the console shows, organised as its Preferences pages are: a map of PAGES,

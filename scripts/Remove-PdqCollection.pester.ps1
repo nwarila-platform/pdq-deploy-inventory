@@ -93,6 +93,7 @@ Describe 'Remove-PdqCollection' {
     Add-FakeRow -Id '101' -Parent '100' -Type 'LibraryCollection' -Name '010 Editor 32bit'
     $global:FakeUndeletable = @()
     $global:FakeRenamed = @()
+    $global:FakeMoved = @()
     $global:FakeListingOmits = @()
     $global:FakeReferencedIds = @()
     $global:FakeNoDbLine = $False
@@ -139,7 +140,9 @@ Describe 'Remove-PdqCollection' {
         $global:LASTEXITCODE = 0
         Return
       }
-      If ($args[1] -like '*FROM ScanProfileCollections*') {
+      If ($args[1] -like '*FROM ScanProfileCollections*' -and $args[1] -notlike '*DELETE*') {
+        # The reference READ only: the delete batch also names this table inside its own NOT IN
+        # conditions and must fall through to the branch below.
         $global:FakeReferencedIds | ForEach-Object { $_ }
         $global:LASTEXITCODE = 0
         Return
@@ -147,11 +150,18 @@ Describe 'Remove-PdqCollection' {
       $global:FakeSqlBatches.Add($args[1])
       '5000'
       ForEach ($Match In [System.Text.RegularExpressions.Regex]::Matches(
-          $args[1], "DELETE FROM Collections WHERE CollectionId = ([0-9]+) AND hex\(Name\) = '([0-9A-F]*)';")) {
+          $args[1], "DELETE FROM Collections WHERE CollectionId = ([0-9]+) AND hex\(Name\) = '([0-9A-F]*)' AND IFNULL\(ParentId, ''\) = '([0-9]*)' AND hex\(IFNULL\(Type, ''\)\) = '([0-9A-F]*)' AND CollectionId NOT IN \(SELECT CollectionId FROM ScanProfileCollections\) AND CollectionId NOT IN \(SELECT IFNULL\(CollectionSourceId, -1\) FROM AutoReports\);")) {
         $Target = @($global:FakeRows | Where-Object { $_.Id -eq $Match.Groups[1].Value })[0]
         If ($Null -eq $Target) { Continue }
+        # The row as it is NOW: a renamed, moved or retyped row no longer matches the predicate,
+        # and a referenced id is spared from inside the transaction -- the measured semantics.
         $Current = If ($global:FakeRenamed -contains $Target.Name) { $Target.Name + ' (renamed)' } Else { $Target.Name }
-        If ((ConvertTo-FakeHex $Current) -ceq $Match.Groups[2].Value -and $global:FakeUndeletable -notcontains $Target.Name) {
+        $Parent = If ($global:FakeMoved -contains $Target.Name) { '999' } Else { $Target.Parent }
+        If ((ConvertTo-FakeHex $Current) -ceq $Match.Groups[2].Value -and
+          $Parent -ceq $Match.Groups[3].Value -and
+          (ConvertTo-FakeHex $Target.Type) -ceq $Match.Groups[4].Value -and
+          $global:FakeReferencedIds -notcontains $Target.Id -and
+          $global:FakeUndeletable -notcontains $Target.Name) {
           $Null = $global:FakeRows.Remove($Target)
         }
       }
@@ -175,7 +185,7 @@ Describe 'Remove-PdqCollection' {
   }
 
   AfterAll {
-    Remove-Variable -Name 'FakeRows', 'FakeUndeletable', 'FakeRenamed', 'FakeListingOmits',
+    Remove-Variable -Name 'FakeRows', 'FakeUndeletable', 'FakeRenamed', 'FakeMoved', 'FakeListingOmits',
       'FakeReferencedIds', 'FakeNoDbLine', 'FakeLibraryVanishes', 'FakeSqlBatches', 'FakeDbPath' `
       -Scope 'Global' -Force -ErrorAction 'SilentlyContinue'
   }
@@ -209,6 +219,46 @@ Describe 'Remove-PdqCollection' {
       & $script:ScriptPath -Definition @() -BuiltIn $script:BuiltIn -CliPath $script:CliPath | Out-Null
       $Context.Changed | Should -BeFalse
       @($global:FakeRows | Where-Object { $_.Type -ceq 'LibraryCollection' }).Count | Should -Be 2
+    }
+
+    It 'refuses to prune a stranger holding a library collection beneath it' {
+      # Deleting the tree would take a vendor row with it; the run stops with everything intact.
+      Add-FakeRow -Id '10' -Parent '' -Type 'DynamicCollection' -Name 'Hand Made'
+      Add-FakeRow -Id '11' -Parent '10' -Type 'LibraryCollection' -Name 'Captured Library Row'
+      { & $script:ScriptPath -Definition @() -BuiltIn $script:BuiltIn -CliPath $script:CliPath } |
+        Should -Throw '*belongs to the Collection Library*'
+      $global:FakeSqlBatches.Count | Should -Be 0
+      $global:FakeRows.Count | Should -Be 6
+    }
+
+    It 'refuses to remove anything when a built-in collection is missing' {
+      # Furniture that moved means the pinned list no longer describes the product; deleting the
+      # stranger that replaced it would destroy the new furniture.
+      Add-FakeRow -Id '10' -Parent '' -Type 'DynamicCollection' -Name 'New Furniture'
+      $Null = $global:FakeRows.Remove(@($global:FakeRows | Where-Object { $_.Name -eq 'Servers' })[0])
+      { & $script:ScriptPath -Definition @() -BuiltIn $script:BuiltIn -CliPath $script:CliPath } |
+        Should -Throw '*furniture no longer matches this list*'
+      $global:FakeSqlBatches.Count | Should -Be 0
+    }
+
+    It 'refuses a name that is both declared and built-in' {
+      { & $script:ScriptPath -Definition @((New-CollectionText -Name 'Servers')) `
+          -BuiltIn $script:BuiltIn -CliPath $script:CliPath } |
+        Should -Throw '*one name cannot have two owners*'
+    }
+
+    It 'refuses a name declared twice' {
+      { & $script:ScriptPath -Definition @((New-CollectionText -Name 'Twice'), (New-CollectionText -Name 'twice')) `
+          -BuiltIn $script:BuiltIn -CliPath $script:CliPath } |
+        Should -Throw '*declared more than once*'
+    }
+
+    It 'refuses a table row wearing a synthetic listing name' {
+      # 'All Computers' is an entry the listing invents; a real row under that name would
+      # corroborate against it and prove nothing.
+      Add-FakeRow -Id '10' -Parent '' -Type 'DynamicCollection' -Name 'All Computers'
+      { & $script:ScriptPath -Definition @() -BuiltIn $script:BuiltIn -CliPath $script:CliPath } |
+        Should -Throw '*invents for itself*'
     }
 
     It 'fails when the library does not count the same after the run' {
@@ -255,12 +305,31 @@ Describe 'Remove-PdqCollection' {
         Should -Throw '*differing only by case*'
     }
 
-    It 'fails rather than deleting a row that moved between the read and the write' {
+    It 'fails rather than deleting a row that was renamed between the read and the write' {
       Add-FakeRow -Id '10' -Parent '' -Type 'DynamicCollection' -Name 'Hand Made'
       $global:FakeRenamed = @('Hand Made')
       { & $script:ScriptPath -Definition @() -BuiltIn $script:BuiltIn -CliPath $script:CliPath } |
         Should -Throw '*still holds the undeclared collection*'
     }
+
+    It 'fails rather than deleting a row that MOVED between the read and the write' {
+      # Under another parent it may be nested drift this script deliberately leaves standing;
+      # the predicate binds the parent as read, so the moved row matches nothing.
+      Add-FakeRow -Id '10' -Parent '' -Type 'DynamicCollection' -Name 'Hand Made'
+      $global:FakeMoved = @('Hand Made')
+      { & $script:ScriptPath -Definition @() -BuiltIn $script:BuiltIn -CliPath $script:CliPath } |
+        Should -Throw '*still holds the undeclared collection*'
+      @($global:FakeRows | ForEach-Object Name) | Should -Contain 'Hand Made'
+    }
+
+    It 'reports a CHILD the database kept, not merely a surviving root' {
+      Add-FakeRow -Id '10' -Parent '' -Type 'DynamicCollection' -Name 'Hand Made'
+      Add-FakeRow -Id '11' -Parent '10' -Type 'DynamicCollection' -Name 'Stubborn Child'
+      $global:FakeUndeletable = @('Stubborn Child')
+      { & $script:ScriptPath -Definition @() -BuiltIn $script:BuiltIn -CliPath $script:CliPath } |
+        Should -Throw '*Stubborn Child*'
+    }
+
 
     It 'fails when the database accepts a delete it did not perform' {
       Add-FakeRow -Id '10' -Parent '' -Type 'DynamicCollection' -Name 'Hand Made'
@@ -283,7 +352,7 @@ Describe 'Remove-PdqCollection' {
       New-AnsibleContext | Out-Null
       & $script:ScriptPath -Definition @() -BuiltIn $script:BuiltIn -CliPath $script:CliPath | Out-Null
       $global:FakeSqlBatches.Count | Should -Be 1
-      $global:FakeSqlBatches[0] | Should -Match '^PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE; (DELETE FROM Collections WHERE CollectionId = [0-9]+ AND hex\(Name\) = ''[0-9A-F]*''; ){2}COMMIT;$'
+      $global:FakeSqlBatches[0] | Should -Match '^PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE; (DELETE FROM Collections WHERE CollectionId = [0-9]+ AND hex\(Name\) = ''[0-9A-F]*'' AND IFNULL\(ParentId, ''''\) = ''[0-9]*'' AND hex\(IFNULL\(Type, ''''\)\) = ''[0-9A-F]*'' AND CollectionId NOT IN \(SELECT CollectionId FROM ScanProfileCollections\) AND CollectionId NOT IN \(SELECT IFNULL\(CollectionSourceId, -1\) FROM AutoReports\); ){2}COMMIT;$'
       $global:FakeSqlBatches[0] | Should -Not -Match 'Hand Made'
       # The child's id appears before the parent's.
       $global:FakeSqlBatches[0].IndexOf('CollectionId = 11') | Should -BeLessThan $global:FakeSqlBatches[0].IndexOf('CollectionId = 10')

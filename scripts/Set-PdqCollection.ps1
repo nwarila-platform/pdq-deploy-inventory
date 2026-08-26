@@ -350,11 +350,17 @@ Try {
 }
 # Explicit SelectSingleNode, never the property adapter, because a child named 'Name' would
 # otherwise collide with XmlNode's own Name property.
+If (@($Document.SelectNodes('/AdminArsenal.Export/Collection')).Count -ne 1) {
+  Throw 'The definition must carry exactly one top-level collection'
+}
 $NameNode = $Document.SelectSingleNode('/AdminArsenal.Export/Collection/Name')
 If ($Null -eq $NameNode -or [System.String]::IsNullOrWhiteSpace($NameNode.InnerText)) {
   Throw 'The definition does not name a collection'
 }
 $Name = [System.String]$NameNode.InnerText
+If ($Name.Contains('\')) {
+  Throw ('{0} holds a backslash, which the product''s listing reads as a level separator; the pruning step could never corroborate it, so it is refused here, before it is ever imported' -f $Name)
+}
 $DeclaredKey = ConvertTo-ComparableCollection -Text:$Declared
 If (-not $NAME_PATTERN.IsMatch($Name)) {
   Throw ('{0} cannot be addressed by the command line, which reads *, ? and , as selection syntax' -f $Name)

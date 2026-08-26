@@ -433,11 +433,23 @@ jobs:
             $Held = @($Xml.SelectNodes('//CustomVariable/Name') | ForEach-Object InnerText)
             If ($Held -cnotcontains $Product[1]) { Write-Output ($Product[1] + ' did not land'); Exit 6 }
           }
+          # A name-only collection is REFUSED by the import (measured); the minimal importable
+          # shape carries the report-definition skeleton and a type.
           $Stray = @(
             '<?xml version="1.0" encoding="utf-8"?>'
             '<AdminArsenal.Export Code="PDQInventory" Name="PDQ Inventory" Version="20.1.8.0" MinimumVersion="4.0">'
             '  <Collection>'
+            '    <ReportDefinition name="Definition">'
+            '      <RootFilter name="Filter">'
+            '        <Comparison>All</Comparison>'
+            '        <Filters type="list" />'
+            '      </RootFilter>'
+            '      <ReportDefinitionTypeName>BasicReportDefinition</ReportDefinitionTypeName>'
+            '      <Columns type="list" />'
+            '    </ReportDefinition>'
+            '    <TypeName>DynamicCollection</TypeName>'
             '    <Name>UndeclaredByHand Collection</Name>'
+            '    <Children type="list" />'
             '  </Collection>'
             '</AdminArsenal.Export>'
           ) -join "`n"
@@ -541,7 +553,7 @@ jobs:
           Remove-Item 'C:\Windows\Temp\decl-out' -Recurse -Force
           & $Inv ExportCollections -Name 'UndeclaredByHand Collection' -Path 'C:\Windows\Temp\stray-out2' -Overwrite 2>&1 | Out-Null
           If ($LASTEXITCODE -ne 3) { Write-Output 'the hand-added collection is still there'; Exit 2 }
-          Write-Output 'both products hold exactly the declared names, and the collections match the declaration'
+          Write-Output 'both products hold exactly the declared names; the declared collection exports and the hand-added one is gone'
           Exit 0
           PS1
           # The declared names are read from the playbook itself and spliced in BASE64-ENCODED:

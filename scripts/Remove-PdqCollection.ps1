@@ -31,9 +31,16 @@
         collection referenced by a scan profile or an auto report is refused rather than removed,
         and a name carrying a backslash is refused because the listing separates levels with one.
 
-        Afterwards the table is read again: every stranger gone, every declared and built-in name
-        still standing, and the library holding EXACTLY as many collections as before -- the
-        proof, on every converge, that removal never reached what the vendor ships.
+        Only the collection rows themselves are deleted. The membership, display-settings and
+        report-definition rows a collection owns are the product's own bookkeeping, and the
+        product reaps them itself: measured 2026-08-26, the database carries no trigger touching
+        these tables, and after every deletion of the night the orphan count in each was zero --
+        the service's housekeeping, not this script's business.
+
+        Afterwards the table is read again: every doomed row gone by its exact identity, every
+        declared and built-in name still standing, and the library holding EXACTLY the same rows
+        as before -- identity by identity, not merely count by count -- the proof, on every
+        converge, that removal never reached what the vendor ships.
 
     .PARAMETER DebugLevel
         Three-digit control string configuring independent debugging functions, one digit each.
@@ -266,10 +273,24 @@ ForEach ($Text In $Definition) {
   If ($Null -eq $NameNode -or [System.String]::IsNullOrWhiteSpace($NameNode.InnerText)) {
     Throw 'A definition does not name a collection'
   }
-  $Null = $DeclaredSet.Add($NameNode.InnerText)
+  If (-not $DeclaredSet.Add($NameNode.InnerText)) {
+    Throw ('{0} is declared more than once; two definitions cannot own one name' -f $NameNode.InnerText)
+  }
 }
 $BuiltInSet = [System.Collections.Generic.HashSet[System.String]]::new(
   [System.String[]]$BuiltIn, [System.StringComparer]::OrdinalIgnoreCase
+)
+ForEach ($Owned In $DeclaredSet) {
+  If ($BuiltInSet.Contains($Owned)) {
+    Throw ('{0} is both declared and listed as the product''s own furniture; one name cannot have two owners' -f $Owned)
+  }
+}
+
+# The listing entries no table row backs, measured on the pinned product. A real top-level row
+# wearing one of these names would corroborate against the synthetic line and prove nothing, so
+# it is refused instead.
+New-Variable -Force -Name:'SYNTHETIC_NAMES' -Option:'ReadOnly' -Value:(
+  [System.String[]]@('All Computers')
 )
 
 # The command line has no verb that deletes a collection, so removal goes through the vendor's own
@@ -321,7 +342,9 @@ Function Read-CollectionRow {
 
 $Rows = Read-CollectionRow
 $TopLevel = @($Rows | Where-Object { $PSItem.Parent -eq '' })
-$LibraryCount = @($Rows | Where-Object { $PSItem.Type -ceq 'LibraryCollection' }).Count
+$LibraryRows = @($Rows | Where-Object { $PSItem.Type -ceq 'LibraryCollection' })
+$LibraryCount = $LibraryRows.Count
+$LibraryIdentity = @($LibraryRows | ForEach-Object { '{0}|{1}' -f $PSItem.Id, $PSItem.Hex } | Sort-Object) -join "`n"
 
 # Two top-level names that are one name case-insensitively cannot be reconciled against a
 # declaration that treats them as the same collection; refused before anything else.
@@ -349,6 +372,9 @@ ForEach ($Row In @($TopLevel | Where-Object { $PSItem.Type -cne 'LibraryCollecti
   If ($Row.Name.Contains('\')) {
     Throw ('{0} holds a backslash, which the listing reads as a level separator; it cannot be corroborated and is refused' -f $Row.Name)
   }
+  If ($SYNTHETIC_NAMES -contains $Row.Name) {
+    Throw ('{0} wears the name of an entry the listing invents for itself; it cannot be corroborated and is refused' -f $Row.Name)
+  }
   If (-not $Listing.Contains($Row.Name)) {
     Throw ('The table holds the top-level collection {0} but the product''s own listing does not; refusing to prune a product whose readings disagree' -f $Row.Name)
   }
@@ -375,6 +401,23 @@ ForEach ($Root In $Strangers) {
   }
 }
 
+# The vendor's rows are refused before anything else is judged: a library-typed row anywhere in
+# a doomed subtree stops the run, and so does furniture the product no longer shows -- a product
+# whose built-in set moved is a product this list no longer describes, and deleting the stranger
+# that replaced it would destroy the new furniture.
+ForEach ($Dead In $Doomed) {
+  If ($Dead.Type -ceq 'LibraryCollection') {
+    Throw ('{0} sits under an undeclared collection but belongs to the Collection Library; nothing here may touch it' -f $Dead.Name)
+  }
+}
+$TopNames = [System.Collections.Generic.HashSet[System.String]]::new(
+  [System.String[]]@($TopLevel | ForEach-Object Name), [System.StringComparer]::OrdinalIgnoreCase
+)
+$Vanished = @($BuiltIn | Where-Object { -not $TopNames.Contains($PSItem) })
+If ($Vanished.Count -gt 0) {
+  Throw ('The product does not hold the built-in collection(s) {0}; its furniture no longer matches this list, and nothing is removed until the list is corrected' -f ($Vanished -join ', '))
+}
+
 # A collection a scan profile scans or an auto report reads is refused rather than removed:
 # deleting it would leave a dangling reference in vendor state this script does not own.
 If ($Doomed.Count -gt 0) {
@@ -395,15 +438,25 @@ $Removed = [System.Collections.Generic.List[System.String]]::new()
 
 If (-not $Ansible.CheckMode) {
   If ($Doomed.Count -gt 0) {
-    # Children before parents, and each DELETE bound to the row's whole identity -- the id and
-    # the hex of the name exactly as it was read -- so a row that moved between the read and this
-    # write matches nothing instead of dying for its predecessor's id. One immediate transaction
-    # under a busy timeout; a failure leaves no partial prune behind.
+    # Children before parents, and each DELETE bound to the row's WHOLE identity -- the id, the
+    # hex of the name, the parent and the hex of the type, all exactly as they were read -- so a
+    # row that moved, was renamed or was retyped between the read and this write matches nothing
+    # instead of dying for what it used to be. The reference refusal is restated INSIDE the
+    # predicate too, so a scan profile or auto report that arrived after the pre-check protects
+    # its collection from within the transaction. Every bound value is an integer or hex; no raw
+    # name or type text enters SQL. One immediate transaction under a busy timeout; a failure
+    # leaves no partial prune behind, and a row any condition spared is reported by the read-back.
     $Statements = [System.Collections.Generic.List[System.String]]::new()
     $Statements.Add('PRAGMA busy_timeout = 5000;')
     $Statements.Add('BEGIN IMMEDIATE;')
     For ($D = $Doomed.Count - 1; $D -ge 0; $D--) {
-      $Statements.Add(("DELETE FROM Collections WHERE CollectionId = {0} AND hex(Name) = '{1}';" -f $Doomed[$D].Id, $Doomed[$D].Hex))
+      $TypeHex = -join ([System.Text.Encoding]::UTF8.GetBytes($Doomed[$D].Type) | ForEach-Object { $PSItem.ToString('X2') })
+      $Predicate = "DELETE FROM Collections WHERE CollectionId = {0} AND hex(Name) = '{1}' AND IFNULL(ParentId, '') = '{2}' AND hex(IFNULL(Type, '')) = '{3}'" -f @(
+        $Doomed[$D].Id, $Doomed[$D].Hex, $Doomed[$D].Parent, $TypeHex
+      )
+      $Statements.Add($Predicate `
+          + ' AND CollectionId NOT IN (SELECT CollectionId FROM ScanProfileCollections)' `
+          + ' AND CollectionId NOT IN (SELECT IFNULL(CollectionSourceId, -1) FROM AutoReports);')
     }
     $Statements.Add('COMMIT;')
     $Null = Invoke-NativeCommand -Operation:'Removing the undeclared collections' -FilePath:$Sqlite `
@@ -413,19 +466,19 @@ If (-not $Ansible.CheckMode) {
     }
   }
 
-  # Read again, always: every stranger gone, every declared and built-in name still standing, and
-  # the library holding exactly as many collections as before -- the standing proof that removal
-  # never reached what the vendor ships.
+  # Read again, always: every doomed row gone by its exact identity -- anywhere, not merely at
+  # the top -- every declared and built-in name still standing, and the library holding exactly
+  # the same rows as before, identity by identity. A count would forgive a swap; a set does not.
   $After = Read-CollectionRow
-  $AfterTop = @($After | Where-Object { $PSItem.Parent -eq '' })
-  $Survivors = @($AfterTop | Where-Object {
-      $PSItem.Type -cne 'LibraryCollection' -and
-      -not $BuiltInSet.Contains($PSItem.Name) -and
-      -not $DeclaredSet.Contains($PSItem.Name)
-    })
-  If ($Survivors.Count -gt 0) {
-    Throw ('The product still holds the undeclared collection(s) {0}' -f (@($Survivors | ForEach-Object Name) -join ', '))
+  $AfterIdentity = [System.Collections.Generic.HashSet[System.String]]::new([System.StringComparer]::Ordinal)
+  ForEach ($Row In $After) {
+    $Null = $AfterIdentity.Add(('{0}|{1}' -f $Row.Id, $Row.Hex))
   }
+  $StillThere = @($Doomed | Where-Object { $AfterIdentity.Contains(('{0}|{1}' -f $PSItem.Id, $PSItem.Hex)) })
+  If ($StillThere.Count -gt 0) {
+    Throw ('The product still holds the undeclared collection(s) {0}' -f (@($StillThere | ForEach-Object Name) -join ', '))
+  }
+  $AfterTop = @($After | Where-Object { $PSItem.Parent -eq '' })
   $AfterNames = [System.Collections.Generic.HashSet[System.String]]::new(
     [System.String[]]@($AfterTop | ForEach-Object Name), [System.StringComparer]::OrdinalIgnoreCase
   )
@@ -433,9 +486,10 @@ If (-not $Ansible.CheckMode) {
   If ($Missing.Count -gt 0) {
     Throw ('The product does not hold the declared or built-in collection(s) {0}' -f ($Missing -join ', '))
   }
-  $AfterLibrary = @($After | Where-Object { $PSItem.Type -ceq 'LibraryCollection' }).Count
-  If ($AfterLibrary -ne $LibraryCount) {
-    Throw ('The Collection Library held {0} collections before this run and {1} after; nothing here may touch it' -f $LibraryCount, $AfterLibrary)
+  $LibraryAfter = @($After | Where-Object { $PSItem.Type -ceq 'LibraryCollection' } |
+      ForEach-Object { '{0}|{1}' -f $PSItem.Id, $PSItem.Hex } | Sort-Object) -join "`n"
+  If ($LibraryAfter -cne $LibraryIdentity) {
+    Throw 'The Collection Library does not hold the same rows it held before this run; nothing here may touch it'
   }
 }
 

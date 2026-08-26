@@ -294,7 +294,9 @@ pdq_inventory_defaults:
   # below account for is removed. Naming them twice is the point: the files say what the
   # collection IS, this list says what must be there, and a converge where they disagree stops
   # instead of deleting. An EMPTY list is how a caller states that this repository owns no
-  # collections.
+  # collections. Ownership stops at the top level on purpose: something hand-added INSIDE a
+  # declared or built-in tree is left standing, stated here so nobody reads the prune as deeper
+  # than it is.
   collections:
     - 'Chrome Below Pinned Version.xml'
 
@@ -303,7 +305,7 @@ pdq_inventory_defaults:
   # vendor, never removed, and stated here rather than discovered so a product upgrade that
   # changes the furniture changes this reviewed list instead of silently widening what may be
   # deleted. The Collection Library itself needs no list: its rows announce themselves and are
-  # never touched.
+  # never touched. This list belongs to installer.version: bumping the pin re-measures it.
   built_in_collections:
     - 'Online Systems'
     - 'Reboot Timeline'

@@ -227,6 +227,24 @@ Describe 'Set-PdqCollection' {
         Should -Throw '*does not name a collection*'
     }
 
+    It 'refuses a name carrying a backslash, before it is ever imported' {
+      { & $script:ScriptPath -Definition (New-CollectionText -Name 'Bad\Name') -CliPath $script:CliPath } |
+        Should -Throw '*level separator*'
+      $global:FakeCliCalls.Count | Should -Be 0
+    }
+
+    It 'refuses a definition carrying more than one top-level collection' {
+      $Two = @'
+<?xml version="1.0" encoding="utf-8"?>
+<AdminArsenal.Export Code="PDQInventory" Name="PDQ Inventory" Version="20.1.8.0" MinimumVersion="4.0">
+  <Collection><Name>One</Name></Collection>
+  <Collection><Name>Two</Name></Collection>
+</AdminArsenal.Export>
+'@
+      { & $script:ScriptPath -Definition $Two -CliPath $script:CliPath } |
+        Should -Throw '*exactly one top-level collection*'
+    }
+
     It 'refuses a name the command line would read as a selection pattern' {
       ForEach ($Bad In @('Chrome*', 'Chrome?', 'Chrome,Firefox')) {
         { & $script:ScriptPath -Definition (New-CollectionText -Name $Bad) -CliPath $script:CliPath } |

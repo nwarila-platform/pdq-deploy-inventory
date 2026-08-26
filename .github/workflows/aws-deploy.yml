@@ -490,7 +490,9 @@ jobs:
           export SVC_PW
           cat > /tmp/prove-clean.ps1 <<'PS1'
           $ErrorActionPreference = 'Continue'
-          $Declared = @(__DECLARED_NAMES__)
+          $Declared = @(__DECLARED_NAMES__) | ForEach-Object {
+            [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($_))
+          }
           If ($Declared.Count -eq 0) { Write-Output 'no declared names passed'; Exit 5 }
           ForEach ($Product In @('PDQ Deploy\PDQDeploy.exe', 'PDQ Inventory\PDQInventory.exe')) {
             $Cli = 'C:\Program Files (x86)\Admin Arsenal\' + $Product
@@ -519,16 +521,18 @@ jobs:
           Write-Output 'both products hold exactly the declared names'
           Exit 0
           PS1
-          # The declared names are read from the playbook itself and spliced in as single-quoted
-          # literals, apostrophes doubled -- lossless for any name the role accepts, where an
-          # argv split would break on the first space.
+          # The declared names are read from the playbook itself and spliced in BASE64-ENCODED:
+          # the encoding's alphabet cannot collide with any quoting grammar, where a quoted
+          # literal breaks on the quote characters the shell's own grammar recognises -- the
+          # curly ones included -- and an argv split breaks on the first space.
           python3 - <<'PY'
           import io, yaml
           import os
           plays = yaml.safe_load(open(os.environ['GITHUB_WORKSPACE'] + '/ansible/playbooks/pdq-aws.yml'))
           keys = sorted({k for p in plays for k in (p.get('vars') or {}).get('pdq_variables', {})})
           assert keys, 'could not read pdq_variables from the playbook'
-          literal = ', '.join("'" + k.replace("'", "''") + "'" for k in keys)
+          import base64
+          literal = ', '.join("'" + base64.b64encode(k.encode()).decode() + "'" for k in keys)
           path = '/tmp/prove-clean.ps1'
           text = io.open(path, encoding='utf-8').read()
           io.open(path, 'w', encoding='utf-8').write(text.replace('__DECLARED_NAMES__', literal))

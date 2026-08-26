@@ -15,8 +15,8 @@
 
         Two passes over one reading: decide which variables differ, write only those, then prove
         every requested variable reads back. Idempotent -- a variable already at its value is left
-        untouched and reported unchanged. This script adds and updates; it never deletes, so a
-        name the product holds but the caller omits is left alone.
+        untouched and reported unchanged. This script adds and updates; it never deletes. Removing
+        what the declaration does not name is Remove-PdqVariable.ps1's half of the promise.
 
         The export is a FILE only, read whole and deleted at once; it carries no secrets.
 

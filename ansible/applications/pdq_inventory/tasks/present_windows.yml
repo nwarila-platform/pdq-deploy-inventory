@@ -758,6 +758,39 @@
 
     #endregion --- [ Process: Import The Pinned Variables ] ----------------------------------- #
 
+    #region ------ [ Process: Remove The Undeclared Variables ] ------------------------------- #
+    # The other half of the variable promise. The import above puts every declared variable in
+    # place; this removes every variable the declaration does not name, so the declared set is the
+    # WHOLE set and a converge states the product's end state rather than a lower bound on it.
+    # There is no switch for that: a role that states an end state and then leaves strangers
+    # standing has not stated the end state. Removal is proved from the product's own export,
+    # re-read after the write, so a delete the database accepted and did not perform fails the run.
+    # Runs unconditionally -- an empty declaration declares that the product holds NO custom
+    # variables, which on a fresh install is already true and changes nothing. Names declared
+    # without a value are unmanaged by the import and are therefore not declared here either.
+    # The .ps1 is MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role
+    # tracks only files/Remove-PdqVariable.ps1.stub).
+
+    - name: 'PROCESS | Remove The Undeclared Variables'
+      become: true
+      become_method: 'ansible.builtin.runas'
+      become_user: "{{ pdq_inventory_running.service_account.name }}"
+      vars:
+        ansible_become_flags: 'logon_type=batch'
+        ansible_become_password: "{{ __pdq_inventory_secret__.contents }}"
+
+      ansible.windows.win_powershell:
+        depth: 3
+        error_action: 'stop'
+        parameters:
+          Name: >-
+            {{ pdq_inventory_running.variables | dict2items
+               | rejectattr('value', 'none') | map(attribute='key') | list }}
+          CliPath: "{{ pdq_inventory_running.cli_path }}"
+        script: "{{ lookup('ansible.builtin.file', 'Remove-PdqVariable.ps1') }}"
+
+    #endregion --- [ Process: Remove The Undeclared Variables ] ------------------------------- #
+
     #region ------ [ Process: Authorize The Console Users ] ----------------------------------- #
     # Who may open the console. A silent install authorises no one, and RBAC being off leaves it
     # that way -- the product requires each account or group to be an explicit Console User, not

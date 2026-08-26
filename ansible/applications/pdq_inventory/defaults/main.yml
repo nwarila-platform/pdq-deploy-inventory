@@ -94,9 +94,12 @@ pdq_inventory_defaults:
 
   # The pinned custom variables to import, keyed by each application's Add/Remove Programs identity
   # (<Publisher>_<DisplayName>, Title Case, special characters spelled out) with the value being its
-  # version. Empty by default -- so the disk role plus this role alone still converges -- and
-  # supplied by the playbook, which hands the SAME map to both products. The import task creates or
-  # updates only what differs and proves each reads back.
+  # version. Supplied by the playbook, which hands the SAME map to both products. The declaration
+  # is COMPLETE: the import task creates or updates what differs and proves each reads back, and
+  # the removal task deletes every custom variable this map does not name, proving each removal
+  # from a fresh export. Empty -- the default -- declares that the product holds NO custom
+  # variables, which on a fresh install is already true, so the disk role plus this role alone
+  # still converges. A key declared with a null value is unmanaged: neither written nor kept.
   variables: {}
 
   # Every preference the console shows, organised as its Preferences pages are: a map of PAGES,

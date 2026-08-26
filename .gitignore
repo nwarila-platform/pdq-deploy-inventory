@@ -80,6 +80,7 @@
 !/ansible/applications/pdq_deploy/files/Set-PdqPackage.ps1.stub
 !/ansible/applications/pdq_deploy/files/Remove-PdqPackage.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqVariable.ps1.stub
+!/ansible/applications/pdq_deploy/files/Remove-PdqVariable.ps1.stub
 !/ansible/applications/pdq_deploy/handlers/
 !/ansible/applications/pdq_deploy/handlers/main.yml
 !/ansible/applications/pdq_deploy/meta/main.yml
@@ -98,6 +99,7 @@
 !/ansible/applications/pdq_inventory/files/Set-PdqSetting.ps1.stub
 !/ansible/applications/pdq_inventory/files/Set-PdqRegistration.ps1.stub
 !/ansible/applications/pdq_inventory/files/Set-PdqVariable.ps1.stub
+!/ansible/applications/pdq_inventory/files/Remove-PdqVariable.ps1.stub
 !/ansible/applications/pdq_inventory/handlers/main.yml
 !/ansible/applications/pdq_inventory/meta/main.yml
 !/ansible/applications/pdq_inventory/tasks/absent_windows.yml
@@ -146,6 +148,8 @@
 !/scripts/Set-PdqPackage.pester.ps1
 !/scripts/Remove-PdqPackage.ps1
 !/scripts/Remove-PdqPackage.pester.ps1
+!/scripts/Remove-PdqVariable.ps1
+!/scripts/Remove-PdqVariable.pester.ps1
 !/scripts/compose-and-run.sh
 !/scripts/materialize-role-scripts.sh
 

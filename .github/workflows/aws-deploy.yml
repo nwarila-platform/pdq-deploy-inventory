@@ -379,6 +379,95 @@ jobs:
           fi
           echo "second converge reported exactly the two expected credential changes"
 
+      # Determinism proof. The declared variable set must be the ONLY set, so drift is created the
+      # way real drift arrives -- by hand, through each product's own command line, past the
+      # playbook's back -- and the next converge must remove exactly it and nothing else.
+      - name: Add an undeclared variable to each product by hand
+        timeout-minutes: 10
+        working-directory: .frameworks/ansible-framework
+        env:
+          ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/add-drift.ps1 <<'PS1'
+          $ErrorActionPreference = 'Continue'
+          & 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe' `
+            CreateCustomVariable -Name UndeclaredByHand_Deploy -Value drift 2>&1 | Out-Null
+          If ($LASTEXITCODE -ne 0) { Exit $LASTEXITCODE }
+          & 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe' `
+            CreateCustomVariable -Name UndeclaredByHand_Inventory -Value drift 2>&1 | Out-Null
+          Exit $LASTEXITCODE
+          PS1
+          ansible pdq_servers -m ansible.builtin.script -a /tmp/add-drift.ps1 \
+            --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"
+
+      # One credential change per role plus one removal per role: exactly four, or the converge
+      # either failed to remove the drift or changed something it had no business changing.
+      - name: Prove the converge removes what the declaration does not name
+        timeout-minutes: 30
+        working-directory: .frameworks/ansible-framework
+        env:
+          ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          recap="$(ansible-playbook "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
+            --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"    \
+            --extra-vars env=test                                              \
+            --extra-vars aws_account_id="${AWS_ACCOUNT_ID}"                    \
+            --extra-vars aws_region="${AWS_REGION}"                            \
+            --extra-vars state=present 2>&1 | tee /dev/stderr)"
+          hosts="$(printf '%s\n' "${recap}" \
+            | grep -E '^[^ ]+ +: +ok=[0-9]+' | grep -vE '^localhost +:' || true)"
+          if [ -z "${hosts}" ]; then
+            echo "::error::no play recap found -- the converge did not run to a recap" >&2
+            exit 1
+          fi
+          if printf '%s\n' "${hosts}" \
+            | grep -qvE 'changed=4 +unreachable=0 +failed=0\b'; then
+            echo "::error::drift converge did not report exactly two credential changes plus two removals" >&2
+            exit 1
+          fi
+          echo "drift converge removed one undeclared variable per product and nothing else"
+
+      # The removal claim is then witnessed from the product's own export, not from the converge's
+      # report of itself: each store must hold every declared name and neither hand-added one.
+      - name: Prove the products' own exports no longer hold the hand-added variables
+        timeout-minutes: 10
+        working-directory: .frameworks/ansible-framework
+        env:
+          ANSIBLE_CONFIG: ${{ github.workspace }}/.frameworks/ansible-framework/ansible.cfg
+          GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/prove-clean.ps1 <<'PS1'
+          $ErrorActionPreference = 'Continue'
+          $Failed = @()
+          ForEach ($Product In @('PDQ Deploy\PDQDeploy.exe', 'PDQ Inventory\PDQInventory.exe')) {
+            $Cli = 'C:\Program Files (x86)\Admin Arsenal\' + $Product
+            $File = 'C:\Windows\Temp\proof-export.xml'
+            If (Test-Path $File) { Remove-Item $File -Force }
+            & $Cli ExportVariables -Path $File -Overwrite 2>&1 | Out-Null
+            If ($LASTEXITCODE -ne 0 -or -not (Test-Path $File)) {
+              Write-Output ('no export from ' + $Product); Exit 9
+            }
+            $Xml = Get-Content $File -Raw
+            Remove-Item $File -Force
+            If ($Xml -match 'UndeclaredByHand') { $Failed += $Product }
+            If ($Xml -notmatch 'GoogleLlc_GoogleChrome') { Write-Output ('declared set missing from ' + $Product); Exit 8 }
+          }
+          If ($Failed.Count) { Write-Output ('hand-added variable still present in: ' + ($Failed -join ', ')); Exit 1 }
+          Write-Output 'both products hold the declared set and neither hand-added variable'
+          Exit 0
+          PS1
+          ansible pdq_servers -m ansible.builtin.script -a /tmp/prove-clean.ps1 \
+            --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"
+
       # OS-DRIVE REPLACEMENT proof (opt-in). Bumping refresh_serial replaces the OS instance in
       # place while the STANDALONE data volumes detach and re-attach to the replacement; the guest
       # must then resume on its existing databases and repository. The re-converge adopts the

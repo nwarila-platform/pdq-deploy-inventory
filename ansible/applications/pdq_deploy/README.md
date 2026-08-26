@@ -5,7 +5,7 @@ Windows. In one converge it installs the product, applies the licence, ensures t
 service account and records its credential with the product, places the database on its dedicated
 drive, creates the package repository on a second drive and enforces its directory permissions,
 publishes it as an encrypted read-only network share, writes the script that fills it, sets Central Server mode and the console
-port, applies the product preferences, imports the pinned variables, reconciles the declared
+port, applies the product preferences, reconciles the pinned variables, reconciles the declared
 packages, seeds the per-user console defaults, authorises the console users, chooses the event-log
 severities and service-manager behaviour, and records the registration that would otherwise stop
 the first console with a popup.
@@ -82,6 +82,11 @@ committed unchanged, so the repository states the package rather than describing
 A definition is imported only when the product does not hold it or holds it differently, and the
 import is proved by exporting the package again, so a converged host writes nothing. Install steps
 reference the pinned variables by name, which is why the packages are imported after them.
+
+The variable declaration is complete in the same sense: the role adds what is missing, corrects
+what differs, and removes every custom variable the map does not name, proving each removal from a
+fresh export of the product's own store. A variable added by hand at the console is gone on the
+next converge.
 
 A package the product holds that no definition names is then removed, and the removal is proved by
 listing the packages again. That is not something the caller switches on — a role that states an

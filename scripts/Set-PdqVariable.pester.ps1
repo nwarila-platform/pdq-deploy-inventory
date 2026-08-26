@@ -294,7 +294,7 @@ Describe 'Set-PdqVariable' {
       $Source | Should -Match '\[System\.Management\.Automation\.ErrorRecord\]'
     }
     It 'carries the same native-command helper as its siblings' {
-      # There is no shared module -- one file per script is the org contract -- so the five copies
+      # There is no shared module -- one file per script is the org contract -- so the six copies
       # are kept identical by checking, not by convention. A fix applied to one and not the others
       # is the realistic hazard, and no other assertion here would notice it.
       $Extract = {
@@ -305,7 +305,7 @@ Describe 'Set-PdqVariable' {
       }
       $Mine = & $Extract (Join-Path $PSScriptRoot 'Set-PdqVariable.ps1')
       ForEach ($Sibling In @('Set-PdqPackage.ps1', 'Remove-PdqPackage.ps1', 'Set-PdqVariable.ps1',
-          'Set-PdqSetting.ps1', 'Set-PdqRegistration.ps1')) {
+          'Set-PdqSetting.ps1', 'Set-PdqRegistration.ps1', 'Remove-PdqVariable.ps1')) {
         (& $Extract (Join-Path $PSScriptRoot $Sibling)) | Should -BeExactly $Mine -Because $Sibling
       }
     }

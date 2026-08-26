@@ -140,8 +140,9 @@
     # share one custom-variable model). Each key is the application's Add/Remove Programs identity
     # -- <Publisher>_<DisplayName>, Title Case, special characters spelled out, matching the AppRepo
     # layout -- and each value is the version to pin. A deployment package references one as
-    # $(Name). The import is idempotent: only a name that is absent, or whose value differs, is
-    # written, and each is proved to read back.
+    # $(Name). The map is the COMPLETE set: only a name that is absent, or whose value differs, is
+    # written, each is proved to read back, and a custom variable this map does not name is
+    # removed on the next converge -- proven from the product's own export.
     pdq_variables:
       NodeJsFoundation_NodeJs18: '18.20.4'
       NodeJsFoundation_NodeJs20: '20.17.0'

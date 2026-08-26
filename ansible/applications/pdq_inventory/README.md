@@ -3,7 +3,9 @@
 Installs PDQ Inventory at a pinned version and brings it up as an all-in-one **Central Server** on
 Windows. In one converge it installs the product, applies the licence, runs the background service
 under the shared PDQ service account, places the database on its dedicated drive, sets Central
-Server mode and the console port, applies the product's preferences, imports the pinned variables,
+Server mode and the console port, applies the product's preferences, reconciles the pinned
+variables -- adding what is missing, correcting what differs, and removing what the declaration
+does not name, each removal proven from a fresh export --
 seeds the per-user console defaults, authorises the console users, chooses the event-log severities,
 and records the registration that would otherwise stop the first console with a popup. PDQ
 Inventory is a scanner, so — unlike `pdq_deploy` — it publishes **no package repository and no

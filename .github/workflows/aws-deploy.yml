@@ -437,7 +437,7 @@ jobs:
           Exit 0
           PS1
           ansible pdq_servers -m ansible.builtin.script -a /tmp/add-drift.ps1 \
-            --become --become-method ansible.builtin.runas --become-user svc-pdq \
+            --become --become-method runas --become-user svc-pdq \
             -e ansible_become_flags=logon_type=batch \
             -e 'ansible_become_password={{ lookup("env", "SVC_PW") }}' \
             --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"
@@ -539,7 +539,7 @@ jobs:
           PY
           ansible pdq_servers -m ansible.builtin.script \
             -a /tmp/prove-clean.ps1 \
-            --become --become-method ansible.builtin.runas --become-user svc-pdq \
+            --become --become-method runas --become-user svc-pdq \
             -e ansible_become_flags=logon_type=batch \
             -e 'ansible_become_password={{ lookup("env", "SVC_PW") }}' \
             --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"

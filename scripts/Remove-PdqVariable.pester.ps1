@@ -132,6 +132,11 @@ Describe 'Remove-PdqVariable' {
         Throw ('unexpected sqlite3 arguments: {0}' -f ($args -join ' '))
       }
       If ($args[1] -like '*SELECT CustomVariableId, hex(Name) FROM CustomVariables;*') {
+        # Measured: PRAGMA busy_timeout echoes its value as an output row, which the script's
+        # strict parse would refuse -- so the read must carry no pragma at all.
+        If ($args[1] -match 'PRAGMA') {
+          Throw 'the id read must not carry a pragma: its echo is a malformed row to the parser'
+        }
         # Row ids are the name's position plus one, stable for the test's lifetime, hex exactly
         # as SQLite renders it: upper-case, of the UTF-8 bytes. A name in FakeTableHides is
         # withheld -- the export and the table disagreeing is a state the script must refuse.
@@ -145,6 +150,9 @@ Describe 'Remove-PdqVariable' {
         Return
       }
       $global:FakeSqlBatches.Add($args[1])
+      # The batch's own pragma echoes '5000' -- measured -- and the script must not read the
+      # delete invocation's output at all.
+      '5000'
       $Match = [System.Text.RegularExpressions.Regex]::Match(
         $args[1], 'DELETE FROM CustomVariables WHERE CustomVariableId IN \(([0-9, ]+)\);')
       If ($Match.Success) {

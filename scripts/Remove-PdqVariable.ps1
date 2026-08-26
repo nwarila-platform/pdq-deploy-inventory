@@ -351,12 +351,16 @@ If ($Extra.Count -gt 0) {
   # by anything a name may contain, and the id because no name may ever enter SQL. The names the
   # export listed must all be here -- the two readings disagreeing means the schema or the
   # product has moved, and a prune against a moved product is refused, not attempted.
+  #
+  # No busy-timeout pragma on this read, for two reasons that were measured: the pragma ECHOES its
+  # value as an output row, which this strict parse would refuse as a malformed line, and a reader
+  # never waits on the writer under the write-ahead journal this database runs anyway.
   # An ORDINAL dictionary, deliberately: a default hashtable folds keys case-insensitively, and
   # two rows differing only by case would then collapse onto one id -- the wrong row deleted. The
   # case-fold refusal above covers what the export shows; this covers what it might not.
   $IdByName = [System.Collections.Generic.Dictionary[System.String, System.String]]::new([System.StringComparer]::Ordinal)
   ForEach ($Row In (Invoke-NativeCommand -Operation:'Reading the variable table' -FilePath:$Sqlite `
-        -Argument:@($DatabasePath, 'PRAGMA busy_timeout = 5000; SELECT CustomVariableId, hex(Name) FROM CustomVariables;')).Output) {
+        -Argument:@($DatabasePath, 'SELECT CustomVariableId, hex(Name) FROM CustomVariables;')).Output) {
     $Parts = ([System.String]$Row).Split('|')
     If ($Parts.Count -ne 2 -or $Parts[0] -notmatch '^[0-9]+$' -or $Parts[1] -notmatch '^([0-9A-Fa-f]{2})*$') {
       Throw ('The variable table did not read back as id and hex name: {0}' -f $Row)

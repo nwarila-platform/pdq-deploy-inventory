@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Blocks staged attribution vocabulary, process paths, and a wrong committer identity.
+# Pinned grep: a shell function or alias named 'grep' must not be able to neuter this.
+set -euo pipefail
+GREP=/usr/bin/grep
+. "$(dirname "$0")/attribution-patterns.sh"
+
+fail() { printf 'pre-commit: BLOCKED — %s\n' "$1" >&2; exit 1; }
+
+actual_email="$(git config user.email || true)"
+[ "${actual_email}" = "${EXPECTED_EMAIL}" ] \
+    || fail "committer email is '${actual_email}', expected '${EXPECTED_EMAIL}'"
+
+staged="$(git diff --cached --name-only)"
+[ -n "${staged}" ] || exit 0
+
+printf '%s\n' "${staged}" | "${GREP}" -qiE "${PROCESS_RE}" \
+    && fail "a process path is staged: $(printf '%s\n' "${staged}" | "${GREP}" -iE "${PROCESS_RE}" | tr '\n' ' ')"
+
+if git diff --cached -U0 -- ':(exclude).githooks' | "${GREP}" -iE '^\+' | "${GREP}" -qiE "${ATTRIBUTION_RE}|${TRAILER_RE}"; then
+    printf 'pre-commit: BLOCKED — staged content names a model, vendor, or this process:\n' >&2
+    git diff --cached -U0 -- ':(exclude).githooks' | "${GREP}" -iE '^\+' | "${GREP}" -inE "${ATTRIBUTION_RE}|${TRAILER_RE}" >&2
+    exit 1
+fi
+exit 0

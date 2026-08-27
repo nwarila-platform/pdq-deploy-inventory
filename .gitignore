@@ -16,6 +16,7 @@
 # Git does not descend into an excluded directory, so every directory on the path to an
 # allowed file is re-included by name. This publishes no files by itself: files inside these
 # directories stay ignored until named in a section below.
+!/.githooks/
 !/.github/
 !/.github/workflows/
 !/ansible/
@@ -47,6 +48,9 @@
 !/terraform/
 
 # --- [ allowed: repository configuration ] -------------------------------------------------- #
+!/.githooks/attribution-patterns.sh
+!/.githooks/commit-msg
+!/.githooks/pre-commit
 !/.editorconfig
 !/.framework-pin
 !/.gitignore
@@ -162,6 +166,7 @@
 !/scripts/Remove-PdqCollection.ps1
 !/scripts/Remove-PdqCollection.pester.ps1
 !/scripts/compose-and-run.sh
+!/scripts/install-hooks.sh
 !/scripts/materialize-role-scripts.sh
 
 # --- [ allowed: terraform (data-only; resources live in the pinned framework) ] -------------- #

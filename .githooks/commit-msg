@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Blocks attribution vocabulary and assistant trailers in the commit subject and body.
+set -euo pipefail
+GREP=/usr/bin/grep
+. "$(dirname "$0")/attribution-patterns.sh"
+
+if "${GREP}" -qiE "${ATTRIBUTION_RE}|${TRAILER_RE}|${PROCESS_RE}" "$1"; then
+    printf 'commit-msg: BLOCKED — the message names a model, vendor, trailer, or this process:\n' >&2
+    "${GREP}" -inE "${ATTRIBUTION_RE}|${TRAILER_RE}|${PROCESS_RE}" "$1" >&2
+    exit 1
+fi
+exit 0

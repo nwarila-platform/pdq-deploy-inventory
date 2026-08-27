@@ -1,0 +1,102 @@
+{
+  // Schema for editor validation. Update only when intentionally adopting a new schema.
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+
+  // Renovate config for nwarila-platform/pdq-deploy-inventory — the Golden Repo and the
+  // canonical baseline for every repo in the platform fleet. Consumers extend it via
+  //   `extends: ["github>nwarila-platform/pdq-deploy-inventory//.github/renovate.json5"]`
+  // per org ADR-0004's per-template-baseline model: this fleet's type-template tier IS the
+  // Golden Repo, so its baseline lives here rather than in an NWarila/* template.
+  //
+  // Rules in this file:
+  //   - Pin third-party GitHub Actions to commit SHAs and keep the trailing tag comments
+  //     rewritten in place (org SHA-pin policy).
+  //   - Track the two framework pin files as git digests, so pin bumps arrive as reviewed
+  //     PRs instead of hand-edits: .framework-pin (ansible-framework) and
+  //     .github/terraform-framework-pin (aws-terraform-framework).
+  //   - Track the quality toolchain (requirements-quality.txt) and its Ansible collections
+  //     (requirements-quality.yml).
+
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits",
+    ":semanticCommitTypeAll(chore)"
+  ],
+
+  "schedule": ["before 6am on monday"],
+  "labels": ["dependencies"],
+  "prConcurrentLimit": 5,
+
+  // Supply-chain quarantine. No update lands sooner than 7 days after the upstream release
+  // was published; a release whose timestamp cannot be resolved fails the age check rather
+  // than silently passing. No vulnerability-alert carve-out — adding one requires a
+  // superseding ADR per org ADR-0004.
+  "minimumReleaseAge": "7 days",
+  "internalChecksFilter": "strict",
+
+  "enabledManagers": [
+    "github-actions",
+    "pip_requirements",
+    "ansible-galaxy",
+    "custom.regex"
+  ],
+
+  "customManagers": [
+    {
+      // The ansible-framework pin: one 40-char SHA, the whole file. The git-refs datasource
+      // treats main as currentValue and the checked-in SHA as currentDigest, so a framework
+      // merge to main arrives here as a reviewed pin-bump PR.
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.framework-pin$/"],
+      "datasourceTemplate": "git-refs",
+      "versioningTemplate": "loose",
+      "depNameTemplate": "nwarila-platform/ansible-framework",
+      "packageNameTemplate": "https://github.com/nwarila-platform/ansible-framework",
+      "currentValueTemplate": "main",
+      "matchStrings": ["^(?<currentDigest>[0-9a-f]{40})\\s*$"]
+    },
+    {
+      // The aws-terraform-framework pin, same contract.
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/terraform-framework-pin$/"],
+      "datasourceTemplate": "git-refs",
+      "versioningTemplate": "loose",
+      "depNameTemplate": "nwarila-platform/aws-terraform-framework",
+      "packageNameTemplate": "https://github.com/nwarila-platform/aws-terraform-framework",
+      "currentValueTemplate": "main",
+      "matchStrings": ["^(?<currentDigest>[0-9a-f]{40})\\s*$"]
+    }
+  ],
+
+  "packageRules": [
+    {
+      "matchManagers": ["github-actions"],
+      "pinDigests": true,
+      "semanticCommitType": "ci",
+      "semanticCommitScope": "deps"
+    },
+    {
+      "matchManagers": ["pip_requirements", "ansible-galaxy"],
+      "groupName": "quality toolchain",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "deps"
+    },
+    {
+      // Framework pin bumps change what every deploy runs; they are grouped per framework
+      // and always reviewed by the maintainer, never automerged.
+      "matchDepNames": ["nwarila-platform/ansible-framework"],
+      "groupName": "ansible-framework pin",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "deps",
+      "automerge": false
+    },
+    {
+      "matchDepNames": ["nwarila-platform/aws-terraform-framework"],
+      "groupName": "aws-terraform-framework pin",
+      "semanticCommitType": "chore",
+      "semanticCommitScope": "deps",
+      "automerge": false
+    }
+  ]
+}

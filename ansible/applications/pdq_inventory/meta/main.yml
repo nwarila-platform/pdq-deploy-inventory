@@ -4,31 +4,24 @@
 # Role metadata for pdq_inventory. Description-only (style guide 8): NOT an enforcing argument
 # spec. The role's tasks/validate.yml enforces its merged-config guards.
 #
-# REQUIRED INPUTS — supplied by the playbook, not defaulted here.
+# REQUIRED INPUTS — declared empty in defaults and supplied by the playbook.
 #
-# These are deployment-specific: the bucket carries an account id, and the object paths change
-# with every product version and every site. Defaulting them would ship one site's values as if
-# they were universally safe, so the playbook states them where a reader can see what is actually
-# being installed and from where.
+# These are deployment-specific: the installer bucket carries an account id, while licence and
+# account values change with every site. Concrete defaults would ship one site's values as if they
+# were universally safe, so the playbook states them where a reader can see what is installed.
 #
 #   pdq_inventory.installer.bucket  S3 bucket holding the installer (the application repository).
-#   pdq_inventory.license.bucket    S3 bucket holding the licence object.
-#   pdq_inventory.license.object    Object key of the licence, verified against license.sha256.
-#   pdq_inventory.license.sha256    Lowercase 64-character digest of that object.
 #   pdq_inventory.installer.path    Object key of the PDQ Inventory installer.
 #   pdq_inventory.installer.version Four-part product version the installer delivers; the role
 #                                   compares it against the installed console to stay idempotent.
 #   pdq_inventory.installer.sha256  Lowercase 64-character digest of that object. Verified on the
 #                                   GUEST immediately before execution — the copy that actually runs.
-#   pdq_inventory.license.email     Address the licence was issued to; recorded with the product to
-#                                   kill the first-console popup, and proven to equal the E-Mail
-#                                   inside the licence blob before it is written.
-#   pdq_inventory.service_account.bucket  S3 bucket holding the shared service-account password.
-#   pdq_inventory.service_account.object  Object key of that password object.
+#   pdq_inventory.license_key       Decoded licence value, verified by its controller-side lookup.
+#   pdq_inventory.license_email       Address the licence was issued to, resolved by the same lookup.
+#   pdq_inventory.service_account.password  Shared service-account password resolved by lookup.
 #   pdq_inventory.database.drive    Drive letter the dedicated database volume is mounted at on the
 #                                   guest; the role consumes the letter, it does not provision the disk.
-# The role fetches every object through the CONTROLLER. The guest is never given cloud
-# credentials.
+# The playbook resolves secret values on the CONTROLLER. The guest is never given cloud credentials.
 # =========================================================================================== #
 ---
 galaxy_info:

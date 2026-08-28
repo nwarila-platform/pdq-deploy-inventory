@@ -4,24 +4,22 @@
 # Role metadata for pdq_deploy. Description-only (style guide 8): NOT an enforcing argument
 # spec. The role's tasks/validate.yml enforces its merged-config guards.
 #
-# REQUIRED INPUTS — supplied by the playbook, not defaulted here.
+# REQUIRED INPUTS — declared empty in defaults and supplied by the playbook.
 #
-# These are deployment-specific: the bucket carries an account id, and the object paths change
-# with every product version and every site. Defaulting them would ship one site's values as if
-# they were universally safe, so the playbook states them where a reader can see what is actually
-# being installed and from where.
+# These are deployment-specific: the installer bucket carries an account id, while licence and
+# account values change with every site. Concrete defaults would ship one site's values as if they
+# were universally safe, so the playbook states them where a reader can see what is installed.
 #
 #   pdq_deploy.installer.bucket  S3 bucket holding the installer (the application repository).
-#   pdq_deploy.license.bucket    S3 bucket holding the licence object.
-#   pdq_deploy.license.object    Object key of the licence, verified against license.sha256.
-#   pdq_deploy.license.sha256    Lowercase 64-character digest of that object.
 #   pdq_deploy.installer.path    Object key of the PDQ Deploy installer.
 #   pdq_deploy.installer.version Four-part product version the installer delivers; the role
 #                                compares it against the installed console to stay idempotent.
 #   pdq_deploy.installer.sha256  Lowercase 64-character digest of that object. Verified on the
 #                                GUEST immediately before execution — the copy that actually runs.
-# The role fetches every object through the CONTROLLER. The guest is never given cloud
-# credentials.
+#   pdq_deploy.license_key       Decoded licence value, verified by its controller-side lookup.
+#   pdq_deploy.license_email       Address the licence was issued to, resolved by the same lookup.
+#   pdq_deploy.service_account.password  Shared service-account password value resolved by lookup.
+# The playbook resolves secret values on the CONTROLLER. The guest is never given cloud credentials.
 # =========================================================================================== #
 ---
 galaxy_info:

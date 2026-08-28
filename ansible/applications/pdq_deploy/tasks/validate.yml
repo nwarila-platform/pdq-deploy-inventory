@@ -23,31 +23,25 @@
       meta/main.yml.
     quiet: true
 
-- name: 'VALIDATE | Require The Artifact Source And Its Pinned Digests'
+- name: 'VALIDATE | Require The Artifact Source And Deployment Inputs'
   when: (state | default('present') | string | lower | trim) == 'present'
   ansible.builtin.assert:
     that:
       - pdq_deploy_running.installer.bucket | default('') | length > 0
       - pdq_deploy_running.installer.path | default('') | length > 0
       - pdq_deploy_running.installer.sha256 | default('') is match('^[0-9a-f]{64}$')
-      - pdq_deploy_running.license.bucket | default('') | length > 0
-      - pdq_deploy_running.license.object | default('') | length > 0
-      - pdq_deploy_running.license.sha256 | default('') is match('^[0-9a-f]{64}$')
-      - pdq_deploy_running.license.email | default('') | length > 0
       - pdq_deploy_running.service_account.name | default('') | length > 0
       - pdq_deploy_running.database.drive | default('') is match('^[A-Za-z]$')
       - pdq_deploy_running.repository.drive | default('') is match('^[A-Za-z]$')
       - pdq_deploy_running.repository.bucket | default('') | length > 0
       - pdq_deploy_running.repository.region | default('') is match('^[a-z]{2}(-[a-z]+)+-[0-9]$')
-      - pdq_deploy_running.service_account.bucket | default('') | length > 0
-      - pdq_deploy_running.service_account.object | default('') | length > 0
     fail_msg: >-
       Refusing to deploy: a required input is missing or malformed. The playbook must supply the
-      installer (bucket, path, four-part version, lowercase 64-char sha256); the licence (bucket,
-      object, sha256, and the email it was issued to); the service-account password (bucket,
-      object) and its name; one drive letter each for the database and the repository; and the
-      repository's own bucket and region, which the sync script is written with. The
-      installer and licence are verified against their pinned digests before use. See meta/main.yml.
+      installer (bucket, path, four-part version, lowercase 64-char sha256); the service-account
+      name; one drive letter each for the database and the repository; and the repository's own
+      bucket and region, which the sync script is written with. Secret values are resolved and
+      validated by the controller lookup before the role runs. The installer is verified against
+      its pinned digest before use. See meta/main.yml.
     quiet: true
 
 - name: 'VALIDATE | Require The Product Identity Probes'

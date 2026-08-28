@@ -219,24 +219,24 @@
             version: '20.1.8.0'
             sha256: '856dbe3dd4544d4b9ae1f382ee51f2a5f25f41714c462fa4afcff9743cc85eb9'
 
-          # The password itself never appears here: only the object that holds it. Fetched as a
-          # string and used to create the account; never on disk.
+          # The lookup resolves the shared service-account password on the controller. The value
+          # is passed directly to the role and never written to disk.
           service_account:
-            bucket: "{{ aws_account_id }}-ansible"
-            object: 'applications/pdq/svc-pdq-password.txt'
+            name: 'svc-pdq'
+            password: >-
+              {{ lookup('secret',
+                        's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-password.txt') }}
 
-          # The licence itself never appears here: only the object that holds it, in the -ansible
-          # bucket beside the other deployment material (NOT the installer's -apprepo bucket). It is
-          # fetched as a string and written straight to the registry, touching no disk on either
-          # machine.
-          license:
-            bucket: "{{ aws_account_id }}-ansible"
-            object: 'applications/pdq/pdq-deploy-license.lic'
-            sha256: '4fc848aabff6ff6ecb1c09c9017d40da306bd3c9dd2d075b9082e03608dce58c'
-            # The address the licence was issued to. Mandatory: the role registers it with the
-            # product (killing the first-console popup) and fails if it differs from the E-Mail
-            # attribute inside the licence blob itself.
-            email: 'nicholas.warila@gmail.com'
+          # The licence lookup verifies the stored bytes against the pinned digest before passing
+          # the decoded value to the role. The licence and its shared registration email are never
+          # written to disk.
+          license_key: >-
+            {{ lookup('secret',
+                      's3://' ~ aws_account_id ~ '-ansible/applications/pdq/pdq-deploy-license-key.lic',
+                      '4fc848aabff6ff6ecb1c09c9017d40da306bd3c9dd2d075b9082e03608dce58c') }}
+          license_email: >-
+            {{ lookup('secret',
+                      's3://' ~ aws_account_id ~ '-ansible/applications/pdq/pdq-deploy-license-email.txt') }}
 
           # The database grows without bound, so it goes on the volume provisioned for it rather
           # than the system disk. Only the letter belongs here: which disk this host dedicates to
@@ -284,22 +284,24 @@
             version: '20.1.8.0'
             sha256: '48a486f3682cc01218993e72a8006163616166dd5f0fdcd1fab36724710fdbbf'
 
-          # The ONE Background Service User both products share. The password never appears here:
-          # only the object that holds it, the same object Deploy uses.
+          # The ONE Background Service User both products share. The lookup resolves the same
+          # controller-side password value used by Deploy and never writes it to disk.
           service_account:
-            bucket: "{{ aws_account_id }}-ansible"
-            object: 'applications/pdq/svc-pdq-password.txt'
+            name: 'svc-pdq'
+            password: >-
+              {{ lookup('secret',
+                        's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-password.txt') }}
 
-          # Inventory has its OWN licence, distinct from Deploy's, in the -ansible bucket beside
-          # the other deployment material. Fetched as a string and written straight to the
-          # registry. The email is the address the licence was issued to: the role records it with
-          # the product (killing the first-console popup) and fails if it differs from the E-Mail
-          # inside the licence blob itself.
-          license:
-            bucket: "{{ aws_account_id }}-ansible"
-            object: 'applications/pdq/pdq-inventory-license.lic'
-            sha256: '2c6ef523580c2cfb4ee9c423ca2ae204091544e97322d2dd95cdfd6a99d7c2a5'
-            email: 'nicholas.warila@gmail.com'
+          # Inventory has its OWN licence, distinct from Deploy's. The lookup verifies the stored
+          # bytes against the pinned digest before passing the decoded value to the role. The
+          # shared email is recorded with the product to prevent the first-console popup.
+          license_key: >-
+            {{ lookup('secret',
+                      's3://' ~ aws_account_id ~ '-ansible/applications/pdq/pdq-inventory-license-key.lic',
+                      '2c6ef523580c2cfb4ee9c423ca2ae204091544e97322d2dd95cdfd6a99d7c2a5') }}
+          license_email: >-
+            {{ lookup('secret',
+                      's3://' ~ aws_account_id ~ '-ansible/applications/pdq/pdq-inventory-license-email.txt') }}
 
           # Inventory's database grows without bound, so it goes on its own volume (D) rather than
           # the system disk. Only the letter belongs here; the folder beneath it is the role's

@@ -10,12 +10,10 @@
 # whatever their account, bucket or artifact layout. Product identity, the silent switch, the
 # Add/Remove Programs identity the product registers.
 #
-# WHAT DOES NOT: anything deployment-specific. The artifact bucket carries an account id, and
-# the installer and licence paths change with every version and every site. A default for those
-# is not universally safe — it is one site's value wearing a default's clothes, and a role that
-# ships one will silently reach for the wrong object when someone else runs it. They are supplied
-# by the PLAYBOOK, where they are visible and changeable, described in meta/main.yml, and
-# enforced by tasks/validate.yml.
+# WHAT DOES NOT: anything deployment-specific. Artifact locations and secret values change with
+# every site. A concrete default for those is not universally safe — it is one site's value wearing
+# a default's clothes. The interface declares empty values here; the PLAYBOOK supplies the real
+# values where they are visible and changeable. See meta/main.yml and tasks/validate.yml.
 #
 # =========================================================================================== #
 ---
@@ -265,17 +263,26 @@ pdq_deploy_defaults:
   #region ------ [ Background service user ] ------------------------------------------------- #
 
   # Deploy and Inventory are co-located and share ONE Background Service User, so the name is
-  # product identity rather than a deployment choice. Where its password lives IS deployment
-  # specific, so the bucket and object come from the playbook. The fetch rejects an empty secret
-  # before it is used.
+  # product identity rather than a deployment choice. Its password IS deployment-specific, so the
+  # playbook supplies the value after resolving and validating it on the controller.
   #
   # RENAMING does not retire the old account: present converges what is declared and removes
   # nothing, so the previous name survives as a member of Administrators (measured 2026-08-20).
   # Retirement is a removal, and removals belong to state=absent -- rename in two steps.
   service_account:
     name: 'svc-pdq'
+    password: ''
 
   #endregion --- [ Background service user ] ------------------------------------------------- #
+
+  #region ------ [ Product licence ] --------------------------------------------------------- #
+
+  # The licence and the email it was issued to are deployment-specific secret values. The
+  # playbook resolves and validates them on the controller before this role uses them.
+  license_key: ''
+  license_email: ''
+
+  #endregion --- [ Product licence ] --------------------------------------------------------- #
 
   # The product creates its database here the first time the service starts, so the role sets the
   # path before that happens and never has to stop, copy and restart. The DRIVE comes from the

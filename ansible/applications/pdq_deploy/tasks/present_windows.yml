@@ -85,57 +85,6 @@
   # Begin The 'Process' Block
   block:
 
-    #region ------ [ Process: Fetch The Service Account Password ] ---------------------------- #
-    # Pulled as a STRING and never written to disk on either machine, exactly like the licence.
-    # The object holds the password with no trailing newline, so it is used verbatim. The next task
-    # rejects an empty response before Windows account changes begin. Reading changes nothing and
-    # the task says so, preventing this read-only fetch from adding noise to the two expected
-    # credential-task changes.
-
-    - name: 'PROCESS | Fetch The Service Account Password'
-      changed_when: false
-      delegate_to: 'localhost'
-      no_log: true
-      register: '__pdq_deploy_secret__'
-
-      amazon.aws.s3_object:
-        bucket: "{{ pdq_deploy_running.service_account.bucket }}"
-        ceph: false
-        debug_botocore_endpoint_logs: false
-        dualstack: false
-        encrypt: true
-        encryption_mode: 'AES256'
-        expiry: 600
-        ignore_nonexistent_bucket: true
-        mode: 'getstr'
-        object: "{{ pdq_deploy_running.service_account.object }}"
-        overwrite: 'different'
-        permission: [ 'private' ]
-        prefix: ''
-        purge_tags: true
-        retries: 0
-        sig_v4: true
-        validate_bucket_name: true
-        validate_certs: true
-
-    #endregion --- [ Process: Fetch The Service Account Password ] ---------------------------- #
-
-    #region ------ [ Process: Require A Non-Empty Service Account Password ] ------------------ #
-    # An empty or whitespace-only object cannot provide a usable Windows account credential. The
-    # assertion exposes
-    # only the object key and never the fetched value.
-
-    - name: 'PROCESS | Require A Non-Empty Service Account Password'
-      ansible.builtin.assert:
-        fail_msg: >-
-          The service account password object
-          '{{ pdq_deploy_running.service_account.object }}' is empty. Refusing to continue with an
-          empty credential.
-        quiet: true
-        that: [ __pdq_deploy_secret__.contents | default('') | trim | length > 0 ]
-
-    #endregion --- [ Process: Require A Non-Empty Service Account Password ] ------------------ #
-
     #region ------ [ Process: Ensure The Background Service User ] ---------------------------- #
     # One Background Service User is shared by Deploy and Inventory, so this role ensures it
     # rather than owning it. Membership is enforced EXACTLY: replace adds every listed group and
@@ -152,7 +101,7 @@
         groups: [ 'Administrators' ]
         groups_action: 'replace'
         name: "{{ pdq_deploy_running.service_account.name }}"
-        password: "{{ __pdq_deploy_secret__.contents }}"
+        password: "{{ pdq_deploy_running.service_account.password }}"
         password_never_expires: false
         state: 'present'
         update_password: 'always'
@@ -346,64 +295,12 @@
 
     #endregion --- [ Process: Reboot When The Installer Requires It ] ------------------------- #
 
-    #region ------ [ Process: Fetch The Product Licence ] ------------------------------------- #
-    # The licence is secret material, so it is pulled as a STRING and never written to disk on
-    # either machine: getstr hands the content straight to the next task. no_log covers the
-    # task because the value is the secret itself, not merely a parameter that touches one.
-    # Reading changes nothing and the task says so, for the same reason the password fetch does.
-
-    - name: 'PROCESS | Fetch The Product Licence'
-      changed_when: false
-      delegate_to: 'localhost'
-      no_log: true
-      register: '__pdq_deploy_license__'
-
-      amazon.aws.s3_object:
-        bucket: "{{ pdq_deploy_running.license.bucket }}"
-        ceph: false
-        debug_botocore_endpoint_logs: false
-        dualstack: false
-        encrypt: true
-        encryption_mode: 'AES256'
-        expiry: 600
-        ignore_nonexistent_bucket: true
-        mode: 'getstr'
-        object: "{{ pdq_deploy_running.license.object }}"
-        overwrite: 'different'
-        permission: [ 'private' ]
-        prefix: ''
-        purge_tags: true
-        retries: 0
-        sig_v4: true
-        validate_bucket_name: true
-        validate_certs: true
-
-    #endregion --- [ Process: Fetch The Product Licence ] ------------------------------------- #
-
-    #region ------ [ Process: Verify The Licence Digest ] ------------------------------------- #
-    # The same contract the installer gets: an object is trusted only after it matches a digest
-    # pinned in the playbook, so a replaced or truncated licence stops the deployment instead
-    # of reaching the registry. Verified at the point of USE -- this is the content the next task
-    # writes. Deliberately NOT no_log: assert reports the expression text and our message, never
-    # the evaluated value, so the failure stays readable without exposing the licence.
-
-    - name: 'PROCESS | Verify The Licence Digest'
-      ansible.builtin.assert:
-        fail_msg: >-
-          The licence object '{{ pdq_deploy_running.license.object }}' does not match the sha256
-          pinned in the playbook. Refusing to write an unverified licence to the registry: the
-          object in the bucket has changed, or the pin is stale.
-        quiet: true
-        that: [ __pdq_deploy_license__.contents | hash('sha256') == pdq_deploy_running.license.sha256 ]
-
-    #endregion --- [ Process: Verify The Licence Digest ] ------------------------------------- #
-
     #region ------ [ Process: Apply The Product Licence ] ------------------------------------- #
     # The product accepts the marker block and nothing else: the object carries trailing lines past
     # the end marker and LF endings, and written verbatim it leaves the console in Free mode. The
     # slice keeps both markers because the vendor requires them, and the two replacements normalise
-    # every ending to CRLF whatever the object used. No guard on an empty match is needed, because
-    # the digest above pins the exact bytes.
+    # every ending to CRLF whatever the object used. The controller lookup has already rejected
+    # empty content and verified the stored bytes against the pinned digest.
     #
     # The product REWRITES what it is given: a multi-line licence block comes back as one line with
     # every break stripped (measured on PDQ Deploy, seventeen lines to one 620-character line),
@@ -427,7 +324,7 @@
       notify: 'pdq-deploy-restart-required'
       vars:
         __licence__: >-
-          {{ __pdq_deploy_license__.contents
+          {{ pdq_deploy_running.license_key
              | regex_search('--- START LICENSE ---[\s\S]*--- END LICENSE ---')
              | regex_replace('\r\n', '\n')
              | regex_replace('\n', '\r\n') }}
@@ -705,7 +602,7 @@
         desktop_interact: false
         force_dependent_services: false
         name: "{{ pdq_deploy_running.service_name }}"
-        password: "{{ __pdq_deploy_secret__.contents }}"
+        password: "{{ pdq_deploy_running.service_account.password }}"
         start_mode: 'delayed'
         state: 'started'
         update_password: 'on_create'
@@ -724,7 +621,7 @@
         desktop_interact: false
         force_dependent_services: false
         name: "{{ pdq_deploy_running.service_name }}"
-        password: "{{ __pdq_deploy_secret__.contents }}"
+        password: "{{ pdq_deploy_running.service_account.password }}"
         update_password: 'always'
         username: ".\\{{ pdq_deploy_running.service_account.name }}"
 
@@ -772,7 +669,7 @@
           - '-Username'
           - ".\\{{ pdq_deploy_running.service_account.name }}"
           - '-NoRestart'
-        stdin: "{{ __pdq_deploy_secret__.contents }}"
+        stdin: "{{ pdq_deploy_running.service_account.password }}"
 
     #endregion --- [ Process: Record The Service Credential With The Product ] ---------------- #
 
@@ -808,9 +705,10 @@
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_deploy_running.service_account.name }}"
+      no_log: true
       vars:
         ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
+        ansible_become_password: "{{ pdq_deploy_running.service_account.password }}"
 
       ansible.windows.win_powershell:
         depth: 3
@@ -840,9 +738,10 @@
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_deploy_running.service_account.name }}"
+      no_log: true
       vars:
         ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
+        ansible_become_password: "{{ pdq_deploy_running.service_account.password }}"
       when: pdq_deploy_running.variables | length > 0
 
       ansible.windows.win_powershell:
@@ -889,10 +788,11 @@
       loop: "{{ query('ansible.builtin.fileglob', __package_glob__) | sort }}"
       loop_control:
         label: "{{ item | basename }}"
+      no_log: true
       register: '__pdq_deploy_packages__'
       vars:
         ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
+        ansible_become_password: "{{ pdq_deploy_running.service_account.password }}"
 
       ansible.windows.win_powershell:
         depth: 3
@@ -924,9 +824,10 @@
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_deploy_running.service_account.name }}"
+      no_log: true
       vars:
         ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
+        ansible_become_password: "{{ pdq_deploy_running.service_account.password }}"
 
       ansible.windows.win_powershell:
         depth: 3
@@ -957,9 +858,10 @@
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_deploy_running.service_account.name }}"
+      no_log: true
       vars:
         ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
+        ansible_become_password: "{{ pdq_deploy_running.service_account.password }}"
 
       ansible.windows.win_powershell:
         depth: 3
@@ -984,9 +886,10 @@
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_deploy_running.service_account.name }}"
+      no_log: true
       vars:
         ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ __pdq_deploy_secret__.contents }}"
+        ansible_become_password: "{{ pdq_deploy_running.service_account.password }}"
 
       block:
         - name: 'PROCESS | Read The Authorized Console Users'
@@ -1170,11 +1073,12 @@
     # role tracks only files/Set-PdqRegistration.ps1.stub); run it before this role.
 
     - name: 'PROCESS | Record The Product Registration'
+      no_log: true
       ansible.windows.win_powershell:
         depth: 2
         error_action: 'stop'
         parameters:
-          Email: "{{ pdq_deploy_running.license.email }}"
+          Email: "{{ pdq_deploy_running.license_email }}"
           CliPath: "{{ pdq_deploy_running.cli_path }}"
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqRegistration.ps1') }}"
 

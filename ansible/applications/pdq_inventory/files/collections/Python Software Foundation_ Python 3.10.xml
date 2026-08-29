@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AdminArsenal.Export Code="PDQInventory" Name="PDQ Inventory" Version="20.1.8.0" MinimumVersion="4.0">
+  <Collection>
+    <ReportDefinition name="Definition">
+      <RootFilter name="Filter">
+        <Comparison>All</Comparison>
+        <Filters type="list">
+          <ValueFilter>
+            <Table>Computer</Table>
+            <Column>SuccessfulScanDate</Column>
+            <Comparison>After</Comparison>
+            <Value>30 days ago</Value>
+          </ValueFilter>
+          <ValueFilter>
+            <Table>Computer</Table>
+            <Column>ADIsDisabled</Column>
+            <Comparison>Is</Comparison>
+            <Value>Enabled</Value>
+          </ValueFilter>
+          <ValueFilter>
+            <Table>Application</Table>
+            <Column>Name</Column>
+            <Comparison>StartsWith</Comparison>
+            <Value>Python 3.10</Value>
+          </ValueFilter>
+          <ValueFilter>
+            <Table>Application</Table>
+            <Column>Version</Column>
+            <Comparison>VersionLowerThan</Comparison>
+            <Value>@(Python-Software-Foundation_Python-3.10)</Value>
+          </ValueFilter>
+        </Filters>
+      </RootFilter>
+      <ReportDefinitionTypeName>BasicReportDefinition</ReportDefinitionTypeName>
+      <Columns type="list">
+        <Column>
+          <Column>ComputerId</Column>
+          <Summary></Summary>
+          <Table>Computer</Table>
+          <Title></Title>
+        </Column>
+      </Columns>
+    </ReportDefinition>
+    <IsDrilldown value="false" />
+    <ImportedPath></ImportedPath>
+    <TypeName>DynamicCollection</TypeName>
+    <Created>2026-08-26T00:00:00.0000000+00:00</Created>
+    <Description>@(Python-Software-Foundation_Python-3.10)</Description>
+    <Error></Error>
+    <IsEnabled value="true" />
+    <Modified>2026-08-26T00:00:00.0000000+00:00</Modified>
+    <Name>Python Software Foundation: Python 3.10</Name>
+    <Children type="list" />
+  </Collection>
+</AdminArsenal.Export>

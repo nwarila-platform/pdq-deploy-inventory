@@ -52,7 +52,6 @@
 !/.githooks/commit-msg
 !/.githooks/pre-commit
 !/.editorconfig
-!/.framework-pin
 !/.gitignore
 !/.yamllint.yml
 
@@ -73,6 +72,7 @@
 !/.github/workflows/powershell.yml
 !/.github/workflows/quality.yml
 !/.github/renovate.json5
+!/.github/ansible-framework-pin
 !/.github/terraform-framework-pin
 
 # --- [ allowed: the ansible tree ] ---------------------------------------------------------- #

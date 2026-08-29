@@ -42,14 +42,14 @@ jobs:
         id: pins
         run: |
           set -euo pipefail
-          mapfile -t lines < .framework-pin
+          mapfile -t lines < .github/ansible-framework-pin
           if [ "${#lines[@]}" -ne 1 ]; then
-            echo '.framework-pin must contain exactly one line' >&2
+            echo '.github/ansible-framework-pin must contain exactly one line' >&2
             exit 1
           fi
           pin="${lines[0]}"
           if [[ ! "${pin}" =~ ^[0-9a-f]{40}$ ]]; then
-            echo '.framework-pin must contain one lowercase 40-character Git SHA' >&2
+            echo '.github/ansible-framework-pin must be one lowercase 40-character Git SHA' >&2
             exit 1
           fi
           printf 'ansible=%s\n' "${pin}" >> "${GITHUB_OUTPUT}"

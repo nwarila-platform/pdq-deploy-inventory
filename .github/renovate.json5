@@ -12,7 +12,7 @@
   //   - Pin third-party GitHub Actions to commit SHAs and keep the trailing tag comments
   //     rewritten in place (org SHA-pin policy).
   //   - Track the two framework pin files as git digests, so pin bumps arrive as reviewed
-  //     PRs instead of hand-edits: .framework-pin (ansible-framework) and
+  //     PRs instead of hand-edits: .github/ansible-framework-pin (ansible-framework) and
   //     .github/terraform-framework-pin (aws-terraform-framework).
   //   - Track the quality toolchain (requirements-quality.txt) and its Ansible collections
   //     (requirements-quality.yml).
@@ -48,7 +48,7 @@
       // treats main as currentValue and the checked-in SHA as currentDigest, so a framework
       // merge to main arrives here as a reviewed pin-bump PR.
       "customType": "regex",
-      "managerFilePatterns": ["/^\\.framework-pin$/"],
+      "managerFilePatterns": ["/^\\.github/ansible-framework-pin$/"],
       "datasourceTemplate": "git-refs",
       "versioningTemplate": "loose",
       "depNameTemplate": "nwarila-platform/ansible-framework",

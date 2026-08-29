@@ -10,7 +10,7 @@
 
 - One coherent capability per role; this repository carries the separate
   `pdq_inventory` and `pdq_deploy` application roles and composes them into a
-  version-pinned `ansible-framework` checkout at execution time (`.framework-pin`,
+  version-pinned `ansible-framework` checkout at execution time (`.github/ansible-framework-pin`,
   `scripts/compose-and-run.sh`). Roles must be drop-in compatible with the framework's
   `applications/` namespace (`roles_path` resolution by bare name).
 - The framework is the chassis: `ansible.cfg`, lint configs, loader contract, CI

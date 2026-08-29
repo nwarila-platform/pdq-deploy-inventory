@@ -112,7 +112,7 @@
 !/ansible/applications/pdq_inventory/files/Remove-PdqVariable.ps1.stub
 !/ansible/applications/pdq_inventory/files/Set-PdqCollection.ps1.stub
 !/ansible/applications/pdq_inventory/files/Remove-PdqCollection.ps1.stub
-!/ansible/applications/pdq_inventory/files/collections/Chrome Below Pinned Version.xml
+!/ansible/applications/pdq_inventory/files/collections/*.xml
 !/ansible/applications/pdq_inventory/handlers/main.yml
 !/ansible/applications/pdq_inventory/meta/main.yml
 !/ansible/applications/pdq_inventory/tasks/absent_windows.yml

@@ -304,29 +304,45 @@ pdq_inventory_defaults:
   # collections. Ownership stops at the top level on purpose: something hand-added INSIDE a
   # declared or built-in tree is left standing, stated here so nobody reads the prune as deeper
   # than it is.
-  collections:
-    - 'Chrome Below Pinned Version.xml'
-
-  # The top-level collections the pinned product ships OUTSIDE its Collection Library -- the
-  # furniture of a fresh 20.1.8.0 install, read from a converged host 2026-08-26. Owned by the
-  # vendor, never removed, and stated here rather than discovered so a product upgrade that
-  # changes the furniture changes this reviewed list instead of silently widening what may be
-  # deleted. The Collection Library itself needs no list: its rows announce themselves and are
-  # never touched. This list belongs to installer.version: bumping the pin re-measures it.
+  # The collections the PRODUCT ships and owns. They are top-level and typed DynamicCollection,
+  # exactly like the ones this repository declares, and nothing in the database distinguishes
+  # them: LibraryCollectionId is null for both, and several are created at install time so their
+  # age does not separate them either (measured 2026-08-28 on a converged 20.1.8.0 host). Listing
+  # them is therefore the only way the prune can tell the product's own furniture from drift.
+  # A name here must never also appear in `collections` -- the remover refuses that overlap.
   built_in_collections:
-    - 'Online Systems'
-    - 'Reboot Timeline'
-    - 'Servers'
-    - 'Microsoft Office'
-    - 'Workstations'
-    - 'Systems with Smart Card Readers'
-    - 'Microsoft .NET Framework 4.7.2+'
-    - 'Requires .NET to Scan'
-    - 'Non-Standard Shares'
+    - 'Allow Scan'
     - 'Internet Explorer'
     - 'Memory'
-    - 'Reboot Required'
+    - 'Microsoft .NET Framework 4.7.2+'
+    - 'Microsoft Office'
+    - 'Non-Standard Shares'
+    - 'Online Systems'
     - 'PowerShell'
-    - 'Allow Scan'
+    - 'Reboot Required'
+    - 'Reboot Timeline'
+    - 'Requires .NET to Scan'
+    - 'Servers'
+    - 'Systems with Smart Card Readers'
+    - 'Workstations'
+
+  collections:
+    - 'Chrome Below Pinned Version.xml'
+    - 'Microsoft Corporation_ Microsoft OpenJDK 11.xml'
+    - 'Microsoft Corporation_ Microsoft OpenJDK 17.xml'
+    - 'Microsoft Corporation_ Microsoft OpenJDK 21.xml'
+    - 'Microsoft Corporation_ Microsoft OpenJDK 25.xml'
+    - 'Microsoft Corporation_ PowerShell 7.xml'
+    - 'Mozilla_ Mozilla Firefox ESR.xml'
+    - 'NodeJS Foundation_ Node.JS 21.xml'
+    - 'NodeJS Foundation_ Node.JS 22.xml'
+    - 'NodeJS Foundation_ Node.JS 24.xml'
+    - 'NodeJS Foundation_ Node.JS 25.xml'
+    - 'Prometheus Community_ Windows Exporter.xml'
+    - 'Python Software Foundation_ Python 3.10.xml'
+    - 'Python Software Foundation_ Python 3.11.xml'
+    - 'Python Software Foundation_ Python 3.12.xml'
+    - 'Python Software Foundation_ Python 3.13.xml'
+    - 'Python Software Foundation_ Python 3.14.xml'
 
   #endregion --- [ Declared collections ] ---------------------------------------------------- #

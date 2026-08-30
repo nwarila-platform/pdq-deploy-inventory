@@ -75,10 +75,6 @@ all_systems = [
     tags = {
       Function = "pdq"
       Backup   = false
-      # The inventory selects its transport from this tag. connection_type above is consumed by
-      # terraform and never reaches the instance, and the two vocabularies differ on the direct
-      # legs -- "ssh" there is "ssh-direct" here -- so they must be changed together.
-      Connection = "ssh-direct"
     }
 
     root_block_device = {

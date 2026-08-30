@@ -67,8 +67,8 @@ hostvars_prefix: 'aws_'
 compose:
 
   #region ------ [ Reaching the host ] -------------------------------------------------------- #
-  # The Connection tag in terraform/aws.tfvars decides all four values below. Absent means
-  # ssh-direct, which is what this repository's pipeline uses.
+  # The Connection tag decides all four values below. The framework derives it from the
+  # connection_type set in terraform/aws.tfvars, so "ssh" there arrives here as ssh-direct.
   #
   #   ssh-direct     SSH to the routable address on 22.
   #   ssh-ssm        SSH to the INSTANCE ID, tunnelled by the ProxyCommand below. No inbound rule.

@@ -127,8 +127,6 @@
     #region ------ [ Process: Reconcile The Account ACLs ] ------------------------------------- #
 
     - name: 'PROCESS | Reconcile The Account Explicit LAPS Read ACEs'
-      register: '__pdq_ad_config_laps_permissions__'
-
       ansible.windows.win_powershell:
         depth: 3
         error_action: 'stop'

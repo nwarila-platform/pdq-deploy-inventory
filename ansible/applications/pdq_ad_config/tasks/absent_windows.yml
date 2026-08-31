@@ -67,6 +67,10 @@
         identity: "{{ item }}"
 
     - name: 'END | Assert The Account Is Absent And The Shared OUs Survive'
+      # Only after a real run. Under --check nothing was deleted, so the account is still there
+      # and this would fail on the absence of a removal that was never attempted -- reporting a
+      # defect where there is none.
+      when: not ansible_check_mode
       ansible.builtin.assert:
         fail_msg: >-
           Removal is not complete, or it took something with it. The account must be gone and

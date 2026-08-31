@@ -96,16 +96,31 @@
       no_log: true
 
       microsoft.ad.user:
+        # adminCount is cleared, not left alone: a value here marks an account as having held
+        # protected-group membership, and AdminSDHolder then overwrites the ACL this role sets.
+        attributes:
+          set:
+            adminCount: null
         enabled: true
         groups:
           lookup_failure_action: 'fail'
           permissions_failure_action: 'fail'
+          # 'Domain Users' and nothing else -- which IS the enforcement, because set is exclusive
+          # and removes any group added by hand. An empty list cannot be used: every account has a
+          # mandatory primary group, so set: [] is unsatisfiable and reports changed on every run.
           set: [ 'Domain Users' ]
         name: "{{ pdq_ad_config_running.service_account.name }}"
         password: "{{ pdq_ad_config_running.service_account.password }}"
+        # The password does NOT expire: rotation is a deliberate act performed outside this role,
+        # not something domain policy triggers. Without this the account simply stops working one
+        # day, and the first symptom is PDQ failing to authenticate to the directory.
+        password_never_expires: true
         path: "{{ pdq_ad_config_running.service_account.ou }}"
         state: 'present'
         update_password: 'when_changed'
+        # Nobody signs in as this account interactively, so nobody may change its password from
+        # under the authoritative copy.
+        user_cannot_change_password: true
 
     #endregion --- [ Process: Converge The Service Account ] ----------------------------------- #
 

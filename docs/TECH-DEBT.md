@@ -80,3 +80,21 @@
 - **Exit criteria:** collections are applied by a single task; a converged host reads the whole
   collection state in one command-line launch; a second converge still reports `changed=0` and
   still names any collection that changed.
+
+## TD-008 — OPEN — no role installs the AWS command line on a deployed host
+
+- **Recorded:** 2026-08-31.
+- **Issue:** `Sync-Repository.cmd` and the repository sync both invoke
+  `%ProgramFiles%\Amazon\AWSCLIV2\aws.exe`, and nothing in this repository installs it. The
+  deployment relies on the base image supplying it.
+- **Why it is debt rather than a defect today:** the image in use does supply it, so the
+  deployment works. The dependency is undeclared, unpinned and unproven — a base image change
+  removes it silently, and the first symptom is a repository that stops filling.
+- **Also unpinned:** the version. Everything else this deployment installs is pinned to an exact
+  build with a digest; the command line is whatever the image happens to carry.
+- **Correction:** a small `aws_cli` role in the framework that installs a pinned version, so a
+  host declares the tool it depends on instead of inheriting it. It belongs in the framework
+  rather than here: every repository whose hosts read S3 natively has the same dependency.
+- **Exit criteria:** a converged host holds a declared, pinned AWS command line version; a base
+  image without it converges to the same state; and nothing invokes `aws.exe` without the role
+  that guarantees it having run.

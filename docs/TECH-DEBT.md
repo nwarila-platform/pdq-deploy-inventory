@@ -53,3 +53,48 @@
 - **Closure evidence:** the pin is now `d19e6d4`, released `v0.1.6`, which contains that fix. The
   composition converged against it and the second converge reported only the two expected
   credential changes, so the exit criteria are met.
+
+## TD-007 — OPEN — collection import loops on the controller, not inside the script
+
+- **Recorded:** 2026-08-31.
+- **Issue:** `PROCESS | Import The Declared Collections` loops on the Ansible side, so each of the
+  17 declared definitions is its own task, with its own SSH round trips, its own `become: runas`
+  batch logon, and its own transfer and compile of the 444-line `Set-PdqCollection.ps1`.
+  `Get-CollectionText` then exports one collection at a time by name, so answering "what does the
+  product hold?" costs 17 command-line launches.
+- **Measured** (run `33283329062`, four converges of one host): 816 s for the first converge and
+  342 s, 334 s and 355 s for the three that follow — 30.8 minutes of the deploy, and the largest
+  single consumer in it. A converged host that writes nothing still spends 20.1 s per collection.
+- **Cause, isolated within the same run:** `PROCESS | Import The Pinned Variables` does the same
+  kind of work in ONE task — 45 variables, 47 command-line launches, 331 s, so 7.0 s per launch.
+  The collection loop bills 17.3 s per launch. The ~13 s difference is per-task overhead that the
+  variable path pays once and the collection path pays 17 times. The changed path corroborates:
+  three launches per collection predicts 2.8 + 3 × 17.3 ≈ 55 s against 48.0 s measured.
+- **Correction:** move the loop inside the script, as `Set-PdqVariable.ps1` already does, and read
+  the whole set in one `ExportCollections` — its `-Name` takes a comma-separated list, which is the
+  same product behaviour that makes `Set-PdqCollection.ps1` refuse a name carrying a comma. A
+  converged run then costs one logon, one script transfer and one command-line read.
+- **What the correction costs:** the per-collection recap moves out of the loop's output and into
+  the result object, where the variable path already keeps its own; the export staging invariant
+  becomes one file per requested name rather than exactly one file.
+- **Exit criteria:** collections are applied by a single task; a converged host reads the whole
+  collection state in one command-line launch; a second converge still reports `changed=0` and
+  still names any collection that changed.
+
+## TD-008 — OPEN — no role installs the AWS command line on a deployed host
+
+- **Recorded:** 2026-08-31.
+- **Issue:** `Sync-Repository.cmd` and the repository sync both invoke
+  `%ProgramFiles%\Amazon\AWSCLIV2\aws.exe`, and nothing in this repository installs it. The
+  deployment relies on the base image supplying it.
+- **Why it is debt rather than a defect today:** the image in use does supply it, so the
+  deployment works. The dependency is undeclared, unpinned and unproven — a base image change
+  removes it silently, and the first symptom is a repository that stops filling.
+- **Also unpinned:** the version. Everything else this deployment installs is pinned to an exact
+  build with a digest; the command line is whatever the image happens to carry.
+- **Correction:** a small `aws_cli` role in the framework that installs a pinned version, so a
+  host declares the tool it depends on instead of inheriting it. It belongs in the framework
+  rather than here: every repository whose hosts read S3 natively has the same dependency.
+- **Exit criteria:** a converged host holds a declared, pinned AWS command line version; a base
+  image without it converges to the same state; and nothing invokes `aws.exe` without the role
+  that guarantees it having run.

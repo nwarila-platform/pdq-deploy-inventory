@@ -1,8 +1,45 @@
-# SPDX-FileCopyrightText: 2026 Nicholas Warila
-# SPDX-License-Identifier: MIT
+# =========================================================================================== #
+# File: 'ansible/playbooks/ad-config.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# The ELEVATED lifecycle: it configures the directory objects a PDQ server depends on, and runs
+# against a domain controller rather than a product host.
+#
+# It is deliberately NOT part of the deployment converge. That converge runs on every push with a
+# runner that holds no rights over the directory; creating an account and writing an OU ACL are
+# privileged, rare and deliberate acts.
+#
+# The service account password is resolved HERE and handed to the role as a value, so the role is
+# not coupled to the backend the secret loader exists to hide. Generating and storing that
+# password is not this playbook's job either -- it reads what is already authoritative.
+#
+#   COMPOSE_PLAYBOOK=ad-config.yml COMPOSE_INVENTORY=ansible/inventory/directory.yml \
+#     scripts/compose-and-run.sh -e ENV=prod -e aws_account_id=<account> -e aws_region=us-east-1
+#
+# =========================================================================================== #
 ---
-- name: 'Converge the PDQ directory configuration'
+
+- name: 'PLAY | Configure The Directory Objects PDQ Depends On'
   hosts: 'domain_controllers'
-  gather_facts: false
+  any_errors_fatal: true
+
   roles:
     - role: 'pdq_ad_config'
+      vars:
+        pdq_ad_config:
+          service_account:
+            name: 'svc-pdq'
+            ou: 'OU=Domain Service Accounts,DC=tcn,DC=trinitytechnicalservices,DC=com'
+            password: >-
+              {{ lookup('secret',
+                        's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-domain-password.txt') }}
+
+          # Where a PDQ server is filed. The same OU the deploy playbook names as its join target.
+          computer_ou: 'OU=PDQ,OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'
+
+          # The machines PDQ manages, and therefore whose LAPS passwords it must read. Domain
+          # Controllers is deliberately absent: LAPS manages the DSRM password there, which needs
+          # a policy this deployment does not set, so a grant would cover nothing.
+          laps_read_ous:
+            - 'OU=Domain Workstations,DC=tcn,DC=trinitytechnicalservices,DC=com'
+            - 'OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'

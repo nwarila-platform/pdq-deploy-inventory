@@ -2,463 +2,85 @@
 # File: '{{ role_path }}/tasks/present_windows.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# Converges the PDQ computer OU, service account, S3-authoritative password, and the account's
-# complete explicit ACL ownership on the declared LAPS OUs. BEGIN evaluates the password decision
-# table; PROCESS performs its one selected action and converges the directory declaration; END
-# proves the account and password from reality.
+# Given a password, converges the PDQ computer OU, service account and the account's complete
+# explicit Windows LAPS read permissions on the declared OUs. BEGIN reads the prerequisites,
+# PROCESS applies the declaration, and END proves the resulting directory state.
 #
 # ============================================================================================= #
 ---
 #region ------ [ Begin: Converge The PDQ Directory Configuration ] ----------------------------- #
 
-- name: 'BEGIN | Read The Directory And Decide One Password Action'
+- name: 'BEGIN | Read The Directory Prerequisites'
   vars:
-    __secret_bucket__: "{{ secret_url | regex_replace('^s3://([^/]+)/.*$', '\\1') }}"
-    __secret_object__: "{{ secret_url | regex_replace('^s3://[^/]+/', '') }}"
-    __missing_probe_object__: "{{ __secret_object__ }}.pdq-ad-config-must-not-exist"
+    __service_account_dn__: >-
+      CN={{ pdq_ad_config_running.service_account.name }},{{ pdq_ad_config_running.service_account.ou }}
 
   # Begin The 'Begin' Block
   block:
 
-    #region ------ [ Begin: Read The Service Account ] --------------------------------------- #
+    #region ------ [ Begin: Read The LAPS Schema ] --------------------------------------------- #
 
-    - name: 'BEGIN | Read The Service Account And Password Age'
-      # A READ. It must run under --check too: the decision logic below consumes its
-      # result, so skipping it would decide from an empty dict rather than from the estate.
+    - name: 'BEGIN | Read The Windows LAPS Password Schema Object'
       check_mode: false
       changed_when: false
-      register: '__pdq_ad_config_account__'
+      register: '__pdq_ad_config_laps_schema__'
 
-      ansible.windows.win_powershell:
-        depth: 3
-        error_action: 'stop'
-        parameters:
-          AccountIdentity: "{{ service_account.name }}"
-        script: |
-          Param (
-            [System.String] $AccountIdentity
-          )
+      microsoft.ad.object_info:
+        ldap_filter: '(name=ms-LAPS-Password)'
+        search_base: 'CN=Schema,CN=Configuration,DC=tcn,DC=trinitytechnicalservices,DC=com'
 
-          Import-Module -Name ActiveDirectory -ErrorAction Stop
-          $Domain = Get-ADDomain -ErrorAction Stop
-          Try {
-            $Account = Get-ADUser -Identity $AccountIdentity -Properties @(
-              'LockedOut'
-              'PasswordLastSet'
-              'SID'
-            ) -ErrorAction Stop
-          } Catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
-            $Ansible.Result = @{
-              present = $false
-              domain_netbios = $Domain.NetBIOSName
-            }
-            $Ansible.Changed = $false
-            Return
-          }
-
-          $AgeDays = If ($Null -eq $Account.PasswordLastSet) {
-            [System.Int32]::MaxValue
-          } Else {
-            [System.Math]::Floor(((Get-Date) - $Account.PasswordLastSet).TotalDays)
-          }
-          $Ansible.Result = @{
-            present = $true
-            distinguished_name = $Account.DistinguishedName
-            domain_netbios = $Domain.NetBIOSName
-            locked_out = [System.Boolean]$Account.LockedOut
-            password_age_days = [System.Int32]$AgeDays
-            sid = $Account.SID.Value
-          }
-          $Ansible.Changed = $false
-
-    #endregion --- [ Begin: Read The Service Account ] --------------------------------------- #
-
-    #region ------ [ Begin: Prove Missing-Key Classification ] ------------------------------- #
-    # A caller unable to list the bucket can receive 403 for a missing object. This deliberately
-    # absent sibling proves that this caller receives 404, so 403 can never be mistaken for row 2.
-
-    - name: 'BEGIN | Prove A Missing Key Is Reported As 404'
-      # A READ. It must run under --check too: the decision logic below consumes its
-      # result, so skipping it would decide from an empty dict rather than from the estate.
-      check_mode: false
-      changed_when: false
-      delegate_to: 'localhost'
-      failed_when: false
-      register: '__pdq_ad_config_missing_probe__'
-
-      amazon.aws.s3_object:
-        bucket: "{{ __secret_bucket__ }}"
-        ceph: false
-        debug_botocore_endpoint_logs: false
-        dualstack: false
-        encrypt: true
-        encryption_mode: 'AES256'
-        expiry: 600
-        ignore_nonexistent_bucket: false
-        mode: 'getstr'
-        object: "{{ __missing_probe_object__ }}"
-        overwrite: 'different'
-        permission: [ 'private' ]
-        prefix: ''
-        purge_tags: true
-        region: "{{ aws_region }}"
-        retries: 0
-        sig_v4: true
-        validate_bucket_name: true
-        validate_certs: true
-
-    - name: 'BEGIN | Assert Missing-Key Classification Is Safe'
-      vars:
-        __probe_error__: >-
-          {{ (__pdq_ad_config_missing_probe__.msg | default('')) ~ ' ' ~
-             (__pdq_ad_config_missing_probe__.exception | default('')) }}
-
+    - name: 'BEGIN | Require The Windows LAPS Password Schema Object'
       ansible.builtin.assert:
         fail_msg: >-
-          S3 prerequisite failure: the known-missing access probe did not return 404. Refusing to
-          classify a 403 or an existing probe object as an absent password key.
+          LAPS schema prerequisite failed: ms-LAPS-Password is not present exactly once in the
+          Active Directory schema.
         quiet: true
         that:
-          # The module reports an absent key as "Key <name> does not exist." -- measured against
-          # amazon.aws 11.4.0. It does NOT say 404, and `failed` cannot be tested here because
-          # failed_when is false on the probe, which forces it false whatever happened.
-          - __probe_error__ is search('does not exist|404|Not Found')
-          - __probe_error__ is not search('403|AccessDenied|Forbidden|Access Denied')
+          - __pdq_ad_config_laps_schema__.objects | length == 1
 
-    #endregion --- [ Begin: Prove Missing-Key Classification ] ------------------------------- #
+    #endregion --- [ Begin: Read The LAPS Schema ] --------------------------------------------- #
 
-    #region ------ [ Begin: Read The Authoritative Secret ] ---------------------------------- #
+    #region ------ [ Begin: Read The Service Account ] ----------------------------------------- #
 
-    - name: 'BEGIN | Read The Authoritative Password From S3'
-      changed_when: false
-      # A READ. It must run under --check too: the decision logic below consumes its
-      # result, so skipping it would decide from an empty dict rather than from the estate.
+    - name: 'BEGIN | Read The Service Account Lock State'
       check_mode: false
-      delegate_to: 'localhost'
-      failed_when: false
-      no_log: true
-      register: '__pdq_ad_config_secret_read__'
+      changed_when: false
+      register: '__pdq_ad_config_initial_account__'
 
-      amazon.aws.s3_object:
-        bucket: "{{ __secret_bucket__ }}"
-        ceph: false
-        debug_botocore_endpoint_logs: false
-        dualstack: false
-        encrypt: true
-        encryption_mode: 'AES256'
-        expiry: 600
-        ignore_nonexistent_bucket: false
-        mode: 'getstr'
-        object: "{{ __secret_object__ }}"
-        overwrite: 'different'
-        permission: [ 'private' ]
-        prefix: ''
-        purge_tags: true
-        region: "{{ aws_region }}"
-        retries: 0
-        sig_v4: true
-        validate_bucket_name: true
-        validate_certs: true
-
-    - name: 'BEGIN | Classify The S3 Read Result'
-      no_log: true
-      ansible.builtin.set_fact:
-        __pdq_ad_config_secret_absent__: >-
-          {{ (__pdq_ad_config_secret_read__.failed | default(false) | bool) and
-             (((__pdq_ad_config_secret_read__.msg | default('')) ~ ' ' ~
-               (__pdq_ad_config_secret_read__.exception | default('')))
-               is search('404|Not Found|does not exist')) }}
-        __pdq_ad_config_secret_denied__: >-
-          {{ (__pdq_ad_config_secret_read__.failed | default(false) | bool) and
-             (((__pdq_ad_config_secret_read__.msg | default('')) ~ ' ' ~
-               (__pdq_ad_config_secret_read__.exception | default('')))
-               is search('403|AccessDenied|Forbidden')) }}
-
-    - name: 'BEGIN | Refuse An Unclassified Or Denied S3 Read'
-      ansible.builtin.assert:
-        fail_msg: >-
-          S3 password prerequisite failure: access was denied or the key read failed without a
-          classifiable 404. No directory mutation will be attempted.
-        quiet: true
-        that:
-          - not (__pdq_ad_config_secret_denied__ | bool)
-          - >-
-            not (__pdq_ad_config_secret_read__.failed | default(false) | bool) or
-            (__pdq_ad_config_secret_absent__ | bool)
-
-    #endregion --- [ Begin: Read The Authoritative Secret ] ---------------------------------- #
-
-    #region ------ [ Begin: Refuse A Locked Account ] ---------------------------------------- #
+      microsoft.ad.object_info:
+        identity: "{{ __service_account_dn__ }}"
+        properties:
+          - 'userAccountControl'
+          - 'msDS-User-Account-Control-Computed'
 
     - name: 'BEGIN | Refuse A Locked Service Account'
-      when: __pdq_ad_config_account__.result.present | bool
       ansible.builtin.assert:
         fail_msg: >-
-          Locked service account failure: {{ service_account.name }} is locked. This role is not
-          authorised to unlock it, and no password action will be attempted.
+          Locked service account failure: {{ pdq_ad_config_running.service_account.name }} is
+          locked. This role is not authorised to unlock it.
         quiet: true
         that:
-          - not (__pdq_ad_config_account__.result.locked_out | bool)
+          - >-
+            (__pdq_ad_config_initial_account__.objects | length == 0) or
+            (((__pdq_ad_config_initial_account__.objects[0]
+               ['msDS-User-Account-Control-Computed'] | int) // 16) % 2 == 0)
 
-    #endregion --- [ Begin: Refuse A Locked Account ] ---------------------------------------- #
-
-    #region ------ [ Begin: Evaluate Rows One Through Four ] --------------------------------- #
-
-    - name: 'BEGIN | Evaluate Password Decision Rows One Through Four'
-      ansible.builtin.set_fact:
-        __pdq_ad_config_decision_row__: >-
-          {% if not (__pdq_ad_config_account__.result.present | bool) %}1
-          {% elif __pdq_ad_config_secret_absent__ | bool %}2
-          {% elif rotate_password | default(false) | bool %}3
-          {% elif (__pdq_ad_config_account__.result.password_age_days | int) >
-                  (rotate_interval_days | int) %}4
-          {% else %}0
-          {% endif %}
-
-    - name: 'BEGIN | Validate An Existing Password Before Authentication'
-      no_log: true
-      when: (__pdq_ad_config_decision_row__ | int) == 0
-      vars:
-        __stored_password__: "{{ __pdq_ad_config_secret_read__.contents | default('') }}"
-
-      ansible.builtin.assert:
-        fail_msg: >-
-          S3 password policy failure: the authoritative value does not meet the declared length
-          and four-character-class policy, so it will not be pushed to Active Directory.
-        quiet: true
-        that:
-          - __stored_password__ | length == password_length | int
-          - __stored_password__ is search('[A-Z]')
-          - __stored_password__ is search('[a-z]')
-          - __stored_password__ is search('[0-9]')
-          - __stored_password__ is search('[^A-Za-z0-9]')
-
-    #endregion --- [ Begin: Evaluate Rows One Through Four ] --------------------------------- #
-
-    #region ------ [ Begin: Evaluate Rows Five Through Seven ] ------------------------------- #
-    # The module process is created through runas with logon_type=batch. The password also crosses
-    # the PowerShell boundary as a sensitive parameter; it is never interpolated into script text
-    # or a command line.
-
-    - name: 'BEGIN | Authenticate The S3 Password Against The Directory'
-      # MEASURED 2026-08-31: a BATCH LOGON is the wrong test here. It requires SeBatchLogonRight on
-      # the machine performing it; svc-pdq holds that on the PDQ host because that role grants it,
-      # and holds it on NO domain controller -- nor should it. The batch-logon technique recorded
-      # as RP-19 belongs to the LOCAL service account on the product host, not to this one.
-      #
-      # ValidateCredentials is a directory bind: it proves the password without needing any logon
-      # right on this machine, and it is what distinguishes "AD already matches S3" (row 5) from
-      # "AD disagrees" (row 6). Verified against the live domain: it returns True for the current
-      # S3 value.
-      #
-      # A READ. It authenticates and changes nothing, so it runs under --check as well.
-      changed_when: false
-      check_mode: false
-      failed_when: false
-      ignore_unreachable: true
-      no_log: true
-      register: '__pdq_ad_config_authentication__'
-      when: (__pdq_ad_config_decision_row__ | int) == 0
-
-      ansible.windows.win_powershell:
-        depth: 2
-        error_action: 'stop'
-        parameters:
-          AccountName: "{{ service_account.name }}"
-        sensitive_parameters:
-          # No `type` key: ansible.windows 3.7.0 REJECTS it ("Unsupported parameters ... type
-          # found in sensitive_parameters") and already delivers a SecureString by default, which
-          # is why the script's parameter is typed as one and converted below.
-          - name: 'Password'
-            value: "{{ __pdq_ad_config_secret_read__.contents }}"
-        script: |
-          param([System.String] $AccountName, [System.Security.SecureString] $Password)
-          # SecureString keeps the value out of the module arguments even at -vvv. The directory
-          # bind needs plain text, so it is converted here and nowhere else.
-          $Plain = [System.Net.NetworkCredential]::new('', $Password).Password
-          Add-Type -AssemblyName System.DirectoryServices.AccountManagement
-          $Context = [System.DirectoryServices.AccountManagement.PrincipalContext]::new(
-            [System.DirectoryServices.AccountManagement.ContextType]::Domain
-          )
-          $Ansible.Result = @{
-            attempted     = $true
-            authenticated = [System.Boolean]$Context.ValidateCredentials($AccountName, $Plain)
-          }
-          $Ansible.Changed = $false
-
-    - name: 'BEGIN | Classify The Authentication Result'
-      no_log: true
-      when: (__pdq_ad_config_decision_row__ | int) == 0
-      vars:
-        __authentication_error__: >-
-          {{ (__pdq_ad_config_authentication__.msg | default('')) ~ ' ' ~
-             (__pdq_ad_config_authentication__.exception | default('')) }}
-        __authentication_value__: >-
-          {{ __pdq_ad_config_authentication__.result.authenticated | default(none) }}
-
-      ansible.builtin.set_fact:
-        __pdq_ad_config_authentication_mismatch__: >-
-          {{ (not (__pdq_ad_config_authentication__.failed | default(false) | bool) and
-              __authentication_value__ is not none and
-              not (__authentication_value__ | bool))
-             or
-             ((__pdq_ad_config_authentication__.failed | default(false) | bool) and
-              (__authentication_error__ is search(
-                'user name or password is incorrect|unknown user name or bad password|1326'
-              ))) }}
-        __pdq_ad_config_authentication_unavailable__: >-
-          {{ (__pdq_ad_config_authentication__.unreachable | default(false) | bool) or
-             (not (__pdq_ad_config_authentication__.failed | default(false) | bool) and
-              __authentication_value__ is none) or
-             ((__pdq_ad_config_authentication__.failed | default(false) | bool) and
-              not (__authentication_error__ is search(
-                'user name or password is incorrect|unknown user name or bad password|1326'
-              ))) }}
-
-    - name: 'BEGIN | Refuse An Unavailable Authentication Test'
-      when: (__pdq_ad_config_decision_row__ | int) == 0
-      ansible.builtin.assert:
-        fail_msg: >-
-          Directory authentication transport failure: batch logon could not be attempted. The
-          result is not a password mismatch, and no rotation or password push will occur.
-        quiet: true
-        that:
-          - not (__pdq_ad_config_authentication_unavailable__ | bool)
-
-    - name: 'BEGIN | Select Password Decision Row Five Or Six'
-      no_log: true
-      when: (__pdq_ad_config_decision_row__ | int) == 0
-      ansible.builtin.set_fact:
-        __pdq_ad_config_decision_row__: >-
-          {{ 6 if (__pdq_ad_config_authentication_mismatch__ | bool) else 5 }}
-
-    #endregion --- [ Begin: Evaluate Rows Five Through Seven ] ------------------------------- #
-
-    #region ------ [ Begin: Generate Or Select The Password ] -------------------------------- #
-
-    - name: 'BEGIN | Generate A New Password For Rows One Through Four'
-      no_log: true
-      register: '__pdq_ad_config_generated_password__'
-      when: (__pdq_ad_config_decision_row__ | int) in [ 1, 2, 3, 4 ]
-
-      ansible.windows.win_powershell:
-        depth: 2
-        error_action: 'stop'
-        parameters:
-          CharacterSet:
-            - "{{ password_charset.upper }}"
-            - "{{ password_charset.lower }}"
-            - "{{ password_charset.digits }}"
-            - "{{ password_charset.symbols }}"
-          Length: "{{ password_length | int }}"
-        script: |
-          Param (
-            [System.String[]] $CharacterSet,
-            [System.Int32] $Length
-          )
-
-          If ($CharacterSet.Count -ne 4 -or $Length -lt $CharacterSet.Count) {
-            Throw 'Password generation requires four non-empty character sets and enough length'
-          }
-          ForEach ($Set In $CharacterSet) {
-            If ([System.String]::IsNullOrEmpty($Set)) {
-              Throw 'Password generation received an empty character set'
-            }
-          }
-
-          $Generator = [System.Security.Cryptography.RNGCryptoServiceProvider]::new()
-          Function Get-CryptoIndex {
-            Param ([System.Int32] $Maximum)
-            $Buffer = [System.Byte[]]::new(1)
-            $Limit = 256 - (256 % $Maximum)
-            Do {
-              $Generator.GetBytes($Buffer)
-            } Until ([System.Int32]$Buffer[0] -lt $Limit)
-            Return [System.Int32]$Buffer[0] % $Maximum
-          }
-
-          Try {
-            $Characters = [System.Collections.Generic.List[System.Char]]::new()
-            ForEach ($Set In $CharacterSet) {
-              $Characters.Add($Set[(Get-CryptoIndex -Maximum $Set.Length)])
-            }
-            $All = $CharacterSet -join ''
-            While ($Characters.Count -lt $Length) {
-              $Characters.Add($All[(Get-CryptoIndex -Maximum $All.Length)])
-            }
-            For ($Index = $Characters.Count - 1; $Index -gt 0; $Index--) {
-              $Other = Get-CryptoIndex -Maximum ($Index + 1)
-              $Temporary = $Characters[$Index]
-              $Characters[$Index] = $Characters[$Other]
-              $Characters[$Other] = $Temporary
-            }
-            $Password = -join $Characters
-          } Finally {
-            $Generator.Dispose()
-          }
-
-          $Ansible.Result = @{ password = $Password }
-          $Ansible.Changed = $false
-
-    - name: 'BEGIN | Select The Password That Active Directory Must Hold'
-      no_log: true
-      ansible.builtin.set_fact:
-        __pdq_ad_config_active_password__: >-
-          {{ __pdq_ad_config_generated_password__.result.password
-             if (__pdq_ad_config_decision_row__ | int) in [ 1, 2, 3, 4 ]
-             else __pdq_ad_config_secret_read__.contents }}
-
-    #endregion --- [ Begin: Generate Or Select The Password ] -------------------------------- #
+    #endregion --- [ Begin: Read The Service Account ] ----------------------------------------- #
 
 #endregion --- [ Begin: Converge The PDQ Directory Configuration ] ----------------------------- #
 
 
 #region ------ [ Process: Converge The PDQ Directory Configuration ] --------------------------- #
 
-- name: 'PROCESS | Converge The S3 Password And Directory Objects'
+- name: 'PROCESS | Apply The Directory Declaration'
   vars:
-    __secret_bucket__: "{{ secret_url | regex_replace('^s3://([^/]+)/.*$', '\\1') }}"
-    __secret_object__: "{{ secret_url | regex_replace('^s3://[^/]+/', '') }}"
-    __computer_ou_name__: "{{ computer_ou | regex_replace('^OU=([^,]+),.*$', '\\1') }}"
-    __computer_ou_path__: "{{ computer_ou | regex_replace('^OU=[^,]+,', '') }}"
+    __computer_ou_name__: "{{ pdq_ad_config_running.computer_ou | regex_replace('^OU=([^,]+),.*$', '\\1') }}"
+    __computer_ou_path__: "{{ pdq_ad_config_running.computer_ou | regex_replace('^OU=[^,]+,', '') }}"
 
   # Begin The 'Process' Block
   block:
 
-    #region ------ [ Process: Store The Authoritative Password ] ----------------------------- #
-    # S3 is written before AD. If AD then fails, row 6 can re-push the stored value next run;
-    # reversing the order would leave AD holding a password no authoritative system knows.
-
-    - name: 'PROCESS | Write A New Authoritative Password To S3'
-      delegate_to: 'localhost'
-      no_log: true
-      when: (__pdq_ad_config_decision_row__ | int) in [ 1, 2, 3, 4 ]
-
-      amazon.aws.s3_object:
-        bucket: "{{ __secret_bucket__ }}"
-        ceph: false
-        content: "{{ __pdq_ad_config_active_password__ }}"
-        debug_botocore_endpoint_logs: false
-        dualstack: false
-        encrypt: true
-        encryption_mode: 'AES256'
-        expiry: 600
-        ignore_nonexistent_bucket: false
-        mode: 'put'
-        object: "{{ __secret_object__ }}"
-        overwrite: 'always'
-        permission: [ 'private' ]
-        prefix: ''
-        purge_tags: true
-        region: "{{ aws_region }}"
-        retries: 0
-        sig_v4: true
-        validate_bucket_name: true
-        validate_certs: true
-
-    #endregion --- [ Process: Store The Authoritative Password ] ----------------------------- #
-
-    #region ------ [ Process: Converge The Computer OU ] ------------------------------------- #
+    #region ------ [ Process: Converge The Computer OU ] --------------------------------------- #
 
     - name: 'PROCESS | Ensure The PDQ Computer OU Exists'
       microsoft.ad.ou:
@@ -466,191 +88,113 @@
         path: "{{ __computer_ou_path__ }}"
         state: 'present'
 
-    #endregion --- [ Process: Converge The Computer OU ] ------------------------------------- #
+    #endregion --- [ Process: Converge The Computer OU ] --------------------------------------- #
 
-    #region ------ [ Process: Converge The Service Account ] --------------------------------- #
+    #region ------ [ Process: Converge The Service Account ] ----------------------------------- #
 
-    # The account's SHAPE, never its password. update_password is on_create precisely so this
-    # task can report the truth: a converged account reports nothing. The password is a separate
-    # task below, run only on the decision rows that actually push one.
     - name: 'PROCESS | Ensure The PDQ Service Account Is Exact'
       no_log: true
+
       microsoft.ad.user:
-        attributes:
-          set:
-            adminCount: null
         enabled: true
         groups:
-          # 'Domain Users' and nothing else -- which IS the enforcement, because `set` is
-          # exclusive: any group added by hand is removed. An empty list cannot be used: every
-          # account has a mandatory primary group, so `set: []` is unsatisfiable and reports
-          # changed on every run against an account that is already correct (measured 2026-08-31).
-          set:
-            - 'Domain Users'
-        name: "{{ service_account.name }}"
-        password: "{{ __pdq_ad_config_active_password__ }}"
-        password_never_expires: true
-        path: "{{ service_account.ou }}"
+          lookup_failure_action: 'fail'
+          permissions_failure_action: 'fail'
+          set: [ 'Domain Users' ]
+        name: "{{ pdq_ad_config_running.service_account.name }}"
+        password: "{{ pdq_ad_config_running.service_account.password }}"
+        path: "{{ pdq_ad_config_running.service_account.ou }}"
         state: 'present'
-        update_password: 'on_create'
-        user_cannot_change_password: true
+        update_password: 'when_changed'
 
-    # Rows 1-4 generated a new value; row 6 re-pushes the existing S3 value after AD was found to
-    # disagree. Row 5 is converged and writes nothing, which is what lets a settled estate report
-    # changed=0 instead of rotating a credential to prove it can.
-    - name: 'PROCESS | Push The Authoritative Password To Active Directory'
-      no_log: true
-      when: (__pdq_ad_config_decision_row__ | int) in [ 1, 2, 3, 4, 6 ]
+    #endregion --- [ Process: Converge The Service Account ] ----------------------------------- #
 
-      microsoft.ad.user:
-        name: "{{ service_account.name }}"
-        password: "{{ __pdq_ad_config_active_password__ }}"
-        path: "{{ service_account.ou }}"
-        state: 'present'
-        update_password: 'always'
-
-    #endregion --- [ Process: Converge The Service Account ] --------------------------------- #
-
-    #region ------ [ Process: Reconcile The Account ACLs ] ----------------------------------- #
+    #region ------ [ Process: Reconcile The Account ACLs ] ------------------------------------- #
 
     - name: 'PROCESS | Reconcile The Account Explicit LAPS Read ACEs'
+      register: '__pdq_ad_config_laps_permissions__'
+
       ansible.windows.win_powershell:
         depth: 3
         error_action: 'stop'
         parameters:
-          AccountIdentity: "{{ service_account.name }}"
-          OrganizationalUnit: "{{ laps_read_ous }}"
+          AccountIdentity: "{{ pdq_ad_config_running.service_account.name }}"
+          OrganizationalUnit: "{{ pdq_ad_config_running.laps_read_ous }}"
           State: 'present'
-        script: "{{ lookup('ansible.builtin.file', 'Set-PdqDirectoryAcl.ps1') }}"
+        script: "{{ lookup('ansible.builtin.file', 'Set-LapsPermissions.ps1') }}"
 
-    #endregion --- [ Process: Reconcile The Account ACLs ] ----------------------------------- #
+    #endregion --- [ Process: Reconcile The Account ACLs ] ------------------------------------- #
 
 #endregion --- [ Process: Converge The PDQ Directory Configuration ] --------------------------- #
 
 
 #region ------ [ End: Converge The PDQ Directory Configuration ] ------------------------------- #
 
-- name: 'END | Prove The Directory Declaration And Password'
+- name: 'END | Prove The Directory Declaration'
+  vars:
+    __service_account_dn__: >-
+      CN={{ pdq_ad_config_running.service_account.name }},{{ pdq_ad_config_running.service_account.ou }}
+
   # Begin The 'End' Block
   block:
 
-    #region ------ [ End: Re-Read The Directory Declaration ] -------------------------------- #
+    #region ------ [ End: Re-Read The Directory Declaration ] ---------------------------------- #
 
-    - name: 'END | Re-Read The Service Account And Computer OU'
-      # A READ. It must run under --check too: the decision logic below consumes its
-      # result, so skipping it would decide from an empty dict rather than from the estate.
+    - name: 'END | Re-Read The Service Account'
       check_mode: false
       changed_when: false
-      register: '__pdq_ad_config_final_directory__'
+      register: '__pdq_ad_config_final_account__'
 
-      ansible.windows.win_powershell:
-        depth: 3
-        error_action: 'stop'
-        parameters:
-          AccountIdentity: "{{ service_account.name }}"
-          ComputerOu: "{{ computer_ou }}"
-          ExpectedAccountDn: "CN={{ service_account.name }},{{ service_account.ou }}"
-        script: |
-          Param (
-            [System.String] $AccountIdentity,
-            [System.String] $ComputerOu,
-            [System.String] $ExpectedAccountDn
-          )
+      microsoft.ad.object_info:
+        identity: "{{ __service_account_dn__ }}"
+        properties:
+          - 'userAccountControl'
+          - 'msDS-User-Account-Control-Computed'
+          - 'memberOf'
 
-          Import-Module -Name ActiveDirectory -ErrorAction Stop
-          $Account = Get-ADUser -Identity $AccountIdentity -Properties @(
-            'adminCount'
-            'CannotChangePassword'
-            'Enabled'
-            'LockedOut'
-            'MemberOf'
-            'PasswordNeverExpires'
-            'SID'
-          )
-          $Ou = Get-ADOrganizationalUnit -Identity $ComputerOu
-          $Ansible.Result = @{
-            account_dn = $Account.DistinguishedName
-            expected_account_dn = $ExpectedAccountDn
-            computer_ou_dn = $Ou.DistinguishedName
-            enabled = [System.Boolean]$Account.Enabled
-            locked_out = [System.Boolean]$Account.LockedOut
-            password_never_expires = [System.Boolean]$Account.PasswordNeverExpires
-            cannot_change_password = [System.Boolean]$Account.CannotChangePassword
-            admin_count = $Account.adminCount
-            member_of = @($Account.MemberOf)
-            sid = $Account.SID.Value
-          }
-          $Ansible.Changed = $false
+    - name: 'END | Re-Read The PDQ Computer OU'
+      check_mode: false
+      changed_when: false
+      register: '__pdq_ad_config_final_ou__'
+
+      microsoft.ad.object_info:
+        identity: "{{ pdq_ad_config_running.computer_ou }}"
+
+    #endregion --- [ End: Re-Read The Directory Declaration ] ---------------------------------- #
+
+    #region ------ [ End: Prove The Directory Declaration ] ------------------------------------ #
 
     - name: 'END | Assert The Directory Declaration Is Exact'
       ansible.builtin.assert:
         fail_msg: >-
-          Directory convergence proof failed: the account identity, flags, secondary group set,
-          adminCount, lock state, or computer OU does not match the declaration.
+          Directory convergence proof failed: the PDQ computer OU, service account, account state,
+          group membership, or explicit LAPS read ACEs do not match the declaration.
         quiet: true
         that:
-          - __pdq_ad_config_final_directory__.result.account_dn ==
-            'CN=' ~ service_account.name ~ ',' ~ service_account.ou
-          - __pdq_ad_config_final_directory__.result.computer_ou_dn == computer_ou
-          - __pdq_ad_config_final_directory__.result.enabled | bool
-          - not (__pdq_ad_config_final_directory__.result.locked_out | bool)
-          - __pdq_ad_config_final_directory__.result.password_never_expires | bool
-          - __pdq_ad_config_final_directory__.result.cannot_change_password | bool
-          - __pdq_ad_config_final_directory__.result.admin_count is none
-          - __pdq_ad_config_final_directory__.result.member_of | length == 0
+          - __pdq_ad_config_final_account__.objects | length == 1
+          - __pdq_ad_config_final_account__.objects[0].DistinguishedName | lower == __service_account_dn__ | lower
+          - __pdq_ad_config_final_account__.objects[0].ObjectClass == 'user'
+          - ((__pdq_ad_config_final_account__.objects[0].userAccountControl | int) // 2) % 2 == 0
+          - >-
+            ((__pdq_ad_config_final_account__.objects[0]
+              ['msDS-User-Account-Control-Computed'] | int) // 16) % 2 == 0
+          # memberOf is NULL, not an empty list, when an account belongs to no groups beyond
+          # its primary one -- so default([]) alone does not catch it and length() raises on
+          # NoneType. The `true` argument makes the default apply to a null as well.
+          - >-
+            (__pdq_ad_config_final_account__.objects[0].memberOf | default([], true))
+            | length == 0
+          - __pdq_ad_config_final_ou__.objects | length == 1
+          - __pdq_ad_config_final_ou__.objects[0].DistinguishedName | lower == pdq_ad_config_running.computer_ou | lower
+          - __pdq_ad_config_final_ou__.objects[0].ObjectClass == 'organizationalUnit'
+          - __pdq_ad_config_laps_permissions__.result.state == 'present'
+          - >-
+            __pdq_ad_config_laps_permissions__.result.ous | length ==
+            pdq_ad_config_running.laps_read_ous | length
+          - >-
+            __pdq_ad_config_laps_permissions__.result.ous |
+            rejectattr('after_target_aces', 'equalto', 5) | list | length == 0
 
-    #endregion --- [ End: Re-Read The Directory Declaration ] -------------------------------- #
-
-    #region ------ [ End: Prove The Authoritative Password ] --------------------------------- #
-
-    - name: 'END | Prove The Authoritative Password Authenticates'
-      # The closing proof: whatever this run decided, the password now in S3 must authenticate as
-      # the account. A directory bind, not a batch logon -- svc-pdq holds no logon right on a
-      # domain controller and must not be given one (measured 2026-08-31).
-      changed_when: false
-      check_mode: false
-      failed_when: false
-      no_log: true
-      register: '__pdq_ad_config_final_authentication__'
-
-      ansible.windows.win_powershell:
-        depth: 2
-        error_action: 'stop'
-        parameters:
-          AccountName: "{{ service_account.name }}"
-        sensitive_parameters:
-          # No `type` key: ansible.windows 3.7.0 REJECTS it ("Unsupported parameters ... type
-          # found in sensitive_parameters") and already delivers a SecureString by default, which
-          # is why the script's parameter is typed as one and converted below.
-          - name: 'Password'
-            value: "{{ __pdq_ad_config_active_password__ }}"
-        script: |
-          param([System.String] $AccountName, [System.Security.SecureString] $Password)
-          $Plain = [System.Net.NetworkCredential]::new('', $Password).Password
-          Add-Type -AssemblyName System.DirectoryServices.AccountManagement
-          $Context = [System.DirectoryServices.AccountManagement.PrincipalContext]::new(
-            [System.DirectoryServices.AccountManagement.ContextType]::Domain
-          )
-          $Ansible.Result = @{
-            authenticated = [System.Boolean]$Context.ValidateCredentials($AccountName, $Plain)
-          }
-          $Ansible.Changed = $false
-
-    - name: 'END | Assert The Authoritative Password Authenticates'
-      ansible.builtin.assert:
-        fail_msg: >-
-          Password convergence proof failed: the authoritative S3 value did not complete a batch
-          logon as the declared service-account SID.
-        quiet: true
-        that:
-          - not (__pdq_ad_config_final_authentication__.unreachable | default(false) | bool)
-          - not (__pdq_ad_config_final_authentication__.failed | default(false) | bool)
-          # A directory BIND proves the credential; it does not become the account, so there is no
-          # resulting identity to compare a SID against. The SID comparison that belonged to the
-          # batch-logon form is gone with it -- the account's identity is already proved by the
-          # re-read above, which reads it by SID.
-          - __pdq_ad_config_final_authentication__.result.authenticated | default(false) | bool
-
-    #endregion --- [ End: Prove The Authoritative Password ] --------------------------------- #
+    #endregion --- [ End: Prove The Directory Declaration ] ------------------------------------ #
 
 #endregion --- [ End: Converge The PDQ Directory Configuration ] ------------------------------- #

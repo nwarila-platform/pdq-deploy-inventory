@@ -1,23 +1,33 @@
-# SPDX-FileCopyrightText: 2026 Nicholas Warila
-# SPDX-License-Identifier: MIT
+# =========================================================================================== #
+# File: '{{ role_path }}/defaults/main.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Lowest-precedence configuration for the elevated directory role.
+#
+# WHAT BELONGS HERE: nothing that is true only of one directory. Every value this role needs
+# names a specific domain, so the interface is declared EMPTY and the playbook supplies it. A
+# concrete default here would be one site's directory wearing a default's clothes, and a run
+# against a different domain would quietly target the wrong container.
+#
+# The PASSWORD is supplied by the caller and never sourced here. The playbook resolves it through
+# the secret loader and hands over the value, exactly as it does for pdq_deploy and pdq_inventory.
+# This role does not generate, store or rotate a password -- that lives outside it entirely.
+#
+# =========================================================================================== #
 ---
-rotate_interval_days: 180
-rotate_password: false
-password_length: 32
-password_charset:
-  upper: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-  lower: 'abcdefghijklmnopqrstuvwxyz'
-  digits: '0123456789'
-  symbols: '!#$%&()*+,-./:;<=>?@[]^_{|}~'
+pdq_ad_config_defaults:
 
-service_account:
-  name: 'svc-pdq'
-  ou: 'OU=Domain Service Accounts,DC=tcn,DC=trinitytechnicalservices,DC=com'
+  # The domain account PDQ authenticates to Active Directory with, and reads LAPS passwords as.
+  # It is a plain member of Domain Users and holds no administrative rights anywhere.
+  service_account:
+    name: ''
+    ou: ''
+    password: ''
 
-computer_ou: 'OU=PDQ,OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'
+  # Where a PDQ server is filed once it joins the domain.
+  computer_ou: ''
 
-laps_read_ous:
-  - 'OU=Domain Workstations,DC=tcn,DC=trinitytechnicalservices,DC=com'
-  - 'OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'
-
-secret_url: 's3://{{ aws_account_id }}-ansible/applications/pdq/svc-pdq-domain-password.txt'
+  # The OUs whose machines PDQ manages, and therefore whose LAPS passwords the service account
+  # must be able to read. Declared, never defaulted: a wrong OU here grants a real permission
+  # over real machines.
+  laps_read_ous: []

@@ -73,6 +73,7 @@
     # Anchored on THIS role. A bare 'collections/*.xml' is resolved against the whole search path,
     # so a role whose own files/ did not arrive silently matches another tree's.
     __collection_glob__: "{{ role_path }}/files/collections/*.xml"
+    __scan_profile_glob__: "{{ role_path }}/files/scan-profiles/*.xml"
 
   # Begin The 'Process' Block
   block:
@@ -743,6 +744,53 @@
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqCollection.ps1') }}"
 
     #endregion --- [ Process: Import The Declared Collections ] ------------------------------- #
+
+    #region ------ [ Process: Reconcile The Declared Scan Profiles ] -------------------------- #
+    # Every export crosses in one call. The script reads the complete graph once, computes all
+    # creations, updates, and removals, then commits the entire reconciliation in one immediate
+    # transaction. Declared names win over the built-in list. The task is censored because it runs
+    # as the service account; the following task prints only the script's sanitized recap.
+
+    - name: 'PROCESS | Require Every Declared Scan Profile Definition To Be Present'
+      vars:
+        __found__: >-
+          {{ query('ansible.builtin.fileglob', __scan_profile_glob__) | map('basename') | sort }}
+
+      ansible.builtin.assert:
+        fail_msg: >-
+          The scan profile definitions on disk are not the ones this role declares.
+          Declared: {{ pdq_inventory_running.scan_profiles | sort | join(', ') | default('(none)', true) }}.
+          Found: {{ __found__ | join(', ') | default('(none)', true) }}.
+        quiet: true
+        that:
+          - __found__ == (pdq_inventory_running.scan_profiles | sort)
+
+    - name: 'PROCESS | Apply The Declared Scan Profiles'
+      become: true
+      become_method: 'ansible.builtin.runas'
+      become_user: "{{ pdq_inventory_running.service_account.name }}"
+      no_log: true
+      register: '__pdq_inventory_scan_profiles__'
+      vars:
+        ansible_become_flags: 'logon_type=batch'
+        ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
+        __scan_profile_files__: "{{ query('ansible.builtin.fileglob', __scan_profile_glob__) | sort }}"
+
+      ansible.windows.win_powershell:
+        depth: 3
+        error_action: 'stop'
+        parameters:
+          Definition: "{{ query('ansible.builtin.file', *(__scan_profile_files__)) }}"
+          BuiltIn: "{{ pdq_inventory_running.built_in_scan_profiles }}"
+          CliPath: "{{ pdq_inventory_running.cli_path }}"
+          DeployCliPath: "{{ pdq_inventory_running.deploy_cli_path }}"
+        script: "{{ lookup('ansible.builtin.file', 'Set-PdqScanProfile.ps1') }}"
+
+    - name: 'PROCESS | Report The Scan Profile Reconciliation'
+      ansible.builtin.debug:
+        msg: "{{ __pdq_inventory_scan_profiles__.result.recap }}"
+
+    #endregion --- [ Process: Reconcile The Declared Scan Profiles ] -------------------------- #
 
     #region ------ [ Process: Remove The Undeclared Collections ] ----------------------------- #
     # The other half of the collection promise. The import above put every owned collection in

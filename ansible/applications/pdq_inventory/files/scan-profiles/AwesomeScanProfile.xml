@@ -1,0 +1,121 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<AdminArsenal.Export Code="PDQInventory" Name="PDQ Inventory" Version="20.1.8.0" MinimumVersion="14.0">
+  <ScanProfile>
+    <Collections type="list" />
+    <Scanners type="list">
+      <Scanner>
+        <TypeName>Disks</TypeName>
+        <SourceScannerId value="33" />
+      </Scanner>
+      <Scanner>
+        <TypeName>Printers</TypeName>
+        <SourceScannerId value="34" />
+      </Scanner>
+      <Scanner>
+        <TypeName>ActiveDirectory</TypeName>
+        <SourceScannerId value="35" />
+      </Scanner>
+      <Scanner>
+        <TypeName>Applications</TypeName>
+        <SourceScannerId value="36" />
+      </Scanner>
+      <Scanner>
+        <TypeName>Computer</TypeName>
+        <SourceScannerId value="37" />
+      </Scanner>
+      <Scanner>
+        <TypeName>Displays</TypeName>
+        <SourceScannerId value="38" />
+      </Scanner>
+      <Scanner>
+        <TypeName>EnvironmentVariables</TypeName>
+        <SourceScannerId value="39" />
+      </Scanner>
+      <Scanner>
+        <ExcludePatterns type="list" />
+        <FileScanType>File</FileScanType>
+        <IncludePatterns type="list">
+          <item>C:\TMP\*</item>
+          <item>C:\TEMP\*</item>
+        </IncludePatterns>
+        <DateCreated>2026-08-31T10:40:33.0000000+00:00</DateCreated>
+        <DateModified>2026-08-31T10:43:40.0000000+00:00</DateModified>
+        <ExcludePatternText></ExcludePatternText>
+        <IncludePatternText>C:\TMP\*
+C:\TEMP\*</IncludePatternText>
+        <RowLimit value="2500" />
+        <TypeName>Files</TypeName>
+        <SourceScannerId value="40" />
+      </Scanner>
+      <Scanner>
+        <TypeName>HardwareDevices</TypeName>
+        <SourceScannerId value="41" />
+      </Scanner>
+      <Scanner>
+        <TypeName>HotFixes</TypeName>
+        <SourceScannerId value="42" />
+      </Scanner>
+      <Scanner>
+        <TypeName>MemoryModules</TypeName>
+        <SourceScannerId value="43" />
+      </Scanner>
+      <Scanner>
+        <TypeName>NetworkAdapters</TypeName>
+        <SourceScannerId value="44" />
+      </Scanner>
+      <Scanner>
+        <TypeName>Services</TypeName>
+        <SourceScannerId value="45" />
+      </Scanner>
+      <Scanner>
+        <TypeName>Shares</TypeName>
+        <SourceScannerId value="46" />
+      </Scanner>
+      <Scanner>
+        <TypeName>UsersAndGroups</TypeName>
+        <SourceScannerId value="47" />
+      </Scanner>
+      <Scanner>
+        <TypeName>WindowsFeatures</TypeName>
+        <SourceScannerId value="48" />
+      </Scanner>
+      <Scanner>
+        <TypeName>WindowsTaskSchedules</TypeName>
+        <SourceScannerId value="49" />
+      </Scanner>
+      <Scanner>
+        <WMIClassName></WMIClassName>
+        <ModifiedDate>2026-08-31T10:43:38.0000000+00:00</ModifiedDate>
+        <UsePreferencesTimeout value="true" />
+        <Name>Test If AppRepo Exists</Name>
+        <Namespace>CIMV2</Namespace>
+        <WQL>SELECT * FROM Win32_Share WHERE Name='AppRepo$'</WQL>
+        <Timeout value="90" />
+        <RowLimit value="2500" />
+        <TypeName>WMI</TypeName>
+        <SourceScannerId value="50" />
+      </Scanner>
+    </Scanners>
+    <Description></Description>
+    <ScanProfileId value="9" />
+    <Name>AwesomeScanProfile</Name>
+    <ScanAs>Admin</ScanAs>
+    <ScheduleTriggerSet name="ScheduleTriggers">
+      <Triggers type="list">
+        <ScheduleTrigger>
+          <ScanAge>5.00:00:00</ScanAge>
+          <TimeOfDayIsEnabled value="false" />
+          <Description></Description>
+          <EndDateTime>2026-09-07T00:00:00.0000000+00:00</EndDateTime>
+          <EndDateTimeIsEnabled value="false" />
+          <IsEnabled value="true" />
+          <StartDateTime>2026-08-31T00:00:00.0000000+00:00</StartDateTime>
+          <EnableTriggerStartTime>08:00:00</EnableTriggerStartTime>
+          <EnableTriggerEndTime>17:00:00</EnableTriggerEndTime>
+          <TriggerTimeFrameIsEnabled value="false" />
+          <TriggerType>Scan Age</TriggerType>
+        </ScheduleTrigger>
+      </Triggers>
+    </ScheduleTriggerSet>
+  </ScanProfile>
+</AdminArsenal.Export>

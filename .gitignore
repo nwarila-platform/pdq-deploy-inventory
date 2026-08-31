@@ -33,6 +33,7 @@
 !/ansible/applications/pdq_inventory/defaults/
 !/ansible/applications/pdq_inventory/files/
 !/ansible/applications/pdq_inventory/files/collections/
+!ansible/applications/pdq_inventory/files/scan-profiles/
 !/ansible/applications/pdq_inventory/handlers/
 !/ansible/applications/pdq_inventory/meta/
 !/ansible/applications/pdq_inventory/tasks/
@@ -110,7 +111,10 @@
 !/ansible/applications/pdq_inventory/files/Remove-PdqVariable.ps1.stub
 !/ansible/applications/pdq_inventory/files/Set-PdqCollection.ps1.stub
 !/ansible/applications/pdq_inventory/files/Remove-PdqCollection.ps1.stub
+!ansible/applications/pdq_inventory/files/Set-PdqScanProfile.ps1.stub
 !/ansible/applications/pdq_inventory/files/collections/*.xml
+!ansible/applications/pdq_inventory/files/scan-profiles/Standard.xml
+!ansible/applications/pdq_inventory/files/scan-profiles/AwesomeScanProfile.xml
 !/ansible/applications/pdq_inventory/handlers/main.yml
 !/ansible/applications/pdq_inventory/meta/main.yml
 !/ansible/applications/pdq_inventory/tasks/absent_windows.yml
@@ -165,6 +169,8 @@
 !/scripts/Set-PdqCollection.pester.ps1
 !/scripts/Remove-PdqCollection.ps1
 !/scripts/Remove-PdqCollection.pester.ps1
+!scripts/Set-PdqScanProfile.ps1
+!scripts/Set-PdqScanProfile.pester.ps1
 !/scripts/compose-and-run.sh
 !/scripts/install-hooks.sh
 !/scripts/materialize-role-scripts.sh

@@ -86,6 +86,10 @@ pdq_inventory_defaults:
   # that does not exist.
   cli_path: 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
 
+  # Scan profiles can be referenced from the co-located Deploy database. This fixed path follows
+  # the same measured install-location rule as cli_path; empty declares that Deploy is absent.
+  deploy_cli_path: 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
+
   # The background service executable, which is what the firewall exception is written for. Same
   # fixed location as the command line above, and fixed for the same reason.
   service_path: 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventoryService.exe'
@@ -346,3 +350,22 @@ pdq_inventory_defaults:
     - 'Python Software Foundation_ Python 3.14.xml'
 
   #endregion --- [ Declared collections ] ---------------------------------------------------- #
+
+  #region ------ [ Declared scan profiles ] ------------------------------------------------- #
+  # A declared export owns the complete profile. A declared name wins over the built-in list;
+  # every profile in neither list is removed with its gathered data.
+  built_in_scan_profiles:
+    - 'Applications'
+    - 'Computer Info'
+    - 'PS - Mapped Drives'
+    - 'PS - Windows Defender Information'
+    - 'Registry Run Keys'
+    - 'Standard'
+    - 'Windows EXEs'
+    - 'Windows Firewall Configuration'
+
+  scan_profiles:
+    - 'Standard.xml'
+    - 'AwesomeScanProfile.xml'
+
+  #endregion --- [ Declared scan profiles ] ------------------------------------------------- #

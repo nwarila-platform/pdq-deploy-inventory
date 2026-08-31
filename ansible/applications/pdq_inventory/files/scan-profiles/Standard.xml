@@ -1,0 +1,112 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<AdminArsenal.Export Code="PDQInventory" Name="PDQ Inventory" Version="20.1.8.0" MinimumVersion="19.0">
+  <ScanProfile>
+    <Collections type="list" />
+    <Scanners type="list">
+      <Scanner>
+        <TypeName>Computer</TypeName>
+        <SourceScannerId value="1" />
+      </Scanner>
+      <Scanner>
+        <TypeName>ActiveDirectory</TypeName>
+        <SourceScannerId value="2" />
+      </Scanner>
+      <Scanner>
+        <TypeName>Applications</TypeName>
+        <SourceScannerId value="3" />
+      </Scanner>
+      <Scanner>
+        <TypeName>EnvironmentVariables</TypeName>
+        <SourceScannerId value="4" />
+      </Scanner>
+      <Scanner>
+        <TypeName>Disks</TypeName>
+        <SourceScannerId value="5" />
+      </Scanner>
+      <Scanner>
+        <TypeName>HardwareDevices</TypeName>
+        <SourceScannerId value="6" />
+      </Scanner>
+      <Scanner>
+        <TypeName>HotFixes</TypeName>
+        <SourceScannerId value="7" />
+      </Scanner>
+      <Scanner>
+        <TypeName>Displays</TypeName>
+        <SourceScannerId value="8" />
+      </Scanner>
+      <Scanner>
+        <TypeName>NetworkAdapters</TypeName>
+        <SourceScannerId value="9" />
+      </Scanner>
+      <Scanner>
+        <TypeName>UsersAndGroups</TypeName>
+        <SourceScannerId value="10" />
+      </Scanner>
+      <Scanner>
+        <TypeName>MemoryModules</TypeName>
+        <SourceScannerId value="11" />
+      </Scanner>
+      <Scanner>
+        <TypeName>Printers</TypeName>
+        <SourceScannerId value="12" />
+      </Scanner>
+      <Scanner>
+        <TypeName>Services</TypeName>
+        <SourceScannerId value="13" />
+      </Scanner>
+      <Scanner>
+        <TypeName>Shares</TypeName>
+        <SourceScannerId value="14" />
+      </Scanner>
+      <Scanner>
+        <TypeName>WindowsFeatures</TypeName>
+        <SourceScannerId value="15" />
+      </Scanner>
+      <Scanner>
+        <TypeName>WindowsTaskSchedules</TypeName>
+        <SourceScannerId value="16" />
+      </Scanner>
+      <Scanner>
+        <ModifiedDate>2026-08-28T18:50:26.0000000+00:00</ModifiedDate>
+        <Name>Test-WMI</Name>
+        <UID>f78186fbb92443c695571d0e6079c264</UID>
+        <Script>Try {
+  $NULL = Get-CimInstance Win32_OperatingSystem -ErrorAction:'Stop'
+  $NULL = Get-CimInstance Win32_ComputerSystem -ErrorAction:'Stop'
+  $NULL = Get-CimInstance Win32_Processor -ErrorAction:'Stop'
+  (Get-Service WinMgmt).Status -eq 'Running'
+} Catch {
+  $False
+}</Script>
+        <FileName></FileName>
+        <Parameters></Parameters>
+        <AdditionalFiles></AdditionalFiles>
+        <RowLimit value="100" />
+        <TypeName>PowerShell</TypeName>
+        <SourceScannerId value="33" />
+      </Scanner>
+    </Scanners>
+    <Description>Standard scan for basic inventory data</Description>
+    <ScanProfileId value="1" />
+    <Name>Standard</Name>
+    <ScanAs>Admin</ScanAs>
+    <ScheduleTriggerSet name="ScheduleTriggers">
+      <Triggers type="list">
+        <ScheduleTrigger>
+          <ScanAge>7.00:00:00</ScanAge>
+          <TimeOfDayIsEnabled value="false" />
+          <Description></Description>
+          <EndDateTime>2026-09-04T00:00:00.0000000+00:00</EndDateTime>
+          <EndDateTimeIsEnabled value="false" />
+          <IsEnabled value="true" />
+          <StartDateTime>2026-08-28T00:00:00.0000000+00:00</StartDateTime>
+          <EnableTriggerStartTime>08:00:00</EnableTriggerStartTime>
+          <EnableTriggerEndTime>17:00:00</EnableTriggerEndTime>
+          <TriggerTimeFrameIsEnabled value="false" />
+          <TriggerType>Scan Age</TriggerType>
+        </ScheduleTrigger>
+      </Triggers>
+    </ScheduleTriggerSet>
+  </ScanProfile>
+</AdminArsenal.Export>

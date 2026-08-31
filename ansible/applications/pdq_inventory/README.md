@@ -4,9 +4,9 @@ Installs PDQ Inventory at a pinned version and brings it up as an all-in-one **C
 Windows. In one converge it installs the product, applies the licence, runs the background service
 under the shared PDQ service account, places the database on its dedicated drive, sets Central
 Server mode and the console port, applies the product's preferences, reconciles the pinned
-variables and the owned collections, seeds the per-user console defaults, authorises the console
-users, chooses the event-log severities, and records the registration that would otherwise stop
-the first console with a popup. PDQ Inventory is a scanner, so — unlike `pdq_deploy` — it
+variables, collections, and scan profiles, seeds the per-user console defaults, authorises the
+console users, chooses the event-log severities, and records the registration that would otherwise
+stop the first console with a popup. PDQ Inventory is a scanner, so — unlike `pdq_deploy` — it
 publishes **no package repository and no network share**.
 
 Both declarations are complete. The variable map is the whole set: a converge adds what is
@@ -15,6 +15,9 @@ a fresh export. A collection is stated as its exported XML, imported only on dif
 proven by re-export; every top-level collection the role does not own is removed with its
 children, except the product's own built-in furniture and the shipped Collection Library, whose
 rows are compared identity by identity before and after so a converge that touched them fails.
+A scan-profile export owns the complete named profile, including its triggers and scanner
+multiset. Declared names are created or updated in place, undeclared non-built-ins are removed,
+and the whole reconciliation commits in one database transaction.
 
 Everything moves through the controller: it fetches each artifact from S3 and hands the installer
 to the target, so the guest never receives cloud credentials. The installer is verified against
@@ -59,6 +62,11 @@ The values are the product's own measured defaults except where the file identif
 data-egress choice. The surface is declared in full so a vendor changing a default surfaces as a
 reported change rather than silent drift.
 
+`scan_profiles` names the complete export files under `files/scan-profiles/`.
+`built_in_scan_profiles` names product-owned profiles that remain untouched unless also declared;
+a declared name wins that overlap. `deploy_cli_path` names the co-located Deploy command line used
+to locate its reference database, or is empty when Deploy is not installed.
+
 ## State
 
 - `present` (default) — install and configure to the declared state.
@@ -80,7 +88,8 @@ and Pester-tested once under `scripts/` and materialized into the role by
 `scripts/materialize-role-scripts.sh` (the role tracks only the `.ps1.stub` markers). The role uses
 `Get-InstalledSoftware.ps1`, `Set-PdqSetting.ps1`, `Set-PdqVariable.ps1`,
 `Remove-PdqVariable.ps1`, and `Set-PdqRegistration.ps1`, all shared with `pdq_deploy`, plus
-Inventory's own `Set-PdqCollection.ps1` / `Remove-PdqCollection.ps1` for the collections.
+Inventory's own `Set-PdqCollection.ps1` / `Remove-PdqCollection.ps1` for collections and
+`Set-PdqScanProfile.ps1` for the complete scan-profile reconciliation.
 
 ## Verification
 

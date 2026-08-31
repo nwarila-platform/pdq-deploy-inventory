@@ -59,6 +59,8 @@
         or (pdq_inventory_running.server.listen_addresses is sequence
             and pdq_inventory_running.server.listen_addresses is not string)
       - pdq_inventory_running.cli_path | default('') is match('^[A-Za-z]:\\\\')
+      - pdq_inventory_running.deploy_cli_path == ''
+        or pdq_inventory_running.deploy_cli_path is match('^[A-Za-z]:\\\\')
       - pdq_inventory_running.service_path | default('') is match('^[A-Za-z]:\\\\')
       - pdq_inventory_running.preferences is mapping
       - pdq_inventory_running.preferences | dict2items | rejectattr('value', 'mapping')
@@ -72,11 +74,20 @@
         | reject('match', '.+') | list | length == 0
       - pdq_inventory_running.console_users is sequence
       - pdq_inventory_running.console_users is not string
+      - pdq_inventory_running.scan_profiles is sequence
+      - pdq_inventory_running.scan_profiles is not string
+      - pdq_inventory_running.scan_profiles | reject('string') | list | length == 0
+      - pdq_inventory_running.scan_profiles | unique | list | length
+        == pdq_inventory_running.scan_profiles | length
+      - pdq_inventory_running.built_in_scan_profiles is sequence
+      - pdq_inventory_running.built_in_scan_profiles is not string
+      - pdq_inventory_running.built_in_scan_profiles | reject('string') | list | length == 0
     fail_msg: >-
       Refusing to deploy: an identity, layout, or preference input is missing or malformed. The
       product's display and service names, its command-line and service paths, the install timeout,
       the database directory name, and the server port must all be present and well formed.
       Preferences must be a map of pages; its logging-severity and per-user seed booleans must hold
       the shapes the role writes; the pinned variables must be a map of string values; and
-      console_users must be a list of names. See meta/main.yml.
+      console_users, scan_profiles, and built_in_scan_profiles must be lists of names, and a scan
+      profile filename may appear only once. See meta/main.yml.
     quiet: true

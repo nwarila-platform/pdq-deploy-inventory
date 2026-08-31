@@ -233,7 +233,7 @@
           license_key: >-
             {{ lookup('secret',
                       's3://' ~ aws_account_id ~ '-ansible/applications/pdq/pdq-deploy-license-key.lic',
-                      '4fc848aabff6ff6ecb1c09c9017d40da306bd3c9dd2d075b9082e03608dce58c') }}
+                      'b0564515695a9d78f9bd0f18ee01107ae1c0462ee3982da1ef6305f7bf77da68') }}
           license_email: >-
             {{ lookup('secret',
                       's3://' ~ aws_account_id ~ '-ansible/applications/pdq/pdq-deploy-license-email.txt') }}
@@ -298,7 +298,7 @@
           license_key: >-
             {{ lookup('secret',
                       's3://' ~ aws_account_id ~ '-ansible/applications/pdq/pdq-inventory-license-key.lic',
-                      '2c6ef523580c2cfb4ee9c423ca2ae204091544e97322d2dd95cdfd6a99d7c2a5') }}
+                      '2c3a3a3eba1f5692bad2581aafbed738ebf2fc48b1a1c9c201448d29d9caa70e') }}
           license_email: >-
             {{ lookup('secret',
                       's3://' ~ aws_account_id ~ '-ansible/applications/pdq/pdq-inventory-license-email.txt') }}

@@ -647,6 +647,11 @@
     # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqVariable.ps1.stub).
 
     - name: 'PROCESS | Import The Pinned Variables'
+      # PERF-HOLD (TD-007): the command line costs 7-18 s PER LAUNCH and this task pays it
+      # once per item -- 30.8 minutes of a converge. Held off until the object moves to the
+      # product's own sqlite3, which answers in 30-39 ms. Import and prune are held TOGETHER:
+      # a prune running without its import would empty the product.
+      when: false
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_inventory_running.service_account.name }}"
@@ -654,7 +659,6 @@
       vars:
         ansible_become_flags: 'logon_type=batch'
         ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
-      when: pdq_inventory_running.variables | length > 0
 
       ansible.windows.win_powershell:
         depth: 3
@@ -679,6 +683,11 @@
     # tracks only files/Remove-PdqVariable.ps1.stub).
 
     - name: 'PROCESS | Remove The Undeclared Variables'
+      # PERF-HOLD (TD-007): the command line costs 7-18 s PER LAUNCH and this task pays it
+      # once per item -- 30.8 minutes of a converge. Held off until the object moves to the
+      # product's own sqlite3, which answers in 30-39 ms. Import and prune are held TOGETHER:
+      # a prune running without its import would empty the product.
+      when: false
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_inventory_running.service_account.name }}"
@@ -709,6 +718,11 @@
     # files/Set-PdqCollection.ps1.stub).
 
     - name: 'PROCESS | Require Every Declared Collection To Be Present'
+      # PERF-HOLD (TD-007): the command line costs 7-18 s PER LAUNCH and this task pays it
+      # once per item -- 30.8 minutes of a converge. Held off until the object moves to the
+      # product's own sqlite3, which answers in 30-39 ms. Import and prune are held TOGETHER:
+      # a prune running without its import would empty the product.
+      when: false
       vars:
         __found__: "{{ query('ansible.builtin.fileglob', __collection_glob__) | map('basename') | sort }}"
 
@@ -722,6 +736,11 @@
           - __found__ == (pdq_inventory_running.collections | sort)
 
     - name: 'PROCESS | Import The Declared Collections'
+      # PERF-HOLD (TD-007): the command line costs 7-18 s PER LAUNCH and this task pays it
+      # once per item -- 30.8 minutes of a converge. Held off until the object moves to the
+      # product's own sqlite3, which answers in 30-39 ms. Import and prune are held TOGETHER:
+      # a prune running without its import would empty the product.
+      when: false
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_inventory_running.service_account.name }}"
@@ -756,6 +775,11 @@
     # scripts/materialize-role-scripts.sh (the role tracks only files/Remove-PdqCollection.ps1.stub).
 
     - name: 'PROCESS | Remove The Undeclared Collections'
+      # PERF-HOLD (TD-007): the command line costs 7-18 s PER LAUNCH and this task pays it
+      # once per item -- 30.8 minutes of a converge. Held off until the object moves to the
+      # product's own sqlite3, which answers in 30-39 ms. Import and prune are held TOGETHER:
+      # a prune running without its import would empty the product.
+      when: false
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_inventory_running.service_account.name }}"

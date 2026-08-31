@@ -1,0 +1,158 @@
+# ============================================================================================= #
+# File: '{{ role_path }}/tasks/absent_windows.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Removes every explicit ACE this role owns and then deletes the PDQ service account. The declared
+# OUs are shared directory objects and remain in place. BEGIN resolves the account SID, PROCESS
+# removes its permissions before its identity, and END proves the account is absent and the OUs
+# still exist.
+#
+# ============================================================================================= #
+---
+#region ------ [ Begin: Remove The PDQ Directory Configuration ] ------------------------------- #
+
+- name: 'BEGIN | Read The Service Account Before Removal'
+  # Begin The 'Begin' Block
+  block:
+
+    #region ------ [ Begin: Resolve The Owned Principal ] ------------------------------------ #
+
+    - name: 'BEGIN | Resolve The Service Account Identity'
+      changed_when: false
+      register: '__pdq_ad_config_absent_account__'
+
+      ansible.windows.win_powershell:
+        depth: 2
+        error_action: 'stop'
+        parameters:
+          AccountIdentity: "{{ service_account.name }}"
+        script: |
+          Param (
+            [System.String] $AccountIdentity
+          )
+
+          Import-Module -Name ActiveDirectory -ErrorAction Stop
+          Try {
+            $Null = Get-ADUser -Identity $AccountIdentity -ErrorAction Stop
+            $Ansible.Result = @{ present = $true }
+          } Catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+            $Ansible.Result = @{ present = $false }
+          }
+          $Ansible.Changed = $false
+
+    #endregion --- [ Begin: Resolve The Owned Principal ] ------------------------------------ #
+
+#endregion --- [ Begin: Remove The PDQ Directory Configuration ] ------------------------------- #
+
+
+#region ------ [ Process: Remove The PDQ Directory Configuration ] ----------------------------- #
+
+- name: 'PROCESS | Remove The Owned ACLs And Service Account'
+  # Begin The 'Process' Block
+  block:
+
+    #region ------ [ Process: Remove The Account ACLs ] -------------------------------------- #
+    # ACLs go first because ownership is resolved by the live account SID. Once this ordered path
+    # has deleted the account, a later absent run can trust that it already removed those ACEs.
+
+    - name: 'PROCESS | Remove Every Explicit ACE Owned By The Account'
+      when: __pdq_ad_config_absent_account__.result.present | bool
+
+      ansible.windows.win_powershell:
+        depth: 3
+        error_action: 'stop'
+        parameters:
+          AccountIdentity: "{{ service_account.name }}"
+          OrganizationalUnit: "{{ laps_read_ous }}"
+          State: 'absent'
+        script: "{{ lookup('ansible.builtin.file', 'Set-PdqDirectoryAcl.ps1') }}"
+
+    #endregion --- [ Process: Remove The Account ACLs ] -------------------------------------- #
+
+    #region ------ [ Process: Remove The Service Account ] ----------------------------------- #
+
+    - name: 'PROCESS | Remove The PDQ Service Account'
+      microsoft.ad.user:
+        identity: "CN={{ service_account.name }},{{ service_account.ou }}"
+        state: 'absent'
+
+    #endregion --- [ Process: Remove The Service Account ] ----------------------------------- #
+
+    #region ------ [ Process: Preserve The Shared OUs ] -------------------------------------- #
+    # The computer OU and both LAPS read OUs are shared directory objects. This role removes its
+    # principal-scoped ACEs but never removes an OU or any computer it may contain.
+
+    - name: 'PROCESS | State Why Shared OUs Are Not Removed'
+      changed_when: false
+      ansible.builtin.debug:
+        msg: >-
+          The declared OUs remain because they are shared directory objects; only the svc-pdq
+          account and its explicit ACEs belong to this absent operation.
+        verbosity: 1
+
+    #endregion --- [ Process: Preserve The Shared OUs ] -------------------------------------- #
+
+#endregion --- [ Process: Remove The PDQ Directory Configuration ] ----------------------------- #
+
+
+#region ------ [ End: Remove The PDQ Directory Configuration ] --------------------------------- #
+
+- name: 'END | Prove The Account Is Gone And Shared OUs Remain'
+  # Begin The 'End' Block
+  block:
+
+    #region ------ [ End: Re-Read The Directory ] -------------------------------------------- #
+
+    - name: 'END | Re-Read The Account And Shared OUs'
+      changed_when: false
+      register: '__pdq_ad_config_absent_proof__'
+
+      ansible.windows.win_powershell:
+        depth: 3
+        error_action: 'stop'
+        parameters:
+          AccountIdentity: "{{ service_account.name }}"
+          OrganizationalUnit: "{{ ([computer_ou] + laps_read_ous) | unique | list }}"
+        script: |
+          Param (
+            [System.String] $AccountIdentity,
+            [System.String[]] $OrganizationalUnit
+          )
+
+          Import-Module -Name ActiveDirectory -ErrorAction Stop
+          Try {
+            $Null = Get-ADUser -Identity $AccountIdentity -ErrorAction Stop
+            $AccountPresent = $true
+          } Catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+            $AccountPresent = $false
+          }
+          $PresentOu = @(
+            ForEach ($Ou In $OrganizationalUnit) {
+              (Get-ADOrganizationalUnit -Identity $Ou -ErrorAction Stop).DistinguishedName
+            }
+          )
+          $Ansible.Result = @{
+            account_present = $AccountPresent
+            organizational_units = $PresentOu
+          }
+          $Ansible.Changed = $false
+
+    #endregion --- [ End: Re-Read The Directory ] -------------------------------------------- #
+
+    #region ------ [ End: Assert The Absent State ] ------------------------------------------ #
+
+    - name: 'END | Assert The Account Is Absent And Shared OUs Remain'
+      ansible.builtin.assert:
+        fail_msg: >-
+          Absent-state proof failed: the service account remains or one of the declared shared OUs
+          was not found after removal.
+        quiet: true
+        that:
+          - not (__pdq_ad_config_absent_proof__.result.account_present | bool)
+          - >-
+            __pdq_ad_config_absent_proof__.result.organizational_units | length ==
+            ([computer_ou] + laps_read_ous) | unique | list | length
+
+    #endregion --- [ End: Assert The Absent State ] ------------------------------------------ #
+
+#endregion --- [ End: Remove The PDQ Directory Configuration ] --------------------------------- #

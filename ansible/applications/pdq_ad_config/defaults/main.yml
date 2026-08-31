@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Nicholas Warila
+# SPDX-License-Identifier: MIT
+---
+rotate_interval_days: 180
+rotate_password: false
+password_length: 32
+password_charset:
+  upper: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  lower: 'abcdefghijklmnopqrstuvwxyz'
+  digits: '0123456789'
+  symbols: '!#$%&()*+,-./:;<=>?@[]^_{|}~'
+
+service_account:
+  name: 'svc-pdq'
+  ou: 'OU=Domain Service Accounts,DC=tcn,DC=trinitytechnicalservices,DC=com'
+
+computer_ou: 'OU=PDQ,OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'
+
+laps_read_ous:
+  - 'OU=Domain Workstations,DC=tcn,DC=trinitytechnicalservices,DC=com'
+  - 'OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'
+
+secret_url: 's3://{{ aws_account_id }}-ansible/applications/pdq/svc-pdq-domain-password.txt'

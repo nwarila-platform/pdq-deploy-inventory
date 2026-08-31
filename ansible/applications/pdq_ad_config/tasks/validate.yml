@@ -1,0 +1,175 @@
+# =========================================================================================== #
+# File: '{{ role_path }}/tasks/validate.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Validates the declared interface and the four Windows LAPS prerequisites before either state
+# mutates Active Directory. A computer need not have stored a password yet: schema, delegation and
+# policy are the boundary this role owns, not the lifecycle of a future domain member.
+#
+# =========================================================================================== #
+---
+- name: 'VALIDATE | Require The Declared Interface'
+  ansible.builtin.assert:
+    fail_msg: >-
+      Refusing to continue: state, AWS location, service-account identity, computer OU, two or
+      more unique LAPS read OUs, password policy, and the account-scoped S3 URL must be declared
+      and well formed.
+    quiet: true
+    that:
+      - (state | default('present') | string | lower | trim) in [ 'present', 'absent' ]
+      - aws_account_id | default('') is match('^[0-9]{12}$')
+      - aws_region | default('') | length > 0
+      - service_account is mapping
+      - service_account.name | default('') is match('^[A-Za-z0-9._-]+$')
+      - service_account.ou | default('') is match('^OU=[^,]+,DC=')
+      - computer_ou | default('') is match('^OU=[^,]+,OU=[^,]+,DC=')
+      - laps_read_ous is sequence
+      - laps_read_ous is not string
+      - laps_read_ous | length >= 2
+      - laps_read_ous | unique | list | length == laps_read_ous | length
+      - laps_read_ous | reject('match', '^OU=[^,]+,DC=') | list | length == 0
+      - rotate_interval_days | int > 0
+      - password_length | int >= 4
+      - password_charset is mapping
+      - password_charset.keys() | list | sort == [ 'digits', 'lower', 'symbols', 'upper' ]
+      - password_charset.values() | reject('string') | list | length == 0
+      - password_charset.values() | select('equalto', '') | list | length == 0
+      - >-
+        secret_url == 's3://' ~ aws_account_id ~
+        '-ansible/applications/pdq/svc-pdq-domain-password.txt'
+      - >-
+        rotate_password is boolean or
+        (rotate_password is string and rotate_password | lower | trim in [ 'true', 'false' ])
+
+- name: 'VALIDATE | Prove Boolean Switch Normalisation'
+  ansible.builtin.assert:
+    fail_msg: >-
+      rotate_password normalisation is unsafe: string and native false values must not rotate,
+      while string and native true values must rotate.
+    quiet: true
+    that:
+      - not ('false' | bool)
+      - not ('False' | bool)
+      - not (false | bool)
+      - not (__pdq_ad_config_absent_rotate_switch__ | default(false) | bool)
+      - ('true' | bool)
+      - ('True' | bool)
+      - (true | bool)
+
+- name: 'VALIDATE | Prove Directory Transport Is Available'
+  # Runs in check mode too. It only READS -- changed_when is false and nothing is written -- and
+  # the assert below consumes its result, so skipping it under --check would fail the run on an
+  # empty result rather than on anything true about the directory.
+  changed_when: false
+  check_mode: false
+  failed_when: false
+  ignore_unreachable: true
+  register: '__pdq_ad_config_transport__'
+
+  ansible.windows.win_powershell:
+    depth: 2
+    error_action: 'stop'
+    parameters: {}
+    script: |
+      Import-Module -Name ActiveDirectory -ErrorAction Stop
+      $Controller = Get-ADDomainController -Discover -ForceDiscover -ErrorAction Stop
+      $Ansible.Result = @{
+        controller = $Controller.HostName
+        domain = $Controller.Domain
+      }
+      $Ansible.Changed = $false
+
+- name: 'VALIDATE | Refuse An Unavailable Directory Transport'
+  ansible.builtin.assert:
+    fail_msg: >-
+      Directory transport failure: the domain controller or Active Directory service could not
+      be reached, so authentication cannot be attempted and no rotation will occur.
+    quiet: true
+    that:
+      - not (__pdq_ad_config_transport__.unreachable | default(false) | bool)
+      - not (__pdq_ad_config_transport__.failed | default(false) | bool)
+      - __pdq_ad_config_transport__.result.controller | default('') | length > 0
+
+- name: 'VALIDATE | Prove The Four LAPS Prerequisites'
+  changed_when: false
+
+  ansible.windows.win_powershell:
+    depth: 3
+    error_action: 'stop'
+    parameters:
+      OrganizationalUnit: "{{ laps_read_ous }}"
+    script: |
+      Param (
+        [System.String[]] $OrganizationalUnit
+      )
+
+      Import-Module -Name ActiveDirectory -ErrorAction Stop
+
+      ForEach ($Name In @('Get-LapsADPassword', 'Set-LapsADReadPasswordPermission')) {
+        If ($Null -eq (Get-Command -Name $Name -CommandType Cmdlet -ErrorAction SilentlyContinue)) {
+          Throw "LAPS cmdlet prerequisite failed: $Name does not resolve"
+        }
+      }
+
+      $Root = Get-ADRootDSE
+      $Schema = @{}
+      ForEach ($Name In @('msLAPS-Password', 'msLAPS-PasswordExpirationTime', 'computer')) {
+        $Object = Get-ADObject -LDAPFilter "(lDAPDisplayName=$Name)" `
+          -Properties @('schemaIDGUID') -SearchBase $Root.schemaNamingContext
+        If ($Null -eq $Object) {
+          Throw "LAPS schema prerequisite failed: $Name is not present"
+        }
+        $Schema[$Name] = [System.Guid]::new([System.Byte[]]$Object.schemaIDGUID)
+      }
+
+      $SelfSid = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-10')
+      ForEach ($Ou In $OrganizationalUnit) {
+        $ResolvedOu = Get-ADOrganizationalUnit -Identity $Ou
+        $Acl = Get-Acl -LiteralPath "AD:\$($ResolvedOu.DistinguishedName)"
+        ForEach ($Attribute In @('msLAPS-Password', 'msLAPS-PasswordExpirationTime')) {
+          $MatchingRule = @($Acl.Access | Where-Object {
+              Try {
+                $Sid = $PSItem.IdentityReference.Translate(
+                  [System.Security.Principal.SecurityIdentifier]
+                )
+              } Catch [System.Security.Principal.IdentityNotMappedException] {
+                $Sid = $Null
+              }
+              $Null -ne $Sid -and
+                $Sid.Equals($SelfSid) -and
+                -not $PSItem.IsInherited -and
+                $PSItem.AccessControlType -eq 'Allow' -and
+                ($PSItem.ActiveDirectoryRights -band
+                  [System.DirectoryServices.ActiveDirectoryRights]::WriteProperty) -ne 0 -and
+                $PSItem.ObjectType -eq $Schema[$Attribute] -and
+                $PSItem.InheritedObjectType -eq $Schema['computer'] -and
+                $PSItem.InheritanceType -eq 'Descendents'
+            })
+          If ($MatchingRule.Count -eq 0) {
+            Throw "LAPS SELF-write prerequisite failed: $Ou lacks the explicit SELF write ACE for $Attribute"
+          }
+        }
+      }
+
+      Import-Module -Name GroupPolicy -ErrorAction Stop
+      Try {
+        $BackupDirectory = Get-GPRegistryValue -Name 'Default Domain Policy' `
+          -Key 'HKLM\Software\Microsoft\Policies\LAPS' -ValueName 'BackupDirectory' `
+          -ErrorAction Stop
+      } Catch {
+        Throw ('LAPS BackupDirectory prerequisite failed: Default Domain Policy does not ' +
+          "declare the value ($($PSItem.Exception.Message))")
+      }
+      If ([System.String]$BackupDirectory.Type -ne 'DWord' -or
+          [System.Int32]$BackupDirectory.Value -ne 2) {
+        Throw ('LAPS BackupDirectory prerequisite failed: expected exactly DWORD 2, found ' +
+          "$($BackupDirectory.Type) $($BackupDirectory.Value)")
+      }
+
+      $Ansible.Result = @{
+        cmdlets = $true
+        schema = $true
+        self_write = $true
+        backup_directory = 2
+      }
+      $Ansible.Changed = $false

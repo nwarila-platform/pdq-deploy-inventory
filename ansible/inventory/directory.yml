@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Nicholas Warila
+# SPDX-License-Identifier: MIT
+---
+all:
+  children:
+    domain_controllers:
+      hosts:
+        tcnhq-dc01:
+          ansible_host: '10.69.112.4'
+          ansible_user: 'tcn\administrator'
+          ansible_connection: 'ssh'
+          ansible_shell_type: 'cmd'
+          # The launch key reaches the domain controller as tcn\administrator. Named explicitly
+          # rather than left to the agent: a run whose agent happens not to hold it fails as
+          # UNREACHABLE with no indication that a key was the reason.
+          ansible_ssh_private_key_file: '~/.ssh/nwarila-ec2-key'
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30'

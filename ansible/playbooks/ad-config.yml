@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 Nicholas Warila
+# SPDX-License-Identifier: MIT
+---
+- name: 'Converge the PDQ directory configuration'
+  hosts: 'domain_controllers'
+  gather_facts: false
+  roles:
+    - role: 'pdq_ad_config'

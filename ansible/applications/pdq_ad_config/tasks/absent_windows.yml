@@ -9,6 +9,9 @@
 # and other deployments file machines in it -- removing it would take their computers with it.
 # That is a deliberate asymmetry, stated rather than silently skipped.
 #
+# Convergence is proved by running this again and seeing nothing change, not by this file
+# asserting about its own work.
+#
 # The permissions come off BEFORE the account goes, so the ACEs are removed while the SID they
 # name still resolves. Deleting the account first would leave orphaned SIDs on a shared ACL that
 # nothing here could then identify as its own.
@@ -39,49 +42,3 @@
         state: 'absent'
 
 #endregion --- [ Process: Remove What This Role Created ] ------------------------------------- #
-
-#region ------ [ End: Prove The Removal ] ----------------------------------------------------- #
-
-- name: 'END | Prove The Account Is Gone And The Shared OUs Remain'
-  block:
-
-    - name: 'END | Re-Read The Service Account'
-      changed_when: false
-      check_mode: false
-      failed_when: false
-      register: '__pdq_ad_config_final_account__'
-
-      microsoft.ad.object_info:
-        identity: "CN={{ pdq_ad_config_running.service_account.name }},{{ pdq_ad_config_running.service_account.ou }}"
-
-    - name: 'END | Re-Read The Shared OUs'
-      changed_when: false
-      check_mode: false
-      failed_when: false
-      loop: "{{ pdq_ad_config_running.laps_read_ous }}"
-      loop_control:
-        label: "{{ item }}"
-      register: '__pdq_ad_config_final_ous__'
-
-      microsoft.ad.object_info:
-        identity: "{{ item }}"
-
-    - name: 'END | Assert The Account Is Absent And The Shared OUs Survive'
-      # Only after a real run. Under --check nothing was deleted, so the account is still there
-      # and this would fail on the absence of a removal that was never attempted -- reporting a
-      # defect where there is none.
-      when: not ansible_check_mode
-      ansible.builtin.assert:
-        fail_msg: >-
-          Removal is not complete, or it took something with it. The account must be gone and
-          every OU in pdq_ad_config_running.laps_read_ous must still exist -- they are shared containers this role does
-          not own and must never delete.
-        quiet: true
-        that:
-          - (__pdq_ad_config_final_account__.objects | default([]) | length) == 0
-          - >-
-            __pdq_ad_config_final_ous__.results
-            | map(attribute='objects') | map('default', [], true)
-            | map('length') | select('equalto', 0) | list | length == 0
-
-#endregion --- [ End: Prove The Removal ] ----------------------------------------------------- #

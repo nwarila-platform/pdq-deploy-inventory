@@ -411,9 +411,6 @@ jobs:
             --extra-vars aws_account_id="${AWS_ACCOUNT_ID}"                    \
             --extra-vars aws_region="${AWS_REGION}"                            \
             --extra-vars state=present 2>&1 | tee /dev/stderr)"
-          # Every target's recap line must show exactly the two credential changes and no
-          # failure, so a second host reporting more changes cannot hide behind a first that
-          # reported two.
           # The controller answers the inventory-contract play and reports changed=0 on its own
           # recap line; judging it against a target's expected changes fails a correct converge.
           hosts="$(printf '%s\n' "${recap}" \
@@ -422,12 +419,27 @@ jobs:
             echo "::error::no play recap found -- the converge did not run to a recap" >&2
             exit 1
           fi
-          if printf '%s\n' "${hosts}" \
-            | grep -qvE 'changed=2 +unreachable=0 +failed=0\b'; then
-            echo "::error::second converge did not report exactly two credential changes" >&2
+          # Nothing anywhere may fail or go unreachable, whatever a host is for. Counted, not
+          # matched with grep -q -v: implementations disagree on the exit status of an inverted
+          # quiet match, and a health gate must not depend on which grep is installed.
+          unhealthy="$(printf '%s\n' "${hosts}" | grep -cvE 'unreachable=0 +failed=0\b' || true)"
+          if [ "${unhealthy}" -ne 0 ]; then
+            echo "::error::${unhealthy} host(s) failed or were unreachable on the second converge" >&2
             exit 1
           fi
-          echo "second converge reported exactly the two expected credential changes"
+          # The console re-credentials the two products on every converge and so reports two
+          # changes. A host carrying no product has nothing to re-credential and must report
+          # NONE -- asserting that is a stronger proof than exempting it, because a target that
+          # quietly changes something is drift this gate exists to catch. Counted rather than
+          # matched by name so that adding another target does not need this rule rewritten.
+          total="$(printf '%s\n' "${hosts}" | wc -l | tr -d ' ')"
+          consoles="$(printf '%s\n' "${hosts}" | grep -cE 'changed=2 ' || true)"
+          quiet="$(printf '%s\n' "${hosts}" | grep -cE 'changed=0 ' || true)"
+          if [ "${consoles}" -ne 1 ] || [ "$((consoles + quiet))" -ne "${total}" ]; then
+            echo "::error::expected exactly one host reporting two credential changes and every other reporting none; got ${consoles} of ${total} at changed=2 and ${quiet} at changed=0" >&2
+            exit 1
+          fi
+          echo "second converge: the console reported its two credential changes, ${quiet} target(s) reported none"
 
       # The proofs below add two more converges to the pipeline tail, and the job's single
       # earlier session was budgeted before they existed -- so they run on a fresh session of

@@ -38,6 +38,17 @@
           successful deployment proof.
         quiet: true
 
+    # A deployment with no target proves nothing that matters: every scan, deployment and LAPS
+    # read needs a machine that is not the PDQ server itself.
+    - name: 'INVENTORY | Require The Scan Target'
+      ansible.builtin.assert:
+        that: groups['domain_workstations'] | default([]) | length >= 1
+        fail_msg: >-
+          Refusing to configure: the 'domain_workstations' inventory group is empty. The
+          deployment builds a target so that scanning and deployment can be proved against
+          something other than the console host.
+        quiet: true
+
     # Account-derived values are passed EXPLICITLY on the invocation, never read from the
     # environment by a role, so the play and the deploy identity cannot disagree.
     - name: 'INVENTORY | Require The AWS Deployment Identity'
@@ -126,6 +137,49 @@
   #endregion --- [ Roles ] -------------------------------------------------------------------- #
 
 #endregion --- [ Play: Configure The Guest ] -------------------------------------------------- #
+
+#region ------ [ Play: Configure The Target ] -------------------------------------------------- #
+
+# The scan and deploy TARGET. It gets onto the network and into the directory and stops there:
+# no product is installed on it, because a machine that runs PDQ is not a machine PDQ reaches.
+# The roles are the guest play's minus the disks -- this host has none.
+- name: 'PLAY | Configure The Target (ephemeral AWS)'
+  hosts: 'domain_workstations'
+  any_errors_fatal: true
+
+  #region ------ [ Roles ] -------------------------------------------------------------------- #
+  roles:
+
+    #region ------ [ Roles: Host Readiness ] -------------------------------------------------- #
+    - role: 'host_readiness'
+    #endregion --- [ Roles: Host Readiness ] -------------------------------------------------- #
+
+    #region ------ [ Roles: OS Bootstrap ] ---------------------------------------------------- #
+    # Server 2022, not 2025. The inventory names the release's bootstrap role in
+    # 'os_bootstrap_role' rather than this play passing it, because a role parameter outranks the
+    # connection scoping the pre-flip stage depends on. Pass it NO vars here either.
+    - role: 'os_bootstrap'
+    #endregion --- [ Roles: OS Bootstrap ] ---------------------------------------------------- #
+
+    #region ------ [ Roles: Remote Client ] --------------------------------------------------- #
+    - role: 'remote_client'
+      when: (state | default('present') | string | lower | trim) != 'absent'
+    #endregion --- [ Roles: Remote Client ] --------------------------------------------------- #
+
+    #region ------ [ Roles: Domain Member ] --------------------------------------------------- #
+    # 'OU=Domain Workstations' is not a preference: it is one of the two OUs where svc-pdq holds
+    # the LAPS read grant, so a target filed anywhere else has a LAPS password PDQ cannot read.
+    - role: 'domain_member'
+      when: (state | default('present') | string | lower | trim) != 'absent'
+      vars:
+        domain_member:
+          password: { bucket: "{{ aws_account_id }}-ansible" }
+          computer_ou: 'OU=Domain Workstations,DC=tcn,DC=trinitytechnicalservices,DC=com'
+    #endregion --- [ Roles: Domain Member ] --------------------------------------------------- #
+
+  #endregion --- [ Roles ] -------------------------------------------------------------------- #
+
+#endregion --- [ Play: Configure The Target ] ------------------------------------------------- #
 
 #region ------ [ Play: PDQ Deploy And Inventory ] --------------------------------------------- #
 # One all-in-one Central Server: both products co-located, in the same operating mode, under one

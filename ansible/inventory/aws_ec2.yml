@@ -15,6 +15,7 @@
 # to have its hosts join, and give a second group its own list to split a deployment by role.
 groups:
   pdq_servers: "(aws_ec2_tags.Function | default('', true)) in ['pdq']"
+  domain_workstations: "(aws_ec2_tags.Function | default('', true)) in ['workstation']"
 
 #endregion --- [ This Repository ] ------------------------------------------------------------ #
 
@@ -180,6 +181,14 @@ compose:
   platform: >-
     (aws_platform_details | lower is search('windows'))
       | ternary('Windows', 'Linux')
+
+  # 'platform' resolves a FAMILY, and the dispatcher's map holds one role per family -- so it
+  # cannot tell Server 2022 from Server 2025, and both are deployed here. This names the role
+  # outright for the hosts that are not on the default release. Empty falls through to the map,
+  # which is what every PDQ host wants.
+  os_bootstrap_role: >-
+    ((aws_ec2_tags.Function | default('', true)) == 'workstation')
+      | ternary('Windows_Server_2022', '')
 
   # The framework loader requires a variable NAMED 'ENV' and lower-cases the value itself. Read bare
   # because the Environment filter above admits only instances that carry the tag.

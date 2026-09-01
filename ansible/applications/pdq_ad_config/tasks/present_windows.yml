@@ -3,74 +3,16 @@
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
 # Given a password, converges the PDQ computer OU, service account and the account's complete
-# explicit Windows LAPS read permissions on the declared OUs. BEGIN reads the prerequisites,
-# PROCESS applies the declaration, and END proves the resulting directory state.
+# explicit Windows LAPS read permissions on the declared OUs.
+#
+# The role sets the state it declares; it does not survey the directory first. A domain that
+# already has Windows LAPS is a precondition of this role, not something it re-checks, and
+# Set-LapsPermissions.ps1 throws by name if the schema is missing -- at the point the missing
+# attribute actually matters. Nothing here defends against states this role cannot produce.
 #
 # ============================================================================================= #
 ---
-#region ------ [ Begin: Converge The PDQ Directory Configuration ] ----------------------------- #
-
-- name: 'BEGIN | Read The Directory Prerequisites'
-  vars:
-    __service_account_dn__: >-
-      CN={{ pdq_ad_config_running.service_account.name }},{{ pdq_ad_config_running.service_account.ou }}
-
-  # Begin The 'Begin' Block
-  block:
-
-    #region ------ [ Begin: Read The LAPS Schema ] --------------------------------------------- #
-
-    - name: 'BEGIN | Read The Windows LAPS Password Schema Object'
-      check_mode: false
-      changed_when: false
-      register: '__pdq_ad_config_laps_schema__'
-
-      microsoft.ad.object_info:
-        ldap_filter: '(name=ms-LAPS-Password)'
-        search_base: 'CN=Schema,CN=Configuration,DC=tcn,DC=trinitytechnicalservices,DC=com'
-
-    - name: 'BEGIN | Require The Windows LAPS Password Schema Object'
-      ansible.builtin.assert:
-        fail_msg: >-
-          LAPS schema prerequisite failed: ms-LAPS-Password is not present exactly once in the
-          Active Directory schema.
-        quiet: true
-        that:
-          - __pdq_ad_config_laps_schema__.objects | length == 1
-
-    #endregion --- [ Begin: Read The LAPS Schema ] --------------------------------------------- #
-
-    #region ------ [ Begin: Read The Service Account ] ----------------------------------------- #
-
-    - name: 'BEGIN | Read The Service Account Lock State'
-      check_mode: false
-      changed_when: false
-      register: '__pdq_ad_config_initial_account__'
-
-      microsoft.ad.object_info:
-        identity: "{{ __service_account_dn__ }}"
-        properties:
-          - 'userAccountControl'
-          - 'msDS-User-Account-Control-Computed'
-
-    - name: 'BEGIN | Refuse A Locked Service Account'
-      ansible.builtin.assert:
-        fail_msg: >-
-          Locked service account failure: {{ pdq_ad_config_running.service_account.name }} is
-          locked. This role is not authorised to unlock it.
-        quiet: true
-        that:
-          - >-
-            (__pdq_ad_config_initial_account__.objects | length == 0) or
-            (((__pdq_ad_config_initial_account__.objects[0]
-               ['msDS-User-Account-Control-Computed'] | int) // 16) % 2 == 0)
-
-    #endregion --- [ Begin: Read The Service Account ] ----------------------------------------- #
-
-#endregion --- [ Begin: Converge The PDQ Directory Configuration ] ----------------------------- #
-
-
-#region ------ [ Process: Converge The PDQ Directory Configuration ] --------------------------- #
+#region ------ [ Process: Converge The PDQ Directory Configuration ] -------------------------- #
 
 - name: 'PROCESS | Apply The Directory Declaration'
   vars:
@@ -80,7 +22,7 @@
   # Begin The 'Process' Block
   block:
 
-    #region ------ [ Process: Converge The Computer OU ] --------------------------------------- #
+    #region ------ [ Process: Converge The Computer OU ] -------------------------------------- #
 
     - name: 'PROCESS | Ensure The PDQ Computer OU Exists'
       microsoft.ad.ou:
@@ -88,9 +30,9 @@
         path: "{{ __computer_ou_path__ }}"
         state: 'present'
 
-    #endregion --- [ Process: Converge The Computer OU ] --------------------------------------- #
+    #endregion --- [ Process: Converge The Computer OU ] -------------------------------------- #
 
-    #region ------ [ Process: Converge The Service Account ] ----------------------------------- #
+    #region ------ [ Process: Converge The Service Account ] ---------------------------------- #
 
     - name: 'PROCESS | Ensure The PDQ Service Account Is Exact'
       no_log: true
@@ -122,9 +64,9 @@
         # under the authoritative copy.
         user_cannot_change_password: true
 
-    #endregion --- [ Process: Converge The Service Account ] ----------------------------------- #
+    #endregion --- [ Process: Converge The Service Account ] ---------------------------------- #
 
-    #region ------ [ Process: Reconcile The Account ACLs ] ------------------------------------- #
+    #region ------ [ Process: Reconcile The Account ACLs ] ------------------------------------ #
 
     - name: 'PROCESS | Reconcile The Account Explicit LAPS Read ACEs'
       ansible.windows.win_powershell:
@@ -136,6 +78,6 @@
           State: 'present'
         script: "{{ lookup('ansible.builtin.file', 'Set-LapsPermissions.ps1') }}"
 
-    #endregion --- [ Process: Reconcile The Account ACLs ] ------------------------------------- #
+    #endregion --- [ Process: Reconcile The Account ACLs ] ------------------------------------ #
 
-#endregion --- [ Process: Converge The PDQ Directory Configuration ] --------------------------- #
+#endregion --- [ Process: Converge The PDQ Directory Configuration ] -------------------------- #

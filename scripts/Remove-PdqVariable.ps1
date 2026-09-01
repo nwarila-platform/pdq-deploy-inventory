@@ -395,7 +395,7 @@ If ($Strangers.Count -gt 0) {
     $Statements.Add('BEGIN IMMEDIATE;')
     ForEach ($Stranger In $Strangers) {
       $Statements.Add(("DELETE FROM CustomVariables WHERE CustomVariableId = {0} AND hex(Name) = '{1}';" -f `
-        $RowByName[$Stranger].Id, $RowByName[$Stranger].Hex))
+            $RowByName[$Stranger].Id, $RowByName[$Stranger].Hex))
     }
     $Statements.Add('COMMIT;')
     $Null = Invoke-NativeCommand -Operation:'Removing the undeclared variables' -FilePath:$Sqlite `

@@ -1,0 +1,45 @@
+# =========================================================================================== #
+# File: '{{ role_path }}/tasks/validate.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# The declaration boundary. Everything this role needs is site-specific -- an account name, the
+# OUs of one particular directory, and a password the caller resolved -- so nothing is defaulted
+# into working values and a missing input fails here rather than half-way through a directory.
+#
+# =========================================================================================== #
+---
+
+- name: 'VALIDATE | Require The Declared Interface'
+  ansible.builtin.assert:
+    fail_msg: >-
+      pdq_ad_config is missing its declaration. It requires pdq_ad_config_running.service_account.name,
+      pdq_ad_config_running.service_account.ou, pdq_ad_config_running.service_account.password, pdq_ad_config_running.computer_ou, and a non-empty
+      pdq_ad_config_running.laps_read_ous.
+      The PASSWORD is supplied by the caller: this role does not source it, generate it or store
+      it, so the playbook must resolve it and pass the value.
+    quiet: true
+    that:
+      - pdq_ad_config_running.service_account is defined
+      - pdq_ad_config_running.service_account.name | default('') | length > 0
+      - pdq_ad_config_running.service_account.ou | default('') | length > 0
+      - >-
+        pdq_ad_config_running.service_account.password
+        | default('') | length > 0
+      - pdq_ad_config_running.computer_ou | default('') | length > 0
+      - pdq_ad_config_running.laps_read_ous | default([]) | length > 0
+
+- name: 'VALIDATE | Require Distinguished Names Where A Distinguished Name Is Meant'
+  ansible.builtin.assert:
+    fail_msg: >-
+      pdq_ad_config_running.service_account.ou, pdq_ad_config_running.computer_ou and every entry of pdq_ad_config_running.laps_read_ous must be full
+      distinguished
+      names. A short name silently resolves to the wrong container or to nothing at all.
+    quiet: true
+    that:
+      - >-
+        pdq_ad_config_running.service_account.ou
+        is search('^(OU|CN)=.*,DC=')
+      - pdq_ad_config_running.computer_ou is search('^OU=.*,DC=')
+      - >-
+        pdq_ad_config_running.laps_read_ous
+        | reject('search', '^OU=.*,DC=') | list | length == 0

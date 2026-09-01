@@ -1,0 +1,73 @@
+# ============================================================================================= #
+# File: '{{ role_path }}/tasks/present_windows.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Given a password, converges the PDQ computer OU, service account and the account's complete
+# explicit Windows LAPS read permissions on the declared OUs.
+#
+# The role sets the state it declares; it does not survey the directory first. A domain that
+# already has Windows LAPS is a precondition of this role, not something it re-checks, and
+# Set-LapsPermissions.ps1 throws by name if the schema is missing -- at the point the missing
+# attribute actually matters. Nothing here defends against states this role cannot produce.
+#
+# ============================================================================================= #
+---
+#region ------ [ Process: Converge The PDQ Directory Configuration ] -------------------------- #
+
+- name: 'PROCESS | Apply The Directory Declaration'
+  vars:
+    __computer_ou_name__: "{{ pdq_ad_config_running.computer_ou | regex_replace('^OU=([^,]+),.*$', '\\1') }}"
+    __computer_ou_path__: "{{ pdq_ad_config_running.computer_ou | regex_replace('^OU=[^,]+,', '') }}"
+
+  # Begin The 'Process' Block
+  block:
+
+    #region ------ [ Process: Converge The Computer OU ] -------------------------------------- #
+
+    - name: 'PROCESS | Ensure The PDQ Computer OU Exists'
+      microsoft.ad.ou:
+        name: "{{ __computer_ou_name__ }}"
+        path: "{{ __computer_ou_path__ }}"
+        state: 'present'
+
+    #endregion --- [ Process: Converge The Computer OU ] -------------------------------------- #
+
+    #region ------ [ Process: Converge The Service Account ] ---------------------------------- #
+
+    - name: 'PROCESS | Ensure The PDQ Service Account Is Exact'
+      no_log: true
+
+      microsoft.ad.user:
+        attributes:
+          set:
+            adminCount: null
+        enabled: true
+        groups:
+          lookup_failure_action: 'fail'
+          permissions_failure_action: 'fail'
+          set: [ 'Domain Users' ]
+        name: "{{ pdq_ad_config_running.service_account.name }}"
+        password: "{{ pdq_ad_config_running.service_account.password }}"
+        password_never_expires: false
+        path: "{{ pdq_ad_config_running.service_account.ou }}"
+        state: 'present'
+        update_password: 'when_changed'
+        user_cannot_change_password: true
+
+    #endregion --- [ Process: Converge The Service Account ] ---------------------------------- #
+
+    #region ------ [ Process: Reconcile The Account ACLs ] ------------------------------------ #
+
+    - name: 'PROCESS | Reconcile The Account Explicit LAPS Read ACEs'
+      ansible.windows.win_powershell:
+        depth: 3
+        error_action: 'stop'
+        parameters:
+          AccountIdentity: "{{ pdq_ad_config_running.service_account.name }}"
+          OrganizationalUnit: "{{ pdq_ad_config_running.laps_read_ous }}"
+          State: 'present'
+        script: "{{ lookup('ansible.builtin.file', 'Set-LapsPermissions.ps1') }}"
+
+    #endregion --- [ Process: Reconcile The Account ACLs ] ------------------------------------ #
+
+#endregion --- [ Process: Converge The PDQ Directory Configuration ] -------------------------- #

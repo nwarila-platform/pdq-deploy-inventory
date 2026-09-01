@@ -1,0 +1,16 @@
+# =========================================================================================== #
+# File: '{{ role_path }}/vars/windows.yml'
+# --- [ Description ] ----------------------------------------------------------------------- #
+#
+# Windows-family overlay merged over pdq_ad_config_defaults by the v3 loader.
+#
+# This role targets a domain controller, which is always Windows, so the defaults are already the
+# Windows values and this overlay carries nothing. It exists because the loader resolves an OS
+# overlay per family; an empty map is the honest statement that this family needs no override.
+#
+# It is NOT a place for bare variables: the loader MERGES this file into the role's configuration
+# map, so anything declared here is never exposed as a top-level variable.
+#
+# =========================================================================================== #
+---
+{}

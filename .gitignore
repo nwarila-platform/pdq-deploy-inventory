@@ -37,6 +37,30 @@
 !/ansible/applications/pdq_inventory/meta/
 !/ansible/applications/pdq_inventory/tasks/
 !/ansible/applications/pdq_inventory/vars/
+
+# The elevated directory role: it configures the service account, its password, the OU PDQ is
+# deployed into, and that account's LAPS read permission. It runs OUTSIDE the ordinary converge.
+!/ansible/applications/pdq_ad_config/
+!/ansible/applications/pdq_ad_config/defaults/
+!/ansible/applications/pdq_ad_config/files/
+!/ansible/applications/pdq_ad_config/handlers/
+!/ansible/applications/pdq_ad_config/meta/
+!/ansible/applications/pdq_ad_config/tasks/
+!/ansible/applications/pdq_ad_config/vars/
+!/ansible/applications/pdq_ad_config/README.md
+!/ansible/applications/pdq_ad_config/defaults/main.yml
+!/ansible/applications/pdq_ad_config/files/Set-LapsPermissions.ps1.stub
+!/ansible/applications/pdq_ad_config/handlers/main.yml
+!/ansible/applications/pdq_ad_config/meta/main.yml
+!/ansible/applications/pdq_ad_config/tasks/absent_windows.yml
+!/ansible/applications/pdq_ad_config/tasks/main.yml
+!/ansible/applications/pdq_ad_config/tasks/present_windows.yml
+!/ansible/applications/pdq_ad_config/tasks/validate.yml
+!/ansible/applications/pdq_ad_config/vars/windows.yml
+!/scripts/Set-LapsPermissions.ps1
+!/scripts/Set-LapsPermissions.pester.ps1
+!/ansible/playbooks/ad-config.yml
+!/ansible/inventory/directory.yml
 !/ansible/inventory/
 !/ansible/playbooks/
 !/docs/

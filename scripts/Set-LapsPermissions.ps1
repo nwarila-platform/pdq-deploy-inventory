@@ -355,8 +355,8 @@ $Ansible.Result = [PSCustomObject]@{
 
 #endregion --- [ Main ] ---------------------------------------------------------------------- #
 
-#region ------ [ Epilogue ] ------------------------------------------------------------------ #
-Write-Debug -Message:'Entering Stage: Epilogue'
+#region ------ [ Output ] -------------------------------------------------------------------- #
+Write-Debug -Message:'Entering Stage: Output'
 
 If ($StandaloneRun) {
   $Ansible.Result
@@ -365,6 +365,6 @@ If ($StandaloneRun) {
   }
 }
 
-#endregion --- [ Epilogue ] ------------------------------------------------------------------ #
+#endregion --- [ Output ] -------------------------------------------------------------------- #
 
 #endregion --- [ Script ] -------------------------------------------------------------------- #

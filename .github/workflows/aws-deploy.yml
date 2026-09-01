@@ -306,10 +306,17 @@ jobs:
       # The value file comes FIRST and the identity flags after it. Terraform resolves repeated
       # command-line assignments in the order they are given, so this ordering -- not the kind of
       # flag -- is what stops the file from renaming who this fresh deployment says it is.
+      # windows_fod_source is what GUARANTEES OpenSSH on a Server 2022 guest: that image ships
+      # without it, so the framework's user_data installs the Feature-on-Demand cab from this
+      # bucket instead of Windows Update. Left unset, the framework fails the instance at boot
+      # by design rather than stranding it unreachable. The bucket name carries the account id,
+      # so it comes from the secret and is never written into terraform/aws.tfvars.
       - name: Terraform apply
         id: tf-apply
         timeout-minutes: 15
         working-directory: .frameworks/aws-terraform-framework/terraform
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           terraform apply -input=false -auto-approve -lock-timeout=120s      \
@@ -320,6 +327,7 @@ jobs:
             -var "repository_id=${GITHUB_REPOSITORY_ID}"                     \
             -var "run_id=${GITHUB_RUN_ID}"                                   \
             -var "runner_ip=${RUNNER_IP}"                                    \
+            -var "windows_fod_source={bucket=\"${AWS_ACCOUNT_ID}-apprepo\",region=\"${AWS_REGION}\",key_prefix=\"fod\"}" \
             ${DEBUG_IP:+-var "debug_ip=${DEBUG_IP}"}
 
       # This repo's roles overlay onto the pinned framework tree. A framework-TRACKED role
@@ -647,6 +655,8 @@ jobs:
         if: inputs.os_swap
         timeout-minutes: 15
         working-directory: .frameworks/aws-terraform-framework/terraform
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           terraform apply -input=false -auto-approve -lock-timeout=120s      \
@@ -658,6 +668,7 @@ jobs:
             -var "repository_id=${GITHUB_REPOSITORY_ID}"                     \
             -var "run_id=${GITHUB_RUN_ID}"                                   \
             -var "runner_ip=${RUNNER_IP}"                                    \
+            -var "windows_fod_source={bucket=\"${AWS_ACCOUNT_ID}-apprepo\",region=\"${AWS_REGION}\",key_prefix=\"fod\"}" \
             ${DEBUG_IP:+-var "debug_ip=${DEBUG_IP}"}
 
       # The OS is new, so this is a first converge again and takes as long as one. The second

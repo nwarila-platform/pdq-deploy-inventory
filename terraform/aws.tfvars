@@ -172,6 +172,98 @@ all_systems = [
 
     # No Elastic IP: the subnet auto-assigns the launch-time public IPv4 used for direct SSH.
     associate_public_ip = false
+  },
+
+  # The scan and deploy TARGET. PDQ Inventory has only ever known about the host it runs on, so
+  # every open proof -- that a scan authenticates, that a package deploys, that LAPS hands over a
+  # credential -- has had nothing to run against. This host is that something. It carries no PDQ
+  # product; it exists to be reached.
+  {
+    region            = "us_east_1"
+    hostname          = "tcnaw-wks01"
+    availability_zone = "us-east-1c"
+    subnet_id         = "subnet-03a855e712be7b399"
+    key_name          = "nwarila-ec2-key"
+    # The same apprepo profile the PDQ host uses, and NOT for parity: Server 2022 ships without
+    # OpenSSH, so user_data reads the Feature-on-Demand cab out of that bucket to install it. A
+    # host without this profile has no route to the cab and fails at boot by design.
+    iam_instance_profile = "nwarila-ec2-apprepo-profile"
+    aws_kms_alias        = "aws/ebs"
+    # Windows_Server-2022-English-Full-Base. Deliberately a DIFFERENT release from the PDQ host:
+    # a target running the same build as the server it is scanned from proves less than one that
+    # does not. Build 20348, which operating_systems/Windows_Server_2022 is the bootstrap for.
+    ami = "ami-040a155879de85e73"
+    # Nothing on this host survives it -- no data volumes, no databases -- so there is nothing an
+    # OS swap would preserve and no reason to make it swap-eligible.
+    refresh = false
+    # A target, not a server: it holds one agentless deployment at a time. Server 2022 on 2 GiB
+    # is slow enough to make a domain join look like a hang, which is the only reason this is not
+    # smaller.
+    instance_type   = "t3.medium"
+    connection_type = "ssh"
+    readiness_user  = null
+
+    readiness_gate             = false
+    readiness_command          = null
+    readiness_script_dir       = null
+    readiness_private_key_path = null
+    imds_hop_limit             = 1
+    set_state                  = null
+
+    # Function is what the dynamic inventory groups on, and it must not be 'pdq' or this host
+    # joins the group that installs the products onto it.
+    tags = {
+      Function = "workstation"
+      Backup   = false
+    }
+
+    root_block_device = {
+      delete_on_termination = true
+      iops                  = null
+      tags                  = {}
+      throughput            = null
+      volume_type           = "gp3"
+      volume_size           = "30"
+    }
+
+    # No data volumes. The products live on the PDQ host; this one only receives what is
+    # deployed to it, onto C:.
+    ebs_block_devices = []
+
+    ami_block_device_overrides = []
+
+    network_interfaces = [
+      {
+        description     = "tcnaw-wks01 CI firewall"
+        interface_type  = null
+        private_ip      = null
+        security_groups = []
+        ingress         = []
+        egress = [
+          {
+            description                  = "HTTPS out"
+            ip_protocol                  = "tcp"
+            from_port                    = 443
+            to_port                      = 443
+            cidr_ipv4                    = "0.0.0.0/0"
+            prefix_list_id               = null
+            referenced_security_group_id = null
+          },
+          {
+            description                  = "OpenVPN tunnel out"
+            ip_protocol                  = "udp"
+            from_port                    = 1194
+            to_port                      = 1194
+            cidr_ipv4                    = "0.0.0.0/0"
+            prefix_list_id               = null
+            referenced_security_group_id = null
+          }
+        ]
+        tags = {}
+      }
+    ]
+
+    associate_public_ip = false
   }
 ]
 

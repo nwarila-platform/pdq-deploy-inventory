@@ -193,6 +193,24 @@
 !/scripts/install-hooks.sh
 !/scripts/materialize-role-scripts.sh
 
+# --- [ allowed: resources (environment artifacts an operator applies, not code) ] ------------- #
+!/resources/
+!/resources/README.md
+!/resources/aws/
+!/resources/aws/iam-policy/
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_console_s3.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_target_s3.json
+!/resources/aws/iam-profiles/
+!/resources/aws/iam-profiles/nwarila-platform_pdq-deploy-inventory_console.json
+!/resources/aws/iam-profiles/nwarila-platform_pdq-deploy-inventory_target.json
+!/resources/aws/iam-roles/
+!/resources/aws/iam-roles/nwarila-platform_pdq-deploy-inventory_console.trust.json
+!/resources/aws/iam-roles/nwarila-platform_pdq-deploy-inventory_target.trust.json
+!/resources/group policy objects/
+!/resources/group policy objects/windows-laps.md
+!/resources/wmi filters/
+!/resources/wmi filters/README.md
+
 # --- [ allowed: terraform (data-only; resources live in the pinned framework) ] -------------- #
 !/terraform/README.md
 !/terraform/aws.tfvars

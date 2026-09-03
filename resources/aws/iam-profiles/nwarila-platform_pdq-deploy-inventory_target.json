@@ -1,0 +1,12 @@
+{
+  "InstanceProfileName": "nwarila-platform_pdq-deploy-inventory_target",
+  "Roles": [
+    "nwarila-platform_pdq-deploy-inventory_target"
+  ],
+  "AttachedPolicies": [
+    "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+    "nwarila-platform_pdq-deploy-inventory_target_s3"
+  ],
+  "ConsumedBy": "terraform/aws.tfvars, the system tagged Function = workstation",
+  "Notes": "AmazonSSMManagedInstanceCore is REQUIRED, not incidental: the framework supports four connection profiles -- ssh-direct, ssh-ssm, winrm-direct, winrm-ssm -- and the two SSM ones need it. connection_type is a per-system choice in terraform/aws.tfvars, so an instance profile that omits this silently removes half the transports."
+}

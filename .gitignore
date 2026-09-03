@@ -189,6 +189,8 @@
 !/scripts/Set-PdqCollection.pester.ps1
 !/scripts/Remove-PdqCollection.ps1
 !/scripts/Remove-PdqCollection.pester.ps1
+!/scripts/Set-PdqCredential.ps1
+!/scripts/Set-PdqCredential.pester.ps1
 !/scripts/compose-and-run.sh
 !/scripts/install-hooks.sh
 !/scripts/materialize-role-scripts.sh

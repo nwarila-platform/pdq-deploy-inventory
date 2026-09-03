@@ -1,0 +1,54 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DescribeNetworkInterfacesAndAddresses",
+      "Effect": "Allow",
+      "Resource": "*",
+      "Action": [
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeNetworkInterfaceAttribute",
+        "ec2:DescribeAddresses"
+      ]
+    },
+    {
+      "Sid": "DetachAndDeleteOwnedNetworkInterface",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DetachNetworkInterface",
+        "ec2:DeleteNetworkInterface"
+      ],
+      "Resource": "arn:aws:ec2:us-east-1:<account-id>:network-interface/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/Repository": "nwarila-platform/pdq-deploy-inventory",
+          "ec2:ResourceTag/RepositoryId": "1347369220",
+          "ec2:ResourceTag/ManagedBy": "Terraform"
+        },
+        "Null": {
+          "ec2:ResourceTag/CommitSha": "false",
+          "ec2:ResourceTag/RunId": "false",
+          "ec2:ResourceTag/Environment": "false"
+        }
+      }
+    },
+    {
+      "Sid": "DetachNetworkInterfaceFromOwnedInstance",
+      "Effect": "Allow",
+      "Action": "ec2:DetachNetworkInterface",
+      "Resource": "arn:aws:ec2:us-east-1:<account-id>:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/Repository": "nwarila-platform/pdq-deploy-inventory",
+          "ec2:ResourceTag/RepositoryId": "1347369220",
+          "ec2:ResourceTag/ManagedBy": "Terraform"
+        },
+        "Null": {
+          "ec2:ResourceTag/CommitSha": "false",
+          "ec2:ResourceTag/RunId": "false",
+          "ec2:ResourceTag/Environment": "false"
+        }
+      }
+    }
+  ]
+}

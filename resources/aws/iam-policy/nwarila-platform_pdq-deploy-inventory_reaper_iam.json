@@ -1,0 +1,14 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadTheOrgInstanceProfile",
+      "Effect": "Allow",
+      "Action": "iam:GetInstanceProfile",
+      "Resource": [
+        "arn:aws:iam::<account-id>:instance-profile/nwarila-ec2-profile",
+        "arn:aws:iam::<account-id>:instance-profile/nwarila-ec2-apprepo-profile"
+      ]
+    }
+  ]
+}

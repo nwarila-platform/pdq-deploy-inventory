@@ -20,17 +20,29 @@ this tree contains an account identifier.
 
 ## The IAM this deployment touches
 
-| Object | State | Purpose |
-|---|---|---|
-| `iam-roles/nwarila-ec2-role.trust.json` | exists | The organizational default role |
-| `iam-policy/nwarila-fod-read.json` | **new** | Fetch the Feature-on-Demand cab. Attach to the default |
-| `iam-policy/nwarila-apprepo-read.json` | exists | Whole-bucket read, for the repository sync. Reused, not restated |
-| `iam-roles/nwarila-platform_pdq-deploy-inventory_instance.trust.json` | **new** | The instance role, composed from the two policies above plus SSM |
-| `iam-policy/…_runner_iam.json` | **amended** | The runner must be able to read and pass the new profile and role |
+Exported from the live account on 2026-09-03, with `<account-id>` substituted. Three roles carry
+this repository's work, and their policies are recorded verbatim so the applied state is legible
+without console access:
 
-The last one is not optional. `iam:PassRole` on the runner names each role it may hand to EC2,
-and Terraform fails with a PassRole denial on any role missing from it — so the runner policy
-has to name the instance role **before** the tfvars change lands.
+| Role | Trust | Policies | Does |
+|---|---|---|---|
+| `…_runner` | GitHub OIDC | eight `runner_*` | Deploy, converge, prove, destroy |
+| `…_reaper` | GitHub OIDC | six `reaper_*` | Sweep what a killed run left behind |
+| `…_admin` | GitHub OIDC | the runner's eight plus `admin_s3` | Operator deploy and artifact publishing |
+| `…_instance` | EC2 | SSM, `nwarila-fod-read`, `nwarila-apprepo-read` | **Proposed.** What the PDQ console runs as |
+| `nwarila-ec2-role` | EC2 | SSM, `nwarila-fod-read` | The organizational default |
+
+Two files are not verbatim, and both are marked in their own text:
+
+- `nwarila-fod-read.json` is **new**.
+- `…_runner_iam.json` is **amended** — it adds the instance profile and role to the two
+  statements that name what the runner may read and pass. `iam:PassRole` enumerates each role by
+  ARN, so Terraform is refused on any role missing from it. That amendment is the reason the
+  ordering below is strict rather than advisory.
+
+Version drift is real: the checked-in copies under `docs/reference/aws-iam/` document a role that
+does not exist and an instance profile the deployment does not use. These were taken from the
+default version of each live policy, and several are well past v1 — `runner_s3` is at v16.
 
 ## What is proposed here
 

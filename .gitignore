@@ -64,7 +64,6 @@
 !/ansible/inventory/
 !/ansible/playbooks/
 !/docs/
-!/docs/how-to/
 !/docs/reference/
 !/docs/reference/aws-iam/
 !/docs/reference/aws-iam/policies/
@@ -153,7 +152,6 @@
 !/docs/KEY-RELOAD.md
 !/docs/TECH-DEBT.md
 !/docs/ansible-style-guide.md
-!/docs/how-to/adopt-this-repository.md
 !/docs/reference/aws-iam/README.md
 !/docs/reference/aws-iam/policies/nwarila-platform_pdq-deploy-inventory_admin_s3.json
 !/docs/reference/aws-iam/policies/nwarila-platform_pdq-deploy-inventory_runner_ebs.json

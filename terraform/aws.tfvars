@@ -47,7 +47,7 @@ all_systems = [
     # one policy more, so a later change to the baseline reaches this host too. The org-owned
     # nwarila-ec2-profile is unedited, and this repository creates and modifies neither -- the
     # runner role only reads and passes whichever is named here.
-    iam_instance_profile = "nwarila-platform_pdq-deploy-inventory_console"
+    iam_instance_profile = "nwarila-platform_pdq-deploy-inventory_instance"
     aws_kms_alias        = "aws/ebs"
     # Windows_Server-2025-English-STIG-Full, owner 801119661308 — accepted from the
     # framework's vendor allowlist, the same hardened base the sibling deploy uses.

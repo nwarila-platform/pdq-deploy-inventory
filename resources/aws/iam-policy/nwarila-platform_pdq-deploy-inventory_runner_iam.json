@@ -7,7 +7,7 @@
       "Action": "iam:GetInstanceProfile",
       "Resource": [
         "arn:aws:iam::<account-id>:instance-profile/nwarila-ec2-profile",
-        "arn:aws:iam::<account-id>:instance-profile/nwarila-platform_pdq-deploy-inventory_console"
+        "arn:aws:iam::<account-id>:instance-profile/nwarila-platform_pdq-deploy-inventory_instance"
       ]
     },
     {
@@ -16,7 +16,7 @@
       "Action": "iam:PassRole",
       "Resource": [
         "arn:aws:iam::<account-id>:role/nwarila-ec2-role",
-        "arn:aws:iam::<account-id>:role/nwarila-platform_pdq-deploy-inventory_console"
+        "arn:aws:iam::<account-id>:role/nwarila-platform_pdq-deploy-inventory_instance"
       ],
       "Condition": {
         "StringEquals": {

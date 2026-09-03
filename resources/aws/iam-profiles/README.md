@@ -3,14 +3,22 @@
 An instance profile holds exactly one role and carries no document of its own, so there is nothing
 here to apply. What matters is which role each profile holds and how that role is composed.
 
+## Naming
+
+Roles and profiles follow the fleet pattern `nwarila-platform_<repository>_<principal>`, with
+`_instance` taking the principal slot beside the existing `_runner`, `_admin` and `_reaper`. No
+new policy is introduced under that pattern: the instance role composes policies that already
+exist, and `nwarila-fod-read` is org-level like `nwarila-apprepo-read` because it describes what
+any managed machine needs rather than anything about this repository.
+
 ## The tiers
 
 | Profile | Role | Attached policies |
 |---|---|---|
 | `nwarila-ec2-profile` | `nwarila-ec2-role` | `AmazonSSMManagedInstanceCore`, `nwarila-fod-read` |
-| `nwarila-platform_pdq-deploy-inventory_console` | same name | the two above, **plus** `nwarila-apprepo-read` |
+| `nwarila-platform_pdq-deploy-inventory_instance` | same name | the two above, **plus** `nwarila-apprepo-read` |
 
-The console role is the baseline **plus one policy**. Its extra grant is stated in one place, and
+The instance role is the baseline **plus one policy**. Its extra grant is stated in one place, and
 anything the baseline gains later is attached to both — so the relationship stays legible instead
 of the two drifting into unrelated permission sets.
 
@@ -47,5 +55,5 @@ removes half the supported transports.
 
 `nwarila-ec2-apprepo-profile` and `nwarila-ec2-apprepo-role` are named as shared fleet
 infrastructure while this repository is their only consumer, and they are what a scan target was
-wrongly given. The console profile above replaces them; `nwarila-apprepo-read`, the policy they
+wrongly given. The instance profile above replaces them; `nwarila-apprepo-read`, the policy they
 carry, is kept and reused.

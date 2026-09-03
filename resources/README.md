@@ -2,51 +2,78 @@
 
 **Type**: Reference. The environment artifacts this deployment DEPENDS ON but does not create.
 
-Terraform builds instances; Ansible converges them; `pdq_ad_config` prepares the directory
-objects PDQ needs. None of them provision IAM, and none of them write Group Policy. Those are an
-operator's to apply, and they must exist before a deployment can succeed — so they are recorded
-here rather than left as folklore.
+Terraform builds instances, Ansible converges them, and `pdq_ad_config` prepares the directory
+objects PDQ needs. None of them provision IAM and none write Group Policy. Those are an
+operator's to apply and must exist before a deployment can succeed, so they are recorded here
+rather than left as folklore.
 
-Everything here is written with `<account-id>` as the only placeholder, matching the convention
-in `docs/reference/aws-iam/README.md`. Nothing in this tree contains an account identifier.
+`<account-id>` is the only placeholder, matching `docs/reference/aws-iam/README.md`. Nothing in
+this tree contains an account identifier.
 
-| Directory | Holds | Applied by |
+| Directory | Holds |
+|---|---|
+| `aws/iam-policy/` | Policy documents an operator applies |
+| `aws/iam-profiles/` | Which role each instance profile holds, and how it is composed |
+| `aws/iam-roles/` | Role trust documents |
+| `group policy objects/` | Policy the deployment assumes is already set |
+| `wmi filters/` | None exist; the absence is recorded |
+
+## The IAM this deployment touches
+
+| Object | State | Purpose |
 |---|---|---|
-| `aws/iam-policy/` | Customer-managed policy documents | An operator, before the first deployment |
-| `aws/iam-roles/` | Role trust documents | An operator |
-| `aws/iam-profiles/` | Instance profiles and what they bind | An operator |
-| `group policy objects/` | Policy the deployment assumes is already set | A directory administrator |
-| `wmi filters/` | None exist; the absence is recorded | — |
+| `iam-roles/nwarila-ec2-role.trust.json` | exists | The organizational default role |
+| `iam-policy/nwarila-fod-read.json` | **new** | Fetch the Feature-on-Demand cab. Attach to the default |
+| `iam-policy/nwarila-apprepo-read.json` | exists | Whole-bucket read, for the repository sync. Reused, not restated |
+| `iam-roles/nwarila-platform_pdq-deploy-inventory_console.trust.json` | **new** | The console role, composed from the two policies above plus SSM |
+| `iam-policy/…_runner_iam.json` | **amended** | The runner must be able to read and pass the new profile and role |
 
-## The instance profiles, and why they replace what is applied today
+The last one is not optional. `iam:PassRole` on the runner names each role it may hand to EC2,
+and Terraform fails with a PassRole denial on any role missing from it — so the runner policy
+has to name the console role **before** the tfvars change lands.
 
-Both systems currently receive `nwarila-ec2-apprepo-profile`. It works, and it is wrong in two
-ways: it is named as though it were shared fleet infrastructure when this repository is its only
-consumer, and it gives a scan target the same whole-bucket read the console needs.
+## What is proposed here
 
-| | Console (`Function = pdq`) | Target (`Function = workstation`) |
+**1. Give the organizational default the ability to fetch the FoD cab.** Attach a new
+`nwarila-fod-read` to `nwarila-ec2-role`. A Windows image without OpenSSH — Server 2022 — is
+unreachable until that cab is installed, so a system holding the default fails at boot on such an
+image. That is a fleet gap, not an application one: any repository meeting such an image hits it,
+and the natural workaround is to reach for a broader profile that happens to include the bucket.
+This repository did exactly that.
+
+**2. Replace the generic profile on the console with a composed one.** The PDQ console becomes
+`nwarila-platform_pdq-deploy-inventory_console`: the baseline's policies **plus**
+`nwarila-apprepo-read`, which it needs because `Sync-Repository.cmd` mirrors the whole bucket to
+`F:\`. That policy is reused, not restated. This retires `nwarila-ec2-apprepo-profile`, which is
+named as shared fleet infrastructure though this repository is its only consumer.
+
+**3. Point the scan target at the default.** With the baseline able to pull the cab, the target
+needs nothing repository-specific.
+
+| Host | Profile | Because |
 |---|---|---|
-| Reads | `aws s3 sync s3://<account-id>-apprepo/` into the repository share — the whole bucket, by design | one Feature-on-Demand cab under `fod/`, fetched by `user_data` at boot |
-| S3 grant | `ListBucket` + `GetObject` on `*` | `GetObject` on `fod/*`; `ListBucket` conditioned on `s3:prefix = fod/*` |
+| `tcnaw-wks01` | `nwarila-ec2-profile` — the default | fetches one FoD cab at boot; packages arrive later over SMB from the console's share |
+| `tcnaw-pdq01` | `nwarila-platform_pdq-deploy-inventory_console` | baseline, plus the whole-bucket read its repository sync needs |
 
-Both keep `AmazonSSMManagedInstanceCore`. That is **required, not incidental**: the framework
-supports four connection profiles — `ssh-direct`, `ssh-ssm`, `winrm-direct`, `winrm-ssm` — and the
-two SSM ones need it. `connection_type` is a per-system choice in `terraform/aws.tfvars`, so a
-profile that omits this silently removes half the supported transports.
+### Order matters
 
-### Migrating to them
+`nwarila-ec2-role` is org-owned and shared with `secure-wazuh`. Steps are additive and read-only
+on one prefix, but the sequence is strict:
 
-1. Create both roles from `iam-roles/*.trust.json`.
-2. Create both policies from `iam-policy/*.json`, substituting the account id.
-3. Attach each policy and `AmazonSSMManagedInstanceCore` to its role, per `iam-profiles/*.json`.
-4. Create the two instance profiles and add their roles.
-5. Point each system in `terraform/aws.tfvars` at its own profile.
+1. Create `nwarila-fod-read`; attach it to `nwarila-ec2-role`.
+2. Create the console role from its trust document and the profile that holds it; attach
+   `AmazonSSMManagedInstanceCore`, `nwarila-fod-read` and `nwarila-apprepo-read`.
+3. Publish the amended `…_runner_iam` as a new policy version, so the runner may read and pass
+   the console profile and role.
+4. **Then** merge the `terraform/aws.tfvars` changes.
 
-Additive throughout: nothing above modifies `nwarila-ec2-apprepo-profile`, so step 5 is the only
-change with an effect and reverting it is the rollback.
+Order is what makes this safe. Merging the tfvars change first leaves the target on a profile
+with no route to the cab, and it fails at boot; leaving step 3 out means Terraform is refused
+when it tries to pass the console role. Steps 1-3 change nothing on their own, so they can land
+well ahead of step 4, and reverting the two tfvars lines is the rollback.
 
 ## What is deliberately NOT here
 
-The **runner** IAM — the role GitHub Actions assumes to deploy — lives in
+The **runner** IAM — what GitHub Actions assumes in order to deploy — lives in
 `docs/reference/aws-iam/`, which also records how it was derived. This tree is about what a
-deployed *machine* and the *directory* need; that one is about what the pipeline needs.
+deployed *machine* and the *directory* need.

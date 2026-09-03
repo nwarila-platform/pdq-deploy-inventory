@@ -41,12 +41,13 @@ all_systems = [
     # lives only in the AWS_EC2_SSH_PRIVATE_KEY organization secret and the runner's
     # temporary directory.
     key_name = "nwarila-ec2-key"
-    # The org EC2 baseline plus read-only access to the application repository bucket, which is
-    # what lets this host pull its own repository contents down rather than receiving them from
-    # the controller. It is a SEPARATE profile, not an edit to the shared one: the org-owned
-    # nwarila-ec2-profile stays exactly as it is, and this repository still creates and modifies
-    # neither -- the runner role only reads and passes whichever is named here.
-    iam_instance_profile = "nwarila-ec2-apprepo-profile"
+    # The org EC2 baseline's policies PLUS read-only access to the whole application repository
+    # bucket, which is what lets this host mirror the repository to F:\ rather than receiving it
+    # from the controller. Composed rather than separate: it carries what the default carries and
+    # one policy more, so a later change to the baseline reaches this host too. The org-owned
+    # nwarila-ec2-profile is unedited, and this repository creates and modifies neither -- the
+    # runner role only reads and passes whichever is named here.
+    iam_instance_profile = "nwarila-platform_pdq-deploy-inventory_console"
     aws_kms_alias        = "aws/ebs"
     # Windows_Server-2025-English-STIG-Full, owner 801119661308 — accepted from the
     # framework's vendor allowlist, the same hardened base the sibling deploy uses.
@@ -184,10 +185,12 @@ all_systems = [
     availability_zone = "us-east-1c"
     subnet_id         = "subnet-03a855e712be7b399"
     key_name          = "nwarila-ec2-key"
-    # The same apprepo profile the PDQ host uses, and NOT for parity: Server 2022 ships without
-    # OpenSSH, so user_data reads the Feature-on-Demand cab out of that bucket to install it. A
-    # host without this profile has no route to the cab and fails at boot by design.
-    iam_instance_profile = "nwarila-ec2-apprepo-profile"
+    # The ORGANIZATIONAL DEFAULT, which is all a target needs. Server 2022 ships without
+    # OpenSSH, so user_data reads the Feature-on-Demand cab from the application repository to
+    # install it -- and that read now belongs to the default role, because a machine that cannot
+    # fetch it is unreachable on such an image whatever it is for. Packages reach this host later
+    # over SMB from the console's share, never from S3, so it needs nothing wider.
+    iam_instance_profile = "nwarila-ec2-profile"
     aws_kms_alias        = "aws/ebs"
     # Windows_Server-2022-English-Full-Base. Deliberately a DIFFERENT release from the PDQ host:
     # a target running the same build as the server it is scanned from proves less than one that

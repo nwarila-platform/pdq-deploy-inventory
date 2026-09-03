@@ -189,9 +189,48 @@
 !/scripts/Set-PdqCollection.pester.ps1
 !/scripts/Remove-PdqCollection.ps1
 !/scripts/Remove-PdqCollection.pester.ps1
+!/scripts/Set-PdqCredential.ps1
+!/scripts/Set-PdqCredential.pester.ps1
 !/scripts/compose-and-run.sh
 !/scripts/install-hooks.sh
 !/scripts/materialize-role-scripts.sh
+
+# --- [ allowed: resources (environment artifacts an operator applies, not code) ] ------------- #
+!/resources/
+!/resources/aws/
+!/resources/aws/iam-policy/
+!/resources/aws/iam-profiles/
+!/resources/aws/iam-roles/
+!/resources/group policy objects/
+!/resources/wmi filters/
+!/resources/README.md
+!/resources/aws/iam-policy/nwarila-platform_instance-baseline_ec2_s3.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_admin_s3.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_ec2_s3.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_reaper_ebs.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_reaper_ec2.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_reaper_eni.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_reaper_iam.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_reaper_s3.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_reaper_sg.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_runner_ebs.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_runner_ec2.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_runner_eni.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_runner_iam.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_runner_kms.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_runner_s3.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_runner_sg.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_runner_ssm.json
+!/resources/aws/iam-profiles/README.md
+!/resources/aws/iam-profiles/nwarila-platform_instance-baseline_ec2.json
+!/resources/aws/iam-profiles/nwarila-platform_pdq-deploy-inventory_ec2.json
+!/resources/aws/iam-roles/nwarila-platform_instance-baseline_ec2.trust.json
+!/resources/aws/iam-roles/nwarila-platform_pdq-deploy-inventory_admin.trust.json
+!/resources/aws/iam-roles/nwarila-platform_pdq-deploy-inventory_ec2.trust.json
+!/resources/aws/iam-roles/nwarila-platform_pdq-deploy-inventory_reaper.trust.json
+!/resources/aws/iam-roles/nwarila-platform_pdq-deploy-inventory_runner.trust.json
+!/resources/group policy objects/windows-laps.md
+!/resources/wmi filters/README.md
 
 # --- [ allowed: terraform (data-only; resources live in the pinned framework) ] -------------- #
 !/terraform/README.md

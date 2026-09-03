@@ -1,0 +1,14 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadTheOrgInstanceProfile",
+      "Effect": "Allow",
+      "Action": "iam:GetInstanceProfile",
+      "Resource": [
+        "arn:aws:iam::<account-id>:instance-profile/nwarila-platform_instance-baseline_ec2",
+        "arn:aws:iam::<account-id>:instance-profile/nwarila-platform_pdq-deploy-inventory_ec2"
+      ]
+    }
+  ]
+}

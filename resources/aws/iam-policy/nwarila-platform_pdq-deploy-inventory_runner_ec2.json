@@ -1,0 +1,106 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DescribeForPlanning",
+      "Effect": "Allow",
+      "Resource": "*",
+      "Action": [
+        "ec2:DescribeSubnets",
+        "ec2:DescribeImages",
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceAttribute",
+        "ec2:DescribeInstanceTypes",
+        "ec2:DescribeInstanceCreditSpecifications",
+        "ec2:DescribeInstanceStatus",
+        "ec2:DescribeTags",
+        "ec2:DescribeVpcs",
+        "ec2:DescribeAvailabilityZones",
+        "ec2:DescribeKeyPairs"
+      ]
+    },
+    {
+      "Sid": "RunInstancesTaggedCreations",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:us-east-1:<account-id>:instance/*",
+        "arn:aws:ec2:us-east-1:<account-id>:volume/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/Repository": "nwarila-platform/pdq-deploy-inventory",
+          "aws:RequestTag/RepositoryId": "1347369220",
+          "aws:RequestTag/ManagedBy": "Terraform"
+        },
+        "Null": {
+          "aws:RequestTag/CommitSha": "false",
+          "aws:RequestTag/RunId": "false",
+          "aws:RequestTag/Environment": "false"
+        }
+      }
+    },
+    {
+      "Sid": "RunInstancesUntaggableEni",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:us-east-1:<account-id>:network-interface/*"
+    },
+    {
+      "Sid": "RunInstancesReferencedResources",
+      "Effect": "Allow",
+      "Action": "ec2:RunInstances",
+      "Resource": [
+        "arn:aws:ec2:us-east-1::image/*",
+        "arn:aws:ec2:us-east-1:<account-id>:subnet/*",
+        "arn:aws:ec2:us-east-1:<account-id>:security-group/*",
+        "arn:aws:ec2:us-east-1:<account-id>:key-pair/*",
+        "arn:aws:ec2:us-east-1:<account-id>:placement-group/*"
+      ]
+    },
+    {
+      "Sid": "ManageOwnedInstanceLifecycle",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:TerminateInstances",
+        "ec2:StartInstances",
+        "ec2:StopInstances",
+        "ec2:ModifyInstanceAttribute"
+      ],
+      "Resource": "arn:aws:ec2:us-east-1:<account-id>:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/Repository": "nwarila-platform/pdq-deploy-inventory",
+          "ec2:ResourceTag/RepositoryId": "1347369220",
+          "ec2:ResourceTag/ManagedBy": "Terraform"
+        },
+        "Null": {
+          "ec2:ResourceTag/CommitSha": "false",
+          "ec2:ResourceTag/RunId": "false",
+          "ec2:ResourceTag/Environment": "false"
+        }
+      }
+    },
+    {
+      "Sid": "TagResourcesWeAlreadyOwn",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": [
+        "arn:aws:ec2:us-east-1:<account-id>:instance/*",
+        "arn:aws:ec2:us-east-1:<account-id>:volume/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "ec2:ResourceTag/Repository": "nwarila-platform/pdq-deploy-inventory",
+          "ec2:ResourceTag/RepositoryId": "1347369220",
+          "ec2:ResourceTag/ManagedBy": "Terraform"
+        },
+        "Null": {
+          "ec2:ResourceTag/CommitSha": "false",
+          "ec2:ResourceTag/RunId": "false",
+          "ec2:ResourceTag/Environment": "false"
+        }
+      }
+    }
+  ]
+}

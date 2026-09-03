@@ -1,0 +1,6 @@
+{
+  "InstanceProfileName": "nwarila-platform_instance-baseline_ec2",
+  "Roles": [
+    "nwarila-platform_instance-baseline_ec2"
+  ]
+}

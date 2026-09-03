@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "GitHubActionsForPdqDeployInventoryDeployWorkflows",
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::<account-id>:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:repository_id": "1347369220",
+          "token.actions.githubusercontent.com:ref": "refs/heads/main",
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:job_workflow_ref": "nwarila-platform/pdq-deploy-inventory/.github/workflows/aws-deploy.yml@refs/heads/main",
+          "token.actions.githubusercontent.com:sub": [
+            "repo:nwarila-platform@230745524/pdq-deploy-inventory@1347369220:ref:refs/heads/main",
+            "repo:nwarila-platform/pdq-deploy-inventory:ref:refs/heads/main"
+          ]
+        }
+      }
+    }
+  ]
+}

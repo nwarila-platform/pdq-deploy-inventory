@@ -124,9 +124,13 @@ BeforeAll {
 Describe 'Set-PdqSetting' {
   It 'declares SupportsShouldProcess so the module runs it in check mode' {
     # win_powershell SKIPS a script in check mode unless it advertises this, returning
-    # changed=true and no result -- the exact spelling the module's own detector keys on.
-    $Script = Get-Content -Raw (Join-Path $PSScriptRoot 'Set-PdqSetting.ps1')
-    $Script | Should -Match '\[CmdletBinding\(SupportsShouldProcess'
+    # changed=true and no result. The module reads the declaration from the parsed AST,
+    # so what matters is that the argument is present, not how it is spelled.
+    $Attributes = [System.Management.Automation.Language.Parser]::ParseFile(
+      (Join-Path $PSScriptRoot 'Set-PdqSetting.ps1'), [ref]$Null, [ref]$Null
+    ).ParamBlock.Attributes
+    $Binding = $Attributes | Where-Object { $_.TypeName.FullName -eq 'CmdletBinding' }
+    $Binding.NamedArguments.ArgumentName | Should -Contain 'SupportsShouldProcess'
   }
 
 

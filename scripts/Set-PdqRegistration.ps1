@@ -57,9 +57,27 @@
         One object carrying changed, check_mode, registered and msg.
 #>
 
-[CmdletBinding(SupportsShouldProcess)]
+[CmdletBinding(
+  ConfirmImpact = 'Medium',
+  DefaultParameterSetName = 'default',
+  HelpUri = 'https://github.com/nwarila-platform/pdq-deploy-inventory',
+  PositionalBinding = $False,
+  SupportsPaging = $False,
+  SupportsShouldProcess = $True
+)]
 [OutputType([System.Void])]
 Param (
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [ValidateNotNullOrEmpty()]
+  [System.String]
+  $CliPath,
+
   [Parameter(
     DontShow = $False,
     Mandatory = $False,
@@ -70,17 +88,6 @@ Param (
   [ValidatePattern('^[0-5][0-4][0-3]$')]
   [System.String]
   $DebugLevel = '103',
-
-  [Parameter(
-    DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [ValidatePattern('^[0-5]{6}$')]
-  [System.String]
-  $LogLevel = '002223',
 
   [Parameter(
     DontShow = $False,
@@ -95,14 +102,14 @@ Param (
 
   [Parameter(
     DontShow = $False,
-    Mandatory = $True,
+    Mandatory = $False,
     ParameterSetName = 'default',
     ValueFromPipeline = $False,
     ValueFromPipelineByPropertyName = $False
   )]
-  [ValidateNotNullOrEmpty()]
+  [ValidatePattern('^[0-5]{6}$')]
   [System.String]
-  $CliPath
+  $LogLevel = '002223'
 )
 
 #region ------ [ Script ] -------------------------------------------------------------------- #

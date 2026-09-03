@@ -1,0 +1,32 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadWriteOnlyTheStateFileAndItsLock",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::<account-id>-terraform/nwarila-platform/pdq-deploy-inventory/aws-poc.tfstate",
+        "arn:aws:s3:::<account-id>-terraform/nwarila-platform/pdq-deploy-inventory/aws-poc.tfstate.tflock"
+      ]
+    },
+    {
+      "Sid": "ListOnlyThoseTwoKeys",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::<account-id>-terraform",
+      "Condition": {
+        "StringEquals": {
+          "s3:prefix": [
+            "nwarila-platform/pdq-deploy-inventory/aws-poc.tfstate",
+            "nwarila-platform/pdq-deploy-inventory/aws-poc.tfstate.tflock"
+          ]
+        }
+      }
+    }
+  ]
+}

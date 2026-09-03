@@ -58,38 +58,101 @@
         open_consoles and msg.
 #>
 
-[CmdletBinding(SupportsShouldProcess)]
+[CmdletBinding(
+  ConfirmImpact = 'Medium',
+  DefaultParameterSetName = 'default',
+  HelpUri = 'https://github.com/nwarila-platform/pdq-deploy-inventory',
+  PositionalBinding = $False,
+  SupportsPaging = $False,
+  SupportsShouldProcess = $True
+)]
 [OutputType([System.Void])]
 Param (
-  [Parameter(DontShow = $False, Mandatory = $False, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
-  [ValidatePattern('^[0-5][0-4][0-3]$')]
-  [System.String] $DebugLevel = '103',
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [ValidateNotNullOrEmpty()]
+  [System.String]
+  $CliPath,
 
-  [Parameter(DontShow = $False, Mandatory = $False, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
-  [ValidatePattern('^[0-5]{6}$')]
-  [System.String] $LogLevel = '002223',
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [ValidateNotNullOrEmpty()]
+  [System.String]
+  $DatabaseDirectory,
 
-  [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
-  [System.Collections.IDictionary] $Preference,
-
-  [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
   [ValidatePattern('^[A-Za-z]$')]
-  [System.String] $DatabaseDrive,
+  [System.String]
+  $DatabaseDrive,
 
-  [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
-  [ValidateNotNullOrEmpty()]
-  [System.String] $DatabaseDirectory,
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $False,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [ValidatePattern('^[0-5][0-4][0-3]$')]
+  [System.String]
+  $DebugLevel = '103',
 
-  [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $False,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [ValidatePattern('^[0-5]{6}$')]
+  [System.String]
+  $LogLevel = '002223',
+
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [System.Collections.IDictionary]
+  $Preference,
+
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
   [ValidateSet('Deploy', 'Inventory')]
-  [System.String] $Product,
+  [System.String]
+  $Product,
 
-  [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
-  [ValidateNotNullOrEmpty()]
-  [System.String] $CliPath,
-
-  [Parameter(DontShow = $False, Mandatory = $False, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
-  [System.String] $RepositoryShareName
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $False,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [System.String]
+  $RepositoryShareName
 )
 
 If ($Product -eq 'Deploy' -and [System.String]::IsNullOrEmpty($RepositoryShareName)) {

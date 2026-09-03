@@ -12,11 +12,21 @@ At execution time the two application roles overlay onto a version-pinned
 [`ansible-framework`](https://github.com/nwarila-platform/ansible-framework) checkout, whose
 `windows_disk_manager` provisions the disks.
 
-## Scope: domainless lab profile
+## Scope
 
-The current defaults target a standalone, non-domain Windows host. They create a local service
-account and authorise local console users. Domain integration — a domain service account,
-group-based console authorisation, and RBAC hardening — is future work once a directory exists.
+The AWS deployment builds domain-joined hosts. `ansible/playbooks/pdq-aws.yml` joins each guest
+to the directory, and `ansible/playbooks/ad-config.yml` prepares what the server depends on
+there: the service account, the OU a PDQ server is filed in, and the account's Windows LAPS read
+permissions on the OUs PDQ manages.
+
+The products themselves still run their background service as a LOCAL account, which is
+deliberate. What is not yet done is the credential PDQ authenticates to TARGETS with: it is that
+local account today, so scans and deployments cannot reach another machine. Group-based console
+authorisation and RBAC hardening remain future work.
+
+**Before adopting this in another environment, read
+[docs/how-to/adopt-this-repository.md](docs/how-to/adopt-this-repository.md).** Nothing in the
+prerequisite list is created by the pipeline.
 
 ## What it deploys
 

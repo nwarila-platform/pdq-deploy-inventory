@@ -20,69 +20,57 @@ this tree contains an account identifier.
 
 ## The IAM this deployment touches
 
-Exported from the live account on 2026-09-03, with `<account-id>` substituted. Three roles carry
-this repository's work, and their policies are recorded verbatim so the applied state is legible
-without console access:
+Exported from the live account on 2026-09-03, with `<account-id>` substituted. Names follow
+`nwarila-platform_<scope>_<principal>_<service>`; a role and the profile holding it share a name.
 
 | Role | Trust | Policies | Does |
 |---|---|---|---|
-| `…_runner` | GitHub OIDC | eight `runner_*` | Deploy, converge, prove, destroy |
-| `…_reaper` | GitHub OIDC | six `reaper_*` | Sweep what a killed run left behind |
-| `…_admin` | GitHub OIDC | the runner's eight plus `admin_s3` | Operator deploy and artifact publishing |
-| `…_instance` | EC2 | SSM, `nwarila-fod-read`, `nwarila-apprepo-read` | **Proposed.** What the PDQ console runs as |
-| `nwarila-ec2-role` | EC2 | SSM, `nwarila-fod-read` | The organizational default |
+| `…_pdq-deploy-inventory_runner` | GitHub OIDC | eight `runner_*` | Deploy, converge, prove, destroy |
+| `…_pdq-deploy-inventory_reaper` | GitHub OIDC | six `reaper_*` | Sweep what a killed run left behind |
+| `…_pdq-deploy-inventory_admin` | GitHub OIDC | the runner's eight plus `admin_s3` | Operator deploy and artifact publishing |
+| `…_instance-baseline_ec2` | EC2 | SSM, `…_instance-baseline_ec2_s3` | **Proposed.** Every managed machine |
+| `…_pdq-deploy-inventory_ec2` | EC2 | the two above, plus `…_pdq-deploy-inventory_ec2_s3` | **Proposed.** The PDQ console |
 
-Two files are not verbatim, and both are marked in their own text:
+Three files are not verbatim exports, and each says so in its own text:
 
-- `nwarila-fod-read.json` is **new**.
-- `…_runner_iam.json` is **amended** — it adds the instance profile and role to the two
-  statements that name what the runner may read and pass. `iam:PassRole` enumerates each role by
-  ARN, so Terraform is refused on any role missing from it. That amendment is the reason the
-  ordering below is strict rather than advisory.
+- `…_instance-baseline_ec2_s3` and its role, profile and trust are **new** — the baseline tier.
+- `…_pdq-deploy-inventory_ec2*` are the existing `nwarila-ec2-apprepo-*` objects renamed into the
+  fleet pattern and given a repository-scoped policy in place of the org-level one.
+- `…_runner_iam` and `…_reaper_iam` are **amended**: both enumerate the profiles and roles they
+  may read or pass, by ARN, so Terraform and the reaper are refused on anything missing from
+  them. That is what makes the ordering below strict rather than advisory.
 
-Version drift is real: the checked-in copies under `docs/reference/aws-iam/` document a role that
-does not exist and an instance profile the deployment does not use. These were taken from the
-default version of each live policy, and several are well past v1 — `runner_s3` is at v16.
+Version drift is real, which is why these were taken from the live account rather than the
+checked-in reference: that reference documents a role which does not exist and an instance profile
+the deployment does not use, and several live policies are far past v1 — `runner_s3` is at v16.
 
 ## What is proposed here
 
-**1. Give the organizational default the ability to fetch the FoD cab.** Attach a new
-`nwarila-fod-read` to `nwarila-ec2-role`. A Windows image without OpenSSH — Server 2022 — is
-unreachable until that cab is installed, so a system holding the default fails at boot on such an
-image. That is a fleet gap, not an application one: any repository meeting such an image hits it,
-and the natural workaround is to reach for a broader profile that happens to include the bucket.
-This repository did exactly that.
+**1. A baseline tier every managed machine can hold.** `…_instance-baseline_ec2`, carrying SSM
+and a read scoped to `fod/*`. Without it a Server 2022 image is unreachable, and the workaround is
+always to reach for something broader.
 
-**2. Replace the generic profile on the console with a composed one.** The PDQ console becomes
-`nwarila-platform_pdq-deploy-inventory_instance`: the baseline's policies **plus**
-`nwarila-apprepo-read`, which it needs because `Sync-Repository.cmd` mirrors the whole bucket to
-`F:\`. That policy is reused, not restated. This retires `nwarila-ec2-apprepo-profile`, which is
-named as shared fleet infrastructure though this repository is its only consumer.
+**2. The PDQ console tier, composed from it.** `…_pdq-deploy-inventory_ec2` carries the
+baseline's policies plus a whole-bucket read for `Sync-Repository.cmd`.
 
-**3. Point the scan target at the default.** With the baseline able to pull the cab, the target
-needs nothing repository-specific.
+**3. The scan target drops to the baseline.** It fetches one cab at boot; packages reach it later
+over SMB from the console's share, never from S3.
 
-| Host | Profile | Because |
-|---|---|---|
-| `tcnaw-wks01` | `nwarila-ec2-profile` — the default | fetches one FoD cab at boot; packages arrive later over SMB from the console's share |
-| `tcnaw-pdq01` | `nwarila-platform_pdq-deploy-inventory_instance` | baseline, plus the whole-bucket read its repository sync needs |
+| Host | Profile |
+|---|---|
+| `tcnaw-pdq01` | `nwarila-platform_pdq-deploy-inventory_ec2` |
+| `tcnaw-wks01` | `nwarila-platform_instance-baseline_ec2` |
 
 ### Order matters
 
-`nwarila-ec2-role` is org-owned and shared with `secure-wazuh`. Steps are additive and read-only
-on one prefix, but the sequence is strict:
-
-1. Create `nwarila-fod-read`; attach it to `nwarila-ec2-role`.
-2. Create the instance role from its trust document and the profile that holds it; attach
-   `AmazonSSMManagedInstanceCore`, `nwarila-fod-read` and `nwarila-apprepo-read`.
-3. Publish the amended `…_runner_iam` as a new policy version, so the runner may read and pass
-   the instance profile and role.
+1. Create the baseline role, its policy, and the profile that holds it.
+2. Create the PDQ role and profile; attach SSM and both `_ec2_s3` policies.
+3. Publish the amended `…_runner_iam` and `…_reaper_iam` as new policy versions.
 4. **Then** merge the `terraform/aws.tfvars` changes.
 
-Order is what makes this safe. Merging the tfvars change first leaves the target on a profile
-with no route to the cab, and it fails at boot; leaving step 3 out means Terraform is refused
-when it tries to pass the instance role. Steps 1-3 change nothing on their own, so they can land
-well ahead of step 4, and reverting the two tfvars lines is the rollback.
+Steps 1-3 change nothing on their own and can land well ahead of step 4. Merging step 4 first
+leaves both hosts on profiles that do not exist; skipping step 3 has Terraform refused when it
+tries to pass the new roles. Reverting the two tfvars lines is the rollback.
 
 ## What is deliberately NOT here
 

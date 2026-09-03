@@ -45,9 +45,9 @@ all_systems = [
     # bucket, which is what lets this host mirror the repository to F:\ rather than receiving it
     # from the controller. Composed rather than separate: it carries what the default carries and
     # one policy more, so a later change to the baseline reaches this host too. The org-owned
-    # nwarila-ec2-profile is unedited, and this repository creates and modifies neither -- the
+    # baseline profile is unedited, and this repository creates and modifies neither -- the
     # runner role only reads and passes whichever is named here.
-    iam_instance_profile = "nwarila-platform_pdq-deploy-inventory_instance"
+    iam_instance_profile = "nwarila-platform_pdq-deploy-inventory_ec2"
     aws_kms_alias        = "aws/ebs"
     # Windows_Server-2025-English-STIG-Full, owner 801119661308 — accepted from the
     # framework's vendor allowlist, the same hardened base the sibling deploy uses.
@@ -190,7 +190,7 @@ all_systems = [
     # install it -- and that read now belongs to the default role, because a machine that cannot
     # fetch it is unreachable on such an image whatever it is for. Packages reach this host later
     # over SMB from the console's share, never from S3, so it needs nothing wider.
-    iam_instance_profile = "nwarila-ec2-profile"
+    iam_instance_profile = "nwarila-platform_instance-baseline_ec2"
     aws_kms_alias        = "aws/ebs"
     # Windows_Server-2022-English-Full-Base. Deliberately a DIFFERENT release from the PDQ host:
     # a target running the same build as the server it is scanned from proves less than one that

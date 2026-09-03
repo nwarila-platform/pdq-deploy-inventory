@@ -202,9 +202,9 @@
 !/resources/group policy objects/
 !/resources/wmi filters/
 !/resources/README.md
-!/resources/aws/iam-policy/nwarila-apprepo-read.json
-!/resources/aws/iam-policy/nwarila-fod-read.json
+!/resources/aws/iam-policy/nwarila-platform_instance-baseline_ec2_s3.json
 !/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_admin_s3.json
+!/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_ec2_s3.json
 !/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_reaper_ebs.json
 !/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_reaper_ec2.json
 !/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_reaper_eni.json
@@ -220,9 +220,11 @@
 !/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_runner_sg.json
 !/resources/aws/iam-policy/nwarila-platform_pdq-deploy-inventory_runner_ssm.json
 !/resources/aws/iam-profiles/README.md
-!/resources/aws/iam-roles/nwarila-ec2-role.trust.json
+!/resources/aws/iam-profiles/nwarila-platform_instance-baseline_ec2.json
+!/resources/aws/iam-profiles/nwarila-platform_pdq-deploy-inventory_ec2.json
+!/resources/aws/iam-roles/nwarila-platform_instance-baseline_ec2.trust.json
 !/resources/aws/iam-roles/nwarila-platform_pdq-deploy-inventory_admin.trust.json
-!/resources/aws/iam-roles/nwarila-platform_pdq-deploy-inventory_instance.trust.json
+!/resources/aws/iam-roles/nwarila-platform_pdq-deploy-inventory_ec2.trust.json
 !/resources/aws/iam-roles/nwarila-platform_pdq-deploy-inventory_reaper.trust.json
 !/resources/aws/iam-roles/nwarila-platform_pdq-deploy-inventory_runner.trust.json
 !/resources/group policy objects/windows-laps.md

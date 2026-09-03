@@ -1,0 +1,6 @@
+{
+  "InstanceProfileName": "nwarila-platform_pdq-deploy-inventory_ec2",
+  "Roles": [
+    "nwarila-platform_pdq-deploy-inventory_ec2"
+  ]
+}

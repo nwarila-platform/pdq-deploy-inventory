@@ -6,8 +6,8 @@
       "Effect": "Allow",
       "Action": "iam:GetInstanceProfile",
       "Resource": [
-        "arn:aws:iam::<account-id>:instance-profile/nwarila-ec2-profile",
-        "arn:aws:iam::<account-id>:instance-profile/nwarila-ec2-apprepo-profile"
+        "arn:aws:iam::<account-id>:instance-profile/nwarila-platform_instance-baseline_ec2",
+        "arn:aws:iam::<account-id>:instance-profile/nwarila-platform_pdq-deploy-inventory_ec2"
       ]
     }
   ]

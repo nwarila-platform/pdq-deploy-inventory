@@ -1,48 +1,40 @@
 # Instance profiles
 
-An instance profile holds exactly one role and carries no document of its own, so there is nothing
-here to apply. What matters is which role each profile holds and how that role is composed.
+A profile is a named container holding exactly one role. The files here declare that binding, in
+the shape `aws iam create-instance-profile` and `add-role-to-instance-profile` take.
 
-## Naming
-
-Roles and profiles follow the fleet pattern `nwarila-platform_<repository>_<principal>`, with
-`_instance` taking the principal slot beside the existing `_runner`, `_admin` and `_reaper`. No
-new policy is introduced under that pattern: the instance role composes policies that already
-exist, and `nwarila-fod-read` is org-level like `nwarila-apprepo-read` because it describes what
-any managed machine needs rather than anything about this repository.
-
-## The tiers
-
-| Profile | Role | Attached policies |
+| Profile | Role (same name) | Role's policies |
 |---|---|---|
-| `nwarila-ec2-profile` | `nwarila-ec2-role` | `AmazonSSMManagedInstanceCore`, `nwarila-fod-read` |
-| `nwarila-platform_pdq-deploy-inventory_instance` | same name | the two above, **plus** `nwarila-apprepo-read` |
+| `nwarila-platform_instance-baseline_ec2` | ditto | `AmazonSSMManagedInstanceCore`, `nwarila-platform_instance-baseline_ec2_s3` |
+| `nwarila-platform_pdq-deploy-inventory_ec2` | ditto | the two above, **plus** `nwarila-platform_pdq-deploy-inventory_ec2_s3` |
 
-The instance role is the baseline **plus one policy**. Its extra grant is stated in one place, and
-anything the baseline gains later is attached to both — so the relationship stays legible instead
-of the two drifting into unrelated permission sets.
+Profile, role and policy share one name per tier, differing only by the `_s3` service suffix on
+the policy, so what a machine may do is readable from what it runs as.
 
-## Why the baseline carries the FoD read
+## Why the baseline carries an S3 read
 
 A Windows image that ships without OpenSSH — Server 2022 does — is unreachable until the
 Feature-on-Demand cab is installed, and the shared framework's `user_data` fetches it from
-`s3://<account-id>-apprepo/fod/<build>/`. A system holding the default without that grant has no
+`s3://<account-id>-apprepo/fod/<build>/`. A system holding the baseline without that grant has no
 route to the cab and **fails at boot by design**.
 
 Being fetchable is part of what makes a machine manageable here, not an application concern.
-Without it in the default, every repository that meets such an image reaches for a broader profile
+Without it in the baseline, every repository meeting such an image reaches for a broader profile
 that happens to include the bucket — which is what this one did, giving a scan target read access
 to the whole application repository to fetch a single 1.4 MB cab.
 
-## Why the console needs more
+`nwarila-platform_instance-baseline_ec2_s3` is scoped to that one prefix, with `ListBucket`
+conditioned on `s3:prefix`.
+
+## Why the PDQ tier needs more
 
 `Sync-Repository.cmd` runs `aws s3 sync s3://<account-id>-apprepo/` into `F:\PDQ Repository`,
-mirroring the entire bucket. That is `nwarila-apprepo-read`, reused rather than restated — a
-second policy with the same grants would be two things to keep in step.
+mirroring the entire bucket, so `nwarila-platform_pdq-deploy-inventory_ec2_s3` grants
+`GetObject` on `*`. That read is this repository's, and it is named as this repository's.
 
-`nwarila-fod-read` is attached to the console too, even though its whole-bucket `GetObject`
-already covers that prefix. The redundancy is deliberate: it makes the console literally the
-baseline plus a delta, so the composition survives a future baseline change that is not about S3.
+The role also carries the baseline's policy even though the whole-bucket grant already covers
+that prefix. The redundancy is deliberate: it makes the PDQ tier literally the baseline plus a
+delta, so a later baseline change that is not about S3 still reaches this host.
 
 ## Both tiers keep SSM
 
@@ -53,7 +45,7 @@ removes half the supported transports.
 
 ## What this retires
 
-`nwarila-ec2-apprepo-profile` and `nwarila-ec2-apprepo-role` are named as shared fleet
-infrastructure while this repository is their only consumer, and they are what a scan target was
-wrongly given. The instance profile above replaces them; `nwarila-apprepo-read`, the policy they
-carry, is kept and reused.
+`nwarila-ec2-profile` / `nwarila-ec2-role` and `nwarila-ec2-apprepo-profile` /
+`nwarila-ec2-apprepo-role`. The first pair is the organizational default under an older name; the
+second is what both of this repository's hosts run as today, including the scan target that
+should never have had it.

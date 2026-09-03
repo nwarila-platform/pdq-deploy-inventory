@@ -83,8 +83,11 @@ BeforeAll {
 
 Describe 'Set-PdqVariable' {
   It 'declares SupportsShouldProcess so the module runs it in check mode' {
-    $Script = Get-Content -Raw (Join-Path $PSScriptRoot 'Set-PdqVariable.ps1')
-    $Script | Should -Match '\[CmdletBinding\(SupportsShouldProcess'
+    $Attributes = [System.Management.Automation.Language.Parser]::ParseFile(
+      (Join-Path $PSScriptRoot 'Set-PdqVariable.ps1'), [ref]$Null, [ref]$Null
+    ).ParamBlock.Attributes
+    $Binding = $Attributes | Where-Object { $_.TypeName.FullName -eq 'CmdletBinding' }
+    $Binding.NamedArguments.ArgumentName | Should -Contain 'SupportsShouldProcess'
   }
 
   BeforeEach {

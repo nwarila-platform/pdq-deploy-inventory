@@ -82,7 +82,14 @@
         One object carrying action_required, changed, check_mode, count, entries,
         installed_version and msg.
     #>
-[CmdletBinding(SupportsShouldProcess)]
+[CmdletBinding(
+  ConfirmImpact = 'Low',
+  DefaultParameterSetName = 'default',
+  HelpUri = 'https://github.com/nwarila-platform/pdq-deploy-inventory',
+  PositionalBinding = $False,
+  SupportsPaging = $False,
+  SupportsShouldProcess = $True
+)]
 [OutputType([System.Void])]
 Param (
   [Parameter(
@@ -98,17 +105,6 @@ Param (
 
   [Parameter(
     DontShow = $False,
-    Mandatory = $False,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [ValidatePattern('^[0-5]{6}$')]
-  [System.String]
-  $LogLevel = '002223',
-
-  [Parameter(
-    DontShow = $False,
     Mandatory = $True,
     ParameterSetName = 'default',
     ValueFromPipeline = $False,
@@ -117,6 +113,17 @@ Param (
   [ValidateNotNullOrEmpty()]
   [System.String]
   $DisplayName,
+
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $False,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [ValidatePattern('^[0-5]{6}$')]
+  [System.String]
+  $LogLevel = '002223',
 
   [Parameter(
     DontShow = $False,

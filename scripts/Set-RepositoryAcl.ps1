@@ -63,7 +63,14 @@
         One object carrying changed, check_mode, path, before, after and msg.
 #>
 
-[CmdletBinding(SupportsShouldProcess)]
+[CmdletBinding(
+  ConfirmImpact = 'Medium',
+  DefaultParameterSetName = 'default',
+  HelpUri = 'https://github.com/nwarila-platform/pdq-deploy-inventory',
+  PositionalBinding = $False,
+  SupportsPaging = $False,
+  SupportsShouldProcess = $True
+)]
 [OutputType([System.Void])]
 Param (
   [Parameter(

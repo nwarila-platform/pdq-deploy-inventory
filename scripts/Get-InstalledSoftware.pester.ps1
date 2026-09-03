@@ -123,8 +123,11 @@ AfterAll {
 
 Describe 'Get-InstalledSoftware' {
   It 'declares SupportsShouldProcess so the module runs it in check mode' {
-    (Get-Content -Raw (Join-Path $PSScriptRoot 'Get-InstalledSoftware.ps1')) |
-      Should -Match '\[CmdletBinding\(SupportsShouldProcess'
+    $Attributes = [System.Management.Automation.Language.Parser]::ParseFile(
+      (Join-Path $PSScriptRoot 'Get-InstalledSoftware.ps1'), [ref]$Null, [ref]$Null
+    ).ParamBlock.Attributes
+    $Binding = $Attributes | Where-Object { $_.TypeName.FullName -eq 'CmdletBinding' }
+    $Binding.NamedArguments.ArgumentName | Should -Contain 'SupportsShouldProcess'
   }
 
 

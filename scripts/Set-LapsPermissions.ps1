@@ -38,28 +38,70 @@
         One object carrying state, changed, check_mode and the per-OU target ACE counts.
 #>
 
-[CmdletBinding(SupportsShouldProcess)]
+[CmdletBinding(
+  ConfirmImpact = 'Medium',
+  DefaultParameterSetName = 'default',
+  HelpUri = 'https://github.com/nwarila-platform/pdq-deploy-inventory',
+  PositionalBinding = $False,
+  SupportsPaging = $False,
+  SupportsShouldProcess = $True
+)]
 [OutputType([System.Void])]
 Param (
-  [Parameter(DontShow = $False, Mandatory = $False, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [ValidateNotNullOrEmpty()]
+  [System.String]
+  $AccountIdentity,
+
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $False,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
   [ValidatePattern('^[0-5][0-4][0-3]$')]
-  [System.String] $DebugLevel = '103',
+  [System.String]
+  $DebugLevel = '103',
 
-  [Parameter(DontShow = $False, Mandatory = $False, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $False,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
   [ValidatePattern('^[0-5]{6}$')]
-  [System.String] $LogLevel = '002223',
+  [System.String]
+  $LogLevel = '002223',
 
-  [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [ValidateNotNullOrEmpty()]
+  [System.String[]]
+  $OrganizationalUnit,
+
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
   [ValidateSet('present', 'absent')]
-  [System.String] $State,
-
-  [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
-  [ValidateNotNullOrEmpty()]
-  [System.String] $AccountIdentity,
-
-  [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)]
-  [ValidateNotNullOrEmpty()]
-  [System.String[]] $OrganizationalUnit
+  [System.String]
+  $State
 )
 
 #region ------ [ Script ] -------------------------------------------------------------------- #

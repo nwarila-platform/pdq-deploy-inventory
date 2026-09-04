@@ -194,6 +194,11 @@
   # what is under test is the ground the products stand on rather than the products.
   tags: ['products']
   vars:
+    # Deploy's repository volume, named ONCE here because both products need it: Deploy fills it
+    # from the application repository, and Inventory reads the .NET installer back out of it.
+    pdq_repository_directory: 'PDQ Repository'
+    pdq_repository_drive: 'F'
+
     # The pinned application versions, defined ONCE here and handed to BOTH products below (they
     # share one custom-variable model). The names are the product's own: each is spelled exactly
     # as the fleet's variable export spells it -- <Publisher>_<Product>, words joined by dashes --
@@ -310,7 +315,8 @@
           # runs are the same kind of object. The role writes a sync script carrying these two
           # values so an administrator can pull new content down without a deployment.
           repository:
-            drive: 'F'
+            drive: "{{ pdq_repository_drive }}"
+            directory: "{{ pdq_repository_directory }}"
             bucket: "{{ aws_account_id }}-apprepo"
             region: "{{ aws_region }}"
 
@@ -332,6 +338,17 @@
           # The pinned application versions, defined once in the play vars above and shared with
           # pdq_deploy: both products import the SAME map into their own variable stores.
           variables: "{{ pdq_variables }}"
+
+          # The scanner needs .NET on a target before it can inventory it, and installs it on a
+          # target that lacks it. The installer is the copy the repository sync placed on this
+          # host -- the same object the console would otherwise be pointed at by hand. The path
+          # names the object as the bucket lays it out: <publisher>/<application>/<version>/<file>.
+          preferences:
+            software_deployment:
+              install_dotnet_automatically: true
+              dotnet_installer_path: >-
+                {{ pdq_repository_drive }}:\{{ pdq_repository_directory }}\Microsoft
+                Corporation\.NET Framework\4.7.2\NDP472-KB4054530-x86-x64-AllOS-ENU.exe
 
           # Inventory ships its own installer from the application repository, verified on the
           # GUEST against this digest immediately before it runs. Same layout as Deploy: the role

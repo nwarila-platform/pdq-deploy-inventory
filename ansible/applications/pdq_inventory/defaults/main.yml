@@ -63,8 +63,7 @@ pdq_inventory_defaults:
   # rights (measured 2026-08-22: ConsoleUsers empty on a fresh licensed host). Defaults to the
   # built-in Administrators group so any local administrator can open the console; a site models
   # finer access by naming individual accounts instead. Local accounts take the bare name.
-  console_users:
-    - 'Administrators'
+  console_users: [ 'Administrators' ]
 
   server:
     # Client consoles reach the background service on this port. The product's own default, measured
@@ -120,10 +119,10 @@ pdq_inventory_defaults:
   preferences:
     # Per-user auto-update alerts: written to the signed-in user's hive, seeded for new profiles.
     alerts:
-      auto_update_check_enabled: true
-      show_webcast_alerts: true
+      auto_update_check_enabled: false
+      show_webcast_alerts: false
       # null leaves the product's own channel; the value the console writes is Release or Beta.
-      release_channel: null
+      release_channel: 'Release'
     # disable_splash_screen and color_theme are per-user (seeded like the alerts above);
     # show_collection_item_counts is a database setting applied through the command line.
     interface:
@@ -135,7 +134,7 @@ pdq_inventory_defaults:
       # on its own default -- so confirm the console is actually dark after a first sign-in rather
       # than trusting this line.
       color_theme: 'Dark'
-      disable_splash_screen: false
+      disable_splash_screen: true
       show_collection_item_counts: true
     # The scanner's database backups: on, ten kept, compressed -- the vendor's own recommendation.
     database:
@@ -149,10 +148,10 @@ pdq_inventory_defaults:
     active_directory:
       create_ad_collections: true
       create_group_collections: true
-      delete_mode: 'ImportOnly'
+      delete_mode: 'FullSync'
       sync_interval: '01:00:00'
-      enable_sync: false
-      sync_disabled: false
+      enable_sync: true
+      sync_disabled_computers: false
     scanning:
       ping_before_scan: false
       wake_on_lan: false
@@ -187,10 +186,10 @@ pdq_inventory_defaults:
       logging_configuration_file: ''
     # The console's link to a co-located PDQ Deploy: how long deployment history is kept.
     pdq_deploy:
-      cleanup_history: false
-      cleanup_history_days: 180
+      cleanup_history: true
+      cleanup_history_days: 365
     # Heartbeat polling that keeps the online/offline state current.
-    heartbeat:
+    network:
       auto_heartbeat_enabled: true
       heartbeat_interval_seconds: 300
     mail_server:
@@ -225,8 +224,8 @@ pdq_inventory_defaults:
     # Console remote-control launch points; irrelevant to a headless server but declared in full.
     remote_control:
       rdp_full_screen: false
-      rdp_height: 768
-      rdp_width: 1024
+      rdp_height: 1080
+      rdp_width: 1920
       rdp_port: 3389
       vnc_display_number: 0
       vnc_viewer_path: ''
@@ -270,7 +269,7 @@ pdq_inventory_defaults:
   # and removals belong to state=absent -- rename in two steps.
   service_account:
     name: 'svc-pdq'
-    password: ''
+    password: null
 
   #endregion --- [ Background service user ] ------------------------------------------------- #
 
@@ -278,8 +277,8 @@ pdq_inventory_defaults:
 
   # The licence and the email it was issued to are deployment-specific secret values. The
   # playbook resolves and validates them on the controller before this role uses them.
-  license_key: ''
-  license_email: ''
+  license_key: null
+  license_email: null
 
   #endregion --- [ Product licence ] --------------------------------------------------------- #
 

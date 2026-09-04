@@ -80,3 +80,19 @@
       the shapes the role writes; the pinned variables must be a map of string values; and
       console_users must be a list of names. See meta/main.yml.
     quiet: true
+
+- name: 'VALIDATE | Require A Directory Sync Delete Mode The Product Recognises'
+  when: (state | default('present') | string | lower | trim) == 'present'
+  ansible.builtin.assert:
+    that:
+      - pdq_inventory_running.preferences.active_directory.delete_mode | default('')
+        in ['ImportOnly', 'MixedSync', 'FullSync']
+    fail_msg: >-
+      Refusing to deploy: preferences.active_directory.delete_mode is
+      '{{ pdq_inventory_running.preferences.active_directory.delete_mode | default('') }}', which
+      the product does not recognise. It takes exactly one of ImportOnly (add computers the
+      directory holds, never remove), MixedSync, or FullSync (make the product match the directory,
+      removing what the directory no longer holds). The three names are the product's own, spelled
+      as its ADSyncDeleteMode enumeration spells them; a value it does not recognise is ignored
+      rather than rejected, so the console would sync on a mode nobody chose.
+    quiet: true

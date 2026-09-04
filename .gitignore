@@ -106,7 +106,7 @@
 !/ansible/applications/pdq_deploy/files/packages/.gitattributes
 !/ansible/applications/pdq_deploy/files/packages/Google Chrome - Install.xml
 !/ansible/applications/pdq_deploy/files/Get-InstalledSoftware.ps1.stub
-!/ansible/applications/pdq_deploy/files/Set-RepositoryAcl.ps1.stub
+!/ansible/applications/pdq_deploy/files/Set-RepositoryContent.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqSetting.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqRegistration.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqPackage.ps1.stub
@@ -121,7 +121,7 @@
 !/ansible/applications/pdq_deploy/tasks/main.yml
 !/ansible/applications/pdq_deploy/tasks/present_windows.yml
 !/ansible/applications/pdq_deploy/tasks/validate.yml
-!/ansible/applications/pdq_deploy/templates/Sync-Repository.cmd.j2
+!/ansible/applications/pdq_deploy/templates/Sync-Repository.bat.j2
 !/ansible/applications/pdq_deploy/vars/windows.yml
 !/ansible/applications/pdq_inventory/README.md
 !/ansible/applications/pdq_inventory/defaults/main.yml
@@ -191,6 +191,10 @@
 !/scripts/Remove-PdqCollection.pester.ps1
 !/scripts/Set-PdqCredential.ps1
 !/scripts/Set-PdqCredential.pester.ps1
+!/scripts/Set-PdqSyncContainer.ps1
+!/scripts/Set-PdqSyncContainer.pester.ps1
+!/scripts/Set-RepositoryContent.ps1
+!/scripts/Set-RepositoryContent.pester.ps1
 !/scripts/compose-and-run.sh
 !/scripts/install-hooks.sh
 !/scripts/materialize-role-scripts.sh

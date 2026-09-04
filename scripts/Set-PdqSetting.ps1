@@ -289,10 +289,10 @@ New-Variable -Force -Name:'SETTINGS_INVENTORY' -Option:('Private', 'ReadOnly') -
     @{ Param = 'interface.show_collection_item_counts'; Name = 'InterfaceSettings.ShowCollectionItemCounts'; Type = 'Boolean'; Unexported = $True }
     @{ Param = 'active_directory.create_ad_collections'; Name = 'ActiveDirectorySettings.CreateADCollections'; Type = 'Boolean' }
     @{ Param = 'active_directory.create_group_collections'; Name = 'ActiveDirectorySettings.CreateGroupCollections'; Type = 'Boolean' }
-    @{ Param = 'active_directory.delete_mode'; Name = 'ActiveDirectorySettings.DeleteMode'; Type = 'String' }
+    @{ Param = 'active_directory.delete_mode'; Name = 'ActiveDirectorySettings.DeleteMode'; Type = 'String'; Allowed = @('ImportOnly', 'MixedSync', 'FullSync') }
     @{ Param = 'active_directory.sync_interval'; Name = 'ActiveDirectorySettings.Interval'; Type = 'String' }
     @{ Param = 'active_directory.enable_sync'; Name = 'ActiveDirectorySettings.IsEnabled'; Type = 'Boolean' }
-    @{ Param = 'active_directory.sync_disabled'; Name = 'ActiveDirectorySettings.SyncDisabled'; Type = 'Boolean' }
+    @{ Param = 'active_directory.sync_disabled_computers'; Name = 'ActiveDirectorySettings.SyncDisabled'; Type = 'Boolean' }
     @{ Param = 'scanning.ping_before_scan'; Name = 'ScanSettings.UsePing'; Type = 'Boolean' }
     @{ Param = 'scanning.wake_on_lan'; Name = 'ScanSettings.TryWol'; Type = 'Boolean' }
     @{ Param = 'scanning.cleanup_log_days'; Name = 'ScanSettings.CleanupLogDays'; Type = 'Int32' }

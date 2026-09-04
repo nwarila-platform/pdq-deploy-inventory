@@ -44,6 +44,10 @@ name: AWS Deploy
         description: After converge, prove state=absent removes both products idempotently
         type: boolean
         default: false
+      skip_products:
+        description: Build the hosts only - skip PDQ Deploy and Inventory, and their idempotency gate
+        type: boolean
+        default: false
   push:
     branches: [ main ]
   schedule:
@@ -378,14 +382,22 @@ jobs:
           # run's instance, and a lookup('env') has no command-line equivalent.
           GITHUB_REPOSITORY_ID: ${{ github.repository_id }}
           GITHUB_RUN_ID: ${{ github.run_id }}
+          SKIP_PRODUCTS: ${{ inputs.skip_products }}
         run: |
           set -euo pipefail
+          # Built as an array so an empty selection adds no argument at all, rather than an empty
+          # string ansible-playbook would read as a tag named "".
+          skip=()
+          if [ "${SKIP_PRODUCTS:-false}" = 'true' ]; then
+            skip=(--skip-tags products)
+          fi
           # Dynamic inventory publishes an instance attribute named state; extra-vars take precedence.
           ansible-playbook "${GITHUB_WORKSPACE}/ansible/playbooks/pdq-aws.yml" \
             --extra-vars aws_account_id="${AWS_ACCOUNT_ID}"                    \
             --extra-vars aws_region="${AWS_REGION}"                            \
             --extra-vars env=test                                              \
             --extra-vars state=present                                         \
+            "${skip[@]}"                                                       \
             --inventory "${GITHUB_WORKSPACE}/ansible/inventory/aws_ec2.yml"
 
       # Idempotency gate: a settled host reports exactly two changes on a second converge, one from
@@ -393,6 +405,9 @@ jobs:
       # the shared credential; any recap value other than changed=2 fails, keeping all other change
       # detection honest.
       - name: Prove the converge has only the expected credential changes
+        # The two changes this counts come from the product roles. With the products skipped there
+        # is nothing for it to count, so it stands down with them rather than failing on their absence.
+        if: ${{ !inputs.skip_products }}
         timeout-minutes: 30
         working-directory: .frameworks/ansible-framework
         # One environment for every composed-tree invocation: dynamic inventory reads the ids,

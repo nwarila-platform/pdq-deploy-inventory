@@ -348,9 +348,13 @@ New-Variable -Force -Name:'SETTINGS_INVENTORY' -Option:('Private', 'ReadOnly') -
     @{ Param = 'remote_control.vnc_viewer_path'; Name = 'VncSettings.ViewerPath'; Type = 'String' }
     @{ Param = 'target_service.unc_path'; Name = 'TargetServiceSettings.RemoteDirectory'; Type = 'String' }
     @{ Param = 'target_service.local_path_of_shared_directory'; Name = 'TargetServiceSettings.SharePath'; Type = 'String' }
-    @{ Param = 'software_deployment.install_dotnet_automatically'; Name = 'DotNetSettings.InstallAutomatically'; Type = 'Boolean' }
+    # The installer and its timeout are applied BEFORE the switch that turns them on: the product
+    # ignores a request to install .NET automatically while it holds no installer to run, and
+    # ignoring is all it does -- the value never lands and the read-back fails (measured 2026-09-04,
+    # where a second pass over an already-stored path took the switch immediately).
     @{ Param = 'software_deployment.dotnet_installer_path'; Name = 'DotNetSettings.InstallerPath'; Type = 'String' }
     @{ Param = 'software_deployment.dotnet_install_timeout'; Name = 'DotNetSettings.InstallTimeout'; Type = 'String' }
+    @{ Param = 'software_deployment.install_dotnet_automatically'; Name = 'DotNetSettings.InstallAutomatically'; Type = 'Boolean' }
     @{ Param = 'usage_data.collect_usage_data'; Name = 'AnalyticsSettings.CollectAnalyticsUsage'; Type = 'Boolean' }
     @{ Param = 'usage_data.alert_first_time_analytics_dialog'; Name = 'AnalyticsSettings.AlertFirstTimeAnalyticsDialog'; Type = 'Boolean' }
   )

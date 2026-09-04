@@ -598,6 +598,56 @@
 
     #endregion --- [ Process: Apply Any Pending Restart ] ------------------------------------- #
 
+    #region ------ [ Process: Authorize The Console Users ] ----------------------------------- #
+    # Who may open the console. A silent install authorises no one, and RBAC being off leaves it
+    # that way -- the product requires each account or group to be an explicit Console User, not
+    # merely a local administrator (PDQ documents this, and it is why an un-listed host opens to no
+    # one). Applied through the command line as the service account, the only identity the product
+    # answers. -Add reports success whether or not the name was already authorised, so the current
+    # list is read first and only missing names are added, keeping the run idempotent. Runs in the
+    # command-line zone because the service must be up -- the same reason the settings below do.
+
+    - name: 'PROCESS | Authorize The Console Users'
+      become: true
+      become_method: 'ansible.builtin.runas'
+      become_user: "{{ pdq_inventory_running.service_account.name }}"
+      no_log: true
+      vars:
+        ansible_become_flags: 'logon_type=batch'
+        ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
+
+      block:
+        - name: 'PROCESS | Read The Authorized Console Users'
+          ansible.windows.win_command:
+            argv:
+              - "{{ pdq_inventory_running.cli_path }}"
+              - 'ConsoleUsers'
+          changed_when: false
+          check_mode: false
+          register: '__pdq_inventory_console_users__'
+
+        - name: 'PROCESS | Add The Console Users The Product Does Not Yet Carry'
+          ansible.windows.win_command:
+            argv:
+              - "{{ pdq_inventory_running.cli_path }}"
+              - 'ConsoleUsers'
+              - '-Add'
+              - "{{ item }}"
+          loop: "{{ pdq_inventory_running.console_users }}"
+          loop_control:
+            label: "{{ item }}"
+          # The product lists console users in qualified, cased form -- 'BUILTIN\Administrators'
+          # so the bare declared name is compared against each line's
+          # last backslash-segment, case-insensitively. Per line, never a substring of the blob, so
+          # 'Administrator' is not treated as present just because 'Administrators' is. Without this
+          # the qualified echo never matches the bare name and -Add re-runs every converge.
+          when: (item | regex_replace('^.*\\\\', '') | lower)
+            not in (__pdq_inventory_console_users__.stdout_lines
+                    | map('trim') | map('regex_replace', '^.*\\\\', '') | map('lower') | list)
+          changed_when: true
+
+    #endregion --- [ Process: Authorize The Console Users ] ----------------------------------- #
+
     #region ------ [ Process: Apply The Product Settings ] ------------------------------------ #
     # The whole preference tree crosses as ONE parameter, shaped exactly as the console's
     # Preferences window is, and the script owns the routing and the arithmetic: it sets aside
@@ -799,56 +849,6 @@
         script: "{{ lookup('ansible.builtin.file', 'Remove-PdqCollection.ps1') }}"
 
     #endregion --- [ Process: Remove The Undeclared Collections ] ----------------------------- #
-
-    #region ------ [ Process: Authorize The Console Users ] ----------------------------------- #
-    # Who may open the console. A silent install authorises no one, and RBAC being off leaves it
-    # that way -- the product requires each account or group to be an explicit Console User, not
-    # merely a local administrator (PDQ documents this, and it is why an un-listed host opens to no
-    # one). Applied through the command line as the service account, the only identity the product
-    # answers. -Add reports success whether or not the name was already authorised, so the current
-    # list is read first and only missing names are added, keeping the run idempotent. Runs in the
-    # command-line zone because the service must be up -- the same reason the settings above do.
-
-    - name: 'PROCESS | Authorize The Console Users'
-      become: true
-      become_method: 'ansible.builtin.runas'
-      become_user: "{{ pdq_inventory_running.service_account.name }}"
-      no_log: true
-      vars:
-        ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
-
-      block:
-        - name: 'PROCESS | Read The Authorized Console Users'
-          ansible.windows.win_command:
-            argv:
-              - "{{ pdq_inventory_running.cli_path }}"
-              - 'ConsoleUsers'
-          changed_when: false
-          check_mode: false
-          register: '__pdq_inventory_console_users__'
-
-        - name: 'PROCESS | Add The Console Users The Product Does Not Yet Carry'
-          ansible.windows.win_command:
-            argv:
-              - "{{ pdq_inventory_running.cli_path }}"
-              - 'ConsoleUsers'
-              - '-Add'
-              - "{{ item }}"
-          loop: "{{ pdq_inventory_running.console_users }}"
-          loop_control:
-            label: "{{ item }}"
-          # The product lists console users in qualified, cased form -- 'BUILTIN\Administrators'
-          # so the bare declared name is compared against each line's
-          # last backslash-segment, case-insensitively. Per line, never a substring of the blob, so
-          # 'Administrator' is not treated as present just because 'Administrators' is. Without this
-          # the qualified echo never matches the bare name and -Add re-runs every converge.
-          when: (item | regex_replace('^.*\\\\', '') | lower)
-            not in (__pdq_inventory_console_users__.stdout_lines
-                    | map('trim') | map('regex_replace', '^.*\\\\', '') | map('lower') | list)
-          changed_when: true
-
-    #endregion --- [ Process: Authorize The Console Users ] ----------------------------------- #
 
     #region ------ [ Process: Choose The Event Log Severities ] ------------------------------- #
     # Which severities reach the Windows Application event log. A silent install writes no

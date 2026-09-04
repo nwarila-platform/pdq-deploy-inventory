@@ -418,9 +418,27 @@
     # rather than from this role -- an installer is vendor content, not configuration, and pinning
     # every one of them here would make a converge the only way to publish software.
     #
-    # So the role ships the pull instead of performing it: one script, written with this host's
-    # bucket, region and repository path already filled in, that an administrator runs when new
-    # content has been published.
+    # The host reads the bucket itself, through the instance profile it was launched with. The
+    # repository is measured in gigabytes, and handing every byte through the deployment runner
+    # would be the wrong shape for content the host is already entitled to read.
+    #
+    # The pull is ADDITIVE and compares before it copies, so a converge that finds the repository
+    # current fetches nothing and reports no change.
+
+    - name: 'PROCESS | Fill The Repository From The Application Repository'
+      ansible.windows.win_powershell:
+        depth: 2
+        error_action: 'stop'
+        parameters:
+          Bucket: "{{ pdq_deploy_running.repository.bucket }}"
+          Path: "{{ __repository_dir__ }}"
+          Region: "{{ pdq_deploy_running.repository.region }}"
+        script: "{{ lookup('ansible.builtin.file', 'Set-RepositoryContent.ps1') }}"
+
+    # ----------------------------------------------------------------------------------------- #
+    # The same script again, this time for an administrator publishing new content between
+    # deployments. The batch header makes the file right-clickable; below the header it is the
+    # script the task above just ran, so the two can never diverge.
     #
     # It sits in the DRIVE ROOT, one level above the directory it fills, for two reasons: it is
     # then not itself an object the sync can act on, and it is not inside the network share, where
@@ -428,9 +446,22 @@
 
     - name: 'PROCESS | Write The Repository Sync Script'
       ansible.windows.win_template:
-        dest: "{{ pdq_deploy_running.repository.drive }}:\\Sync-Repository.cmd"
+        dest: "{{ pdq_deploy_running.repository.drive }}:\\Sync-Repository.bat"
         newline_sequence: '\r\n'
-        src: 'Sync-Repository.cmd.j2'
+        src: 'Sync-Repository.bat.j2'
+
+    # ----------------------------------------------------------------------------------------- #
+    # The previous name of the file above. Hosts deployed before the sync moved into the role
+    # still carry it, and it cannot work: it calls an AWS command line this image does not ship.
+
+    - name: 'PROCESS | Remove The Superseded Repository Sync Script'
+      ansible.windows.win_file:
+        access_time: 'preserve'
+        access_time_format: 'yyyy-MM-dd HH:mm:ss'
+        modification_time: 'preserve'
+        modification_time_format: 'yyyy-MM-dd HH:mm:ss'
+        path: "{{ pdq_deploy_running.repository.drive }}:\\Sync-Repository.cmd"
+        state: 'absent'
 
     #endregion --- [ Process: Prepare The Repository Directory ] ------------------------------ #
 

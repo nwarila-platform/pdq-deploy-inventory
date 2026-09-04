@@ -189,6 +189,10 @@
 - name: 'PLAY | PDQ Deploy And Inventory (all-in-one Central Server, ephemeral AWS)'
   hosts: 'pdq_servers'
   any_errors_fatal: true
+  # The products are the slow half of a converge and the only half a host does not need to exist.
+  # Tagged so a run can build the hosts alone -- domain membership, the tunnel, the disks -- when
+  # what is under test is the ground the products stand on rather than the products.
+  tags: ['products']
   vars:
     # The pinned application versions, defined ONCE here and handed to BOTH products below (they
     # share one custom-variable model). The names are the product's own: each is spelled exactly

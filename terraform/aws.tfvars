@@ -143,7 +143,22 @@ all_systems = [
         interface_type  = null
         private_ip      = null
         security_groups = []
-        ingress         = []
+        # The console reaches a target over SMB and RPC, and Inventory scans it over WinRM. RPC
+        # picks an ephemeral port per call, so the reachable set is not a list of ports that can
+        # be written down; the boundary that can is the subnet, which holds these two systems and
+        # nothing else. Without this the console cannot open a single port on its target, so the
+        # products deploy and scan nothing.
+        ingress = [
+          {
+            description                  = "Intra-subnet management from the PDQ console"
+            ip_protocol                  = "-1"
+            from_port                    = null
+            to_port                      = null
+            cidr_ipv4                    = "10.0.128.0/19"
+            prefix_list_id               = null
+            referenced_security_group_id = null
+          }
+        ]
         egress = [
           {
             description                  = "HTTPS out"
@@ -162,6 +177,20 @@ all_systems = [
             from_port                    = 1194
             to_port                      = 1194
             cidr_ipv4                    = "0.0.0.0/0"
+            prefix_list_id               = null
+            referenced_security_group_id = null
+          }
+          ,
+          # The console opens the connection to its target, so the path needs declaring on this
+          # side too: with egress stated explicitly, everything not stated is denied, and the
+          # two rules above cover only the internet. Without this the console cannot send a
+          # packet to its own subnet.
+          {
+            description                  = "Intra-subnet management to the PDQ targets"
+            ip_protocol                  = "-1"
+            from_port                    = null
+            to_port                      = null
+            cidr_ipv4                    = "10.0.128.0/19"
             prefix_list_id               = null
             referenced_security_group_id = null
           }
@@ -238,7 +267,22 @@ all_systems = [
         interface_type  = null
         private_ip      = null
         security_groups = []
-        ingress         = []
+        # The console reaches a target over SMB and RPC, and Inventory scans it over WinRM. RPC
+        # picks an ephemeral port per call, so the reachable set is not a list of ports that can
+        # be written down; the boundary that can is the subnet, which holds these two systems and
+        # nothing else. Without this the console cannot open a single port on its target, so the
+        # products deploy and scan nothing.
+        ingress = [
+          {
+            description                  = "Intra-subnet management from the PDQ console"
+            ip_protocol                  = "-1"
+            from_port                    = null
+            to_port                      = null
+            cidr_ipv4                    = "10.0.128.0/19"
+            prefix_list_id               = null
+            referenced_security_group_id = null
+          }
+        ]
         egress = [
           {
             description                  = "HTTPS out"
@@ -255,6 +299,20 @@ all_systems = [
             from_port                    = 1194
             to_port                      = 1194
             cidr_ipv4                    = "0.0.0.0/0"
+            prefix_list_id               = null
+            referenced_security_group_id = null
+          }
+          ,
+          # The console opens the connection to its target, so the path needs declaring on this
+          # side too: with egress stated explicitly, everything not stated is denied, and the
+          # two rules above cover only the internet. Without this the console cannot send a
+          # packet to its own subnet.
+          {
+            description                  = "Intra-subnet management to the PDQ targets"
+            ip_protocol                  = "-1"
+            from_port                    = null
+            to_port                      = null
+            cidr_ipv4                    = "10.0.128.0/19"
             prefix_list_id               = null
             referenced_security_group_id = null
           }

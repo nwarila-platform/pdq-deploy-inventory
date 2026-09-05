@@ -104,12 +104,9 @@ pdq_inventory_defaults:
   # the role owns where each value actually lives -- most flow through the product's own command
   # line into its database, the four event-log severities are machine registry values, and the
   # per-user alerts/interface preferences are seeded into the Default profile (and the connection
-  # account's own, where the product has never written) so consoles start as declared. Values are
-  # the product's own measured defaults (ExportSettings, v20.1.8.0, 2026-08-22) -- which, for the
-  # settings the vendor publishes guidance on, ARE its best practices: automatic backups on, ten
-  # compressed backups kept. Settings the vendor gives no published guidance on stay at the
-  # measured default rather than an invented preference. Declared in full so a vendor moving one
-  # shows up as a reported change instead of silent drift. A playbook overrides keys; loader merges.
+  # account's own, where the product has never written) so consoles start as declared. Declared
+  # in full so a vendor moving one shows up as a reported change instead of silent drift. A
+  # playbook overrides keys; loader merges.
   #
   # One location follows a declared-or-derived rule: the database backup location and the verbose
   # audit log directory are null by default, meaning the role places them beside the database on
@@ -144,7 +141,7 @@ pdq_inventory_defaults:
       # null means: beside the database, on its dedicated drive (<drive>:\<directory>\Backups).
       # Declare a path only to send backups somewhere else.
       backup_location: null
-    # Active Directory sync, off by default; the container list it would target is not offered.
+    # With no containers or bind credential declared, this sync policy has no objects to process.
     active_directory:
       create_ad_collections: true
       create_group_collections: true

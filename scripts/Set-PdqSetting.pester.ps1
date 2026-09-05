@@ -161,6 +161,8 @@ Describe 'Set-PdqSetting' {
     }
     $global:FakeIgnored = @()
     $global:FakeDbRows = @{}
+    $global:FakeSettleReads = 0
+    $global:FakePathWrittenAtRead = [System.Int32]::MaxValue
     $global:FakeConsoleSessions = @()
     $global:FakeSessionFails = $False
     $global:FakeDrainStalls = $False
@@ -195,6 +197,18 @@ Describe 'Set-PdqSetting' {
           $Name = $args[2] -replace '^ProductPrintingSettings\.', 'PrintingSettings.'
           # The row lands for ANY name -- the bogus-name control measured that -- and only the
           # EXPORT drops the ones the product does not read. A stalled fake models the queue.
+          # The product refuses to store the .NET switch until the installer path has DRAINED, and
+          # refusing is silent -- the write is accepted and discarded (measured 2026-09-04). The
+          # drain is modelled by the settle poll's reads, so a switch written in the same batch as
+          # its path is refused exactly as the product refuses it.
+          If ($args[2] -eq 'DotNetSettings.InstallerPath') {
+            $global:FakePathWrittenAtRead = $global:FakeSettleReads
+          }
+          If ($args[2] -eq 'DotNetSettings.InstallAutomatically' -and
+            $global:FakeSettleReads -le $global:FakePathWrittenAtRead) {
+            $global:LASTEXITCODE = 0
+            Return
+          }
           If ($args[3] -eq '-Reset') {
             $global:FakeDbRows.Remove($args[2])
           } ElseIf (-not $global:FakeDrainStalls) {
@@ -222,6 +236,7 @@ Describe 'Set-PdqSetting' {
         $global:FakeSettings['RepositorySettings.Path'] = $Matches['v']
       }
       If ($Sql -like 'SELECT Name, Value FROM Settings*') {
+        $global:FakeSettleReads = $global:FakeSettleReads + 1
         # Emulate sqlite -csv: a field holding a comma, quote or newline is wrapped in quotes
         # with its own quotes doubled. Emit each PHYSICAL line separately, the way a native
         # tool's stdout arrives, so a quoted newline reaches the script split -- which is the
@@ -633,6 +648,18 @@ Describe 'Set-PdqSetting' {
 
       New-Item -Force -Path ('function:global:' + $script:CliPath) -Value $CliStub | Out-Null
       New-Item -Force -Path ('function:global:' + $script:SqlitePath) -Value $SqliteStub | Out-Null
+    }
+
+    It 'writes a dependent setting after its requirement, inside one invocation' {
+      # The switch is refused while the installer path is unstored, so writing both in one
+      # batch could never take: the queue is written in waves, the path settling first.
+      $Dotnet = @{ software_deployment = @{ dotnet_installer_path = 'F:\Repo\ndp472.exe'; install_dotnet_automatically = $True } }
+      $Result = & $script:ScriptPath @script:Ctx -Preference $Dotnet | ConvertFrom-Json
+      $Result.applied | Should -Contain 'DotNetSettings.InstallerPath'
+      $Result.applied | Should -Contain 'DotNetSettings.InstallAutomatically'
+      $Result.changed | Should -BeTrue
+      $Again = & $script:ScriptPath @script:Ctx -Preference $Dotnet | ConvertFrom-Json
+      $Again.changed | Should -BeFalse
     }
 
     It 'uses the Inventory table and its exact derived paths without a repository parameter' {

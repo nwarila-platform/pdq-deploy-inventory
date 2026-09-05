@@ -348,13 +348,13 @@ New-Variable -Force -Name:'SETTINGS_INVENTORY' -Option:('Private', 'ReadOnly') -
     @{ Param = 'remote_control.vnc_viewer_path'; Name = 'VncSettings.ViewerPath'; Type = 'String' }
     @{ Param = 'target_service.unc_path'; Name = 'TargetServiceSettings.RemoteDirectory'; Type = 'String' }
     @{ Param = 'target_service.local_path_of_shared_directory'; Name = 'TargetServiceSettings.SharePath'; Type = 'String' }
-    # The installer and its timeout are applied BEFORE the switch that turns them on: the product
-    # ignores a request to install .NET automatically while it holds no installer to run, and
-    # ignoring is all it does -- the value never lands and the read-back fails (measured 2026-09-04,
-    # where a second pass over an already-stored path took the switch immediately).
     @{ Param = 'software_deployment.dotnet_installer_path'; Name = 'DotNetSettings.InstallerPath'; Type = 'String' }
     @{ Param = 'software_deployment.dotnet_install_timeout'; Name = 'DotNetSettings.InstallTimeout'; Type = 'String' }
-    @{ Param = 'software_deployment.install_dotnet_automatically'; Name = 'DotNetSettings.InstallAutomatically'; Type = 'Boolean' }
+    # The product refuses to store this switch while it holds no installer to run, and refusing is
+    # all it does: the value never lands and nothing is reported. Requires names the setting that
+    # must be stored FIRST, so this one is written in a later wave (measured 2026-09-04: the switch
+    # took immediately once the path already had its row, and never before).
+    @{ Param = 'software_deployment.install_dotnet_automatically'; Name = 'DotNetSettings.InstallAutomatically'; Type = 'Boolean'; Requires = 'DotNetSettings.InstallerPath' }
     @{ Param = 'usage_data.collect_usage_data'; Name = 'AnalyticsSettings.CollectAnalyticsUsage'; Type = 'Boolean' }
     @{ Param = 'usage_data.alert_first_time_analytics_dialog'; Name = 'AnalyticsSettings.AlertFirstTimeAnalyticsDialog'; Type = 'Boolean' }
   )
@@ -579,6 +579,7 @@ $Setting = @{}
 $DatabaseVariable = @{}
 $StoreName = @{}
 $Unexported = @{}
+$Requires = @{}
 ForEach ($Given In @($Flat.Keys)) {
   $Known = @($SETTINGS | Where-Object -FilterScript { $PSItem.Param -eq $Given })
   If ($Known.Count -ne 1) {
@@ -611,6 +612,9 @@ ForEach ($Given In @($Flat.Keys)) {
   }
   If ($Entry.ContainsKey('Store')) {
     $StoreName[$Entry.Name] = $Entry.Store
+  }
+  If ($Entry.ContainsKey('Requires')) {
+    $Requires[$Entry.Name] = $Entry.Requires
   }
   If ($Entry.ContainsKey('Unexported')) {
     If ([System.String]::IsNullOrEmpty([System.String]$Setting[$Entry.Name])) {
@@ -743,63 +747,77 @@ Try {
         $Applied.AddRange($ToWrite)
         Break
       }
-      ForEach ($Name In $ToWrite) {
-        $Desired = [System.String]$Setting[$Name]
-        # A few families store under a different spelling than the export publishes --
-        # ProductPrintingSettings vs the export's PrintingSettings, measured 2026-08-21 -- the
-        # command line answers only to the STORED name, while the export stays verify oracle.
-        $WriteName = If ($StoreName.ContainsKey($Name)) { $StoreName[$Name] } Else { $Name }
-        If ($Product -eq 'Deploy' -and $DatabaseVariable.ContainsKey($Name)) {
-          $Statement = "UPDATE SystemVariables SET Value = '{0}', Modified = datetime('now') WHERE Name = '{1}';" -f @(
-            $Desired.Replace("'", "''")
-            $DatabaseVariable[$Name].Replace("'", "''")
-          )
-          $Null = Invoke-NativeCommand -Operation:('Writing the setting ''{0}'' to the database' -f $Name) `
-            -FilePath:$SQLITE_PATH -Argument:@($DatabasePath, $Statement)
-        } ElseIf ($Desired -eq [System.String]::Empty) {
-          # -Set refuses empty values; the product's way back to blank is -Reset, dropping
-          # the override row. Verify still proves the result reads back blank.
-          $Null = Invoke-NativeCommand -Operation:('Clearing the setting ''{0}''' -f $Name) `
-            -FilePath:$CLI_PATH -Argument:@('Settings', '-Name', $WriteName, '-Reset')
-          $CliWritten[$WriteName] = [System.String]::Empty
-        } Else {
-          $Null = Invoke-NativeCommand -Operation:('Writing the setting ''{0}''' -f $Name) `
-            -FilePath:$CLI_PATH -Argument:@('Settings', '-Name', $WriteName, '-Set', $Desired)
-          $CliWritten[$WriteName] = $Desired
+      # A setting the product refuses while a sibling it depends on is unstored cannot be written
+      # in the same batch as that sibling: the edits drain one at a time, so the requirement is
+      # still missing when the dependent arrives. The queue is therefore written in waves, each
+      # settling before the next begins.
+      $Waves = @(
+        , @($ToWrite | Where-Object -FilterScript { -not $Requires.ContainsKey($PSItem) })
+        , @($ToWrite | Where-Object -FilterScript { $Requires.ContainsKey($PSItem) })
+      )
+      ForEach ($Wave In $Waves) {
+        If ($Wave.Count -eq 0) {
+          Continue
         }
-      }
+        $CliWritten = @{}
+        ForEach ($Name In $Wave) {
+          $Desired = [System.String]$Setting[$Name]
+          # A few families store under a different spelling than the export publishes --
+          # ProductPrintingSettings vs the export's PrintingSettings, measured 2026-08-21 -- the
+          # command line answers only to the STORED name, while the export stays verify oracle.
+          $WriteName = If ($StoreName.ContainsKey($Name)) { $StoreName[$Name] } Else { $Name }
+          If ($Product -eq 'Deploy' -and $DatabaseVariable.ContainsKey($Name)) {
+            $Statement = "UPDATE SystemVariables SET Value = '{0}', Modified = datetime('now') WHERE Name = '{1}';" -f @(
+              $Desired.Replace("'", "''")
+              $DatabaseVariable[$Name].Replace("'", "''")
+            )
+            $Null = Invoke-NativeCommand -Operation:('Writing the setting ''{0}'' to the database' -f $Name) `
+              -FilePath:$SQLITE_PATH -Argument:@($DatabasePath, $Statement)
+          } ElseIf ($Desired -eq [System.String]::Empty) {
+            # -Set refuses empty values; the product's way back to blank is -Reset, dropping
+            # the override row. Verify still proves the result reads back blank.
+            $Null = Invoke-NativeCommand -Operation:('Clearing the setting ''{0}''' -f $Name) `
+              -FilePath:$CLI_PATH -Argument:@('Settings', '-Name', $WriteName, '-Reset')
+            $CliWritten[$WriteName] = [System.String]::Empty
+          } Else {
+            $Null = Invoke-NativeCommand -Operation:('Writing the setting ''{0}''' -f $Name) `
+              -FilePath:$CLI_PATH -Argument:@('Settings', '-Name', $WriteName, '-Set', $Desired)
+            $CliWritten[$WriteName] = $Desired
+          }
+        }
 
-      # Edits drain through the service at ~8s apiece (measured 2026-08-21), so the run waits
-      # for every queued edit's DATABASE row: applied means persisted, whatever restarts next.
-      # A reset settles when its row is gone.
-      If ($CliWritten.Count -gt 0) {
-        $Deadline = [System.DateTime]::UtcNow.AddSeconds($SETTLE_DEADLINE_SECONDS)
-        While ($True) {
-          $Persisted = @{}
-          $Rows = (Invoke-NativeCommand -Operation:'Reading the settings table' -FilePath:$SQLITE_PATH `
-              -Argument:@('-csv', $DatabasePath, 'SELECT Name, Value FROM Settings;')).Output -join "`n"
-          Try {
-            $Parsed = @($Rows | ConvertFrom-Csv -Header:('Name', 'Value'))
-          } Catch {
-            Throw ('Reading the settings table: its rows did not parse ({0})' -f $PSItem.Exception.Message)
+        # Edits drain through the service at ~8s apiece (measured 2026-08-21), so the run waits
+        # for every queued edit's DATABASE row: applied means persisted, whatever restarts next.
+        # A reset settles when its row is gone.
+        If ($CliWritten.Count -gt 0) {
+          $Deadline = [System.DateTime]::UtcNow.AddSeconds($SETTLE_DEADLINE_SECONDS)
+          While ($True) {
+            $Persisted = @{}
+            $Rows = (Invoke-NativeCommand -Operation:'Reading the settings table' -FilePath:$SQLITE_PATH `
+                -Argument:@('-csv', $DatabasePath, 'SELECT Name, Value FROM Settings;')).Output -join "`n"
+            Try {
+              $Parsed = @($Rows | ConvertFrom-Csv -Header:('Name', 'Value'))
+            } Catch {
+              Throw ('Reading the settings table: its rows did not parse ({0})' -f $PSItem.Exception.Message)
+            }
+            ForEach ($Record In $Parsed) {
+              $Persisted[$Record.Name] = $Record.Value
+            }
+            $Draining = @($CliWritten.Keys | Where-Object -FilterScript {
+                If ($CliWritten[$PSItem] -eq [System.String]::Empty) {
+                  $Persisted.ContainsKey($PSItem)
+                } Else {
+                  $Persisted[$PSItem] -cne $CliWritten[$PSItem]
+                }
+              })
+            If ($Draining.Count -eq 0) {
+              Break
+            }
+            If ([System.DateTime]::UtcNow -gt $Deadline) {
+              Throw ('The service did not persist {0} inside the settle window' -f ($Draining -join ', '))
+            }
+            Start-Sleep -Milliseconds $SETTLE_POLL_MILLISECONDS
           }
-          ForEach ($Record In $Parsed) {
-            $Persisted[$Record.Name] = $Record.Value
-          }
-          $Draining = @($CliWritten.Keys | Where-Object -FilterScript {
-              If ($CliWritten[$PSItem] -eq [System.String]::Empty) {
-                $Persisted.ContainsKey($PSItem)
-              } Else {
-                $Persisted[$PSItem] -cne $CliWritten[$PSItem]
-              }
-            })
-          If ($Draining.Count -eq 0) {
-            Break
-          }
-          If ([System.DateTime]::UtcNow -gt $Deadline) {
-            Throw ('The service did not persist {0} inside the settle window' -f ($Draining -join ', '))
-          }
-          Start-Sleep -Milliseconds $SETTLE_POLL_MILLISECONDS
         }
       }
 

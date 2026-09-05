@@ -310,8 +310,8 @@ New-Variable -Force -Name:'SETTINGS_INVENTORY' -Option:('Private', 'ReadOnly') -
     @{ Param = 'logging.logging_configuration_file'; Name = 'AuditLogSettings.CustomConfigPath'; Type = 'String' }
     @{ Param = 'pdq_deploy.cleanup_history'; Name = 'PDQDeploySettings.Cleanup'; Type = 'Boolean' }
     @{ Param = 'pdq_deploy.cleanup_history_days'; Name = 'PDQDeploySettings.CleanupDays'; Type = 'Int32' }
-    @{ Param = 'heartbeat.auto_heartbeat_enabled'; Name = 'NetworkSettings.AutoHeartbeatEnabled'; Type = 'Boolean' }
-    @{ Param = 'heartbeat.heartbeat_interval_seconds'; Name = 'NetworkSettings.HeartbeatIntervalSeconds'; Type = 'Int32' }
+    @{ Param = 'network.auto_heartbeat_enabled'; Name = 'NetworkSettings.AutoHeartbeatEnabled'; Type = 'Boolean' }
+    @{ Param = 'network.heartbeat_interval_seconds'; Name = 'NetworkSettings.HeartbeatIntervalSeconds'; Type = 'Int32' }
     @{ Param = 'mail_server.enable_ssl'; Name = 'MailServerSettings.EnableSSL'; Type = 'Boolean' }
     @{ Param = 'mail_server.smtp_server'; Name = 'MailServerSettings.Host'; Type = 'String' }
     @{ Param = 'mail_server.sender_address'; Name = 'MailServerSettings.Sender'; Type = 'String' }

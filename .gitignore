@@ -3,9 +3,9 @@
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
 # DEFAULT-DENY, EXPLICIT INCLUDES ONLY. Nothing in this working tree is tracked unless it is
-# explicitly allowed below, by name — no wildcard allowances. Adding a new file therefore
-# requires allowing it here first — that is deliberate: it makes publishing a file an
-# explicit act rather than an accident.
+# explicitly allowed below, by name. One allowance is a glob -- collections/*.xml, a recorded
+# exception. Adding any other new file therefore requires allowing it here first -- that is
+# deliberate: it makes publishing a file an explicit act rather than an accident.
 #
 # =========================================================================================== #
 
@@ -107,6 +107,7 @@
 !/ansible/applications/pdq_deploy/files/packages/Google Chrome - Install.xml
 !/ansible/applications/pdq_deploy/files/Get-InstalledSoftware.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-RepositoryContent.ps1.stub
+!/ansible/applications/pdq_deploy/files/Set-RepositoryAcl.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqSetting.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqRegistration.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqPackage.ps1.stub

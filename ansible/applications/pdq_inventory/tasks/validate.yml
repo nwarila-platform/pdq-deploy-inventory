@@ -96,3 +96,33 @@
       as its ADSyncDeleteMode enumeration spells them; a value it does not recognise is ignored
       rather than rejected, so the console would sync on a mode nobody chose.
     quiet: true
+
+- name: 'VALIDATE | Require A Directory Sync Declaration The Product Can Act On'
+  when: (state | default('present') | string | lower | trim) == 'present'
+  vars:
+    __sync__: "{{ pdq_inventory_running.directory_sync | default({}, true) }}"
+    __containers__: "{{ __sync__.containers | default([], true) }}"
+
+  ansible.builtin.assert:
+    that:
+      # A container list needs somewhere to bind and something to bind as; without all three the
+      # product would hold containers it can never read.
+      - __containers__ | length == 0 or
+        (__sync__.realm | default('') | length > 0 and
+         __sync__.bind_username | default('') | length > 0 and
+         __sync__.bind_password | default('') | length > 0)
+      # Every container is a distinguished name plus the two flags the product stores.
+      - __containers__ | rejectattr('distinguished_name', 'defined') | list | length == 0
+      - __containers__ | selectattr('distinguished_name', 'eq', '') | list | length == 0
+      # FullSync deletes every computer outside an Include container. A declaration that names
+      # containers but includes none of them empties the database on the first sync.
+      - __containers__ | length == 0 or
+        (pdq_inventory_running.preferences.active_directory.delete_mode | default('') != 'FullSync') or
+        (__containers__ | selectattr('include', 'defined') | selectattr('include') | list | length > 0)
+    fail_msg: >-
+      Refusing to deploy: the directory sync declaration is one the product cannot act on.
+      Containers require a realm, a bind username and a bind password, and each container requires
+      a distinguished_name. With delete_mode FullSync at least one container must be included:
+      FullSync removes every computer that is not inside an Include container, so a list of
+      exclusions alone would empty the database on the first sync.
+    quiet: true

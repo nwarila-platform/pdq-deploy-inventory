@@ -686,6 +686,57 @@
 
     #endregion --- [ Process: Apply The Product Settings ] ------------------------------------ #
 
+    #region ------ [ Process: Declare The Directory Sync Containers ] ------------------------- #
+    # The settings above switch the sync on and choose its delete mode; this says WHERE it syncs
+    # from. The product exposes no command line for its containers -- ADSync only starts a sync --
+    # so the script writes the declaration to the product's own store and then reads the product's
+    # verdict back, which is why a container the product silently drops fails the run.
+    #
+    # Runs AFTER the settings for the same reason they run last: the sync interval and the delete
+    # mode must already be what this repository declares before a container list makes the product
+    # act on them. An empty declaration is still a declaration -- it converges a host that syncs
+    # nothing, and writes nothing on a second run.
+    #
+    # The bind password reaches the script as a value and no further: no_log keeps it out of the
+    # recap, and the script never writes it to disk. The .ps1 is MATERIALIZED from scripts/ by
+    # scripts/materialize-role-scripts.sh (the role tracks only
+    # files/Set-PdqSyncContainer.ps1.stub); run it before this role.
+
+    - name: 'PROCESS | Declare The Directory Sync Containers'
+      become: true
+      become_method: 'ansible.builtin.runas'
+      become_user: "{{ pdq_inventory_running.service_account.name }}"
+      no_log: true
+      register: '__pdq_inventory_sync__'
+      vars:
+        ansible_become_flags: 'logon_type=batch'
+        ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
+
+      ansible.windows.win_powershell:
+        depth: 4
+        error_action: 'stop'
+        parameters:
+          CliPath: "{{ pdq_inventory_running.cli_path }}"
+          DatabaseDrive: "{{ pdq_inventory_running.database.drive }}"
+          DatabaseDirectory: "{{ pdq_inventory_running.database.directory }}"
+          DirectorySync: "{{ pdq_inventory_running.directory_sync }}"
+          Operation: 'present'
+        script: "{{ lookup('ansible.builtin.file', 'Set-PdqSyncContainer.ps1') }}"
+
+    # The recap says what the run did without naming a credential: how many containers the product
+    # holds, and whether a sync was asked for and finished.
+    - name: 'PROCESS | Report The Directory Sync Result'
+      changed_when: false
+      when: __pdq_inventory_sync__ is defined and not (__pdq_inventory_sync__ is skipped)
+
+      ansible.builtin.debug:
+        msg: >-
+          Directory sync: {{ __pdq_inventory_sync__.result.containers | default(0) }} container(s)
+          declared for realm {{ pdq_inventory_running.directory_sync.realm | default('(none)') }};
+          synced={{ __pdq_inventory_sync__.result.synced | default(false) }}.
+
+    #endregion --- [ Process: Declare The Directory Sync Containers ] ------------------------- #
+
     #region ------ [ Process: Import The Pinned Variables ] ----------------------------------- #
     # The pinned application versions cross as ONE map, keyed by each application's Add/Remove
     # Programs identity (<Publisher>_<DisplayName>) with the value being its version. The shared

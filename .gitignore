@@ -130,6 +130,7 @@
 # artifacts, deliberately NEVER allowlisted, so they cannot be committed.
 !/ansible/applications/pdq_inventory/files/Get-InstalledSoftware.ps1.stub
 !/ansible/applications/pdq_inventory/files/Set-PdqSetting.ps1.stub
+!/ansible/applications/pdq_inventory/files/Set-PdqSyncContainer.ps1.stub
 !/ansible/applications/pdq_inventory/files/Set-PdqRegistration.ps1.stub
 !/ansible/applications/pdq_inventory/files/Set-PdqVariable.ps1.stub
 !/ansible/applications/pdq_inventory/files/Remove-PdqVariable.ps1.stub

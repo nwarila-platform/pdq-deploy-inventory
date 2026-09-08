@@ -99,6 +99,30 @@ pdq_inventory_defaults:
   # still converges.
   variables: {}
 
+  # The directory PDQ Inventory syncs computers from, and the containers it syncs. The product
+  # offers no command line for either, so the declaration is written to its own store and read
+  # back from it; a sync it refuses is a failed run, not a warning.
+  #
+  # EMPTY IS A DECLARATION, not an omission: with no containers the product syncs nothing, which
+  # is what a deployment with no directory should do. It is also the ONE state in which
+  # preferences.active_directory.delete_mode = FullSync is harmless, because FullSync deletes
+  # every computer that is not inside an Include container. Declaring containers and leaving that
+  # mode alone are the same decision made twice; the validate task refuses the pair that would
+  # empty the database.
+  #
+  # The bind password is deployment-specific and secret, so the playbook resolves it and hands
+  # over the value, exactly as it does for the licence and the service account.
+  #
+  # 'insecure' opts the directory read down to plain LDAP on 389. It is false here because a
+  # default that downgrades is a default nobody audits; a directory that answers nothing on 636
+  # says so in its own declaration.
+  directory_sync:
+    realm: ''
+    bind_username: ''
+    bind_password: ''
+    insecure: false
+    containers: []
+
   # Every preference the console shows, organised as its Preferences pages are: a map of PAGES,
   # each holding that page's settings under readable labels. The reader tunes what they can SEE;
   # the role owns where each value actually lives -- most flow through the product's own command

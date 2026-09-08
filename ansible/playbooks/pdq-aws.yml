@@ -339,6 +339,34 @@
           # pdq_deploy: both products import the SAME map into their own variable stores.
           variables: "{{ pdq_variables }}"
 
+          # WHERE the product syncs computers from. The realm and the containers are this
+          # deployment's directory, not a product default, so they are named here; the bind
+          # password is resolved by the loader exactly as the licence and the service account are.
+          #
+          # Both top-level OUs, subtrees included: that is every computer the directory holds
+          # except the domain controllers, which PDQ has no business managing. It matters because
+          # preferences.active_directory.delete_mode is FullSync, which deletes every computer
+          # that is not inside an Include container -- a narrower list would remove the rest from
+          # the database on the first sync.
+          #
+          # insecure: the directory answers nothing on 636 and refuses an anonymous bind, both
+          # measured, so the read is plain LDAP on 389. Said here, in the open, rather than left
+          # to a default that quietly downgrades.
+          directory_sync:
+            realm: 'tcn.trinitytechnicalservices.com'
+            bind_username: 'tcn\svc-pdq'
+            bind_password: >-
+              {{ lookup('secret',
+                        's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-domain-password.txt') }}
+            insecure: true
+            containers:
+              - distinguished_name: 'OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'
+                subtree: true
+                include: true
+              - distinguished_name: 'OU=Domain Workstations,DC=tcn,DC=trinitytechnicalservices,DC=com'
+                subtree: true
+                include: true
+
           # The scanner needs .NET on a target before it can inventory it, and installs it on a
           # target that lacks it. The installer is the copy the repository sync placed on this
           # host -- the same object the console would otherwise be pointed at by hand. The path

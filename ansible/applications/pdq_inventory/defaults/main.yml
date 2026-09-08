@@ -151,10 +151,12 @@ pdq_inventory_defaults:
       # the product has never written its own. The console stores the choice as a per-user string,
       # so it is seeded rather than set through the command line like the settings above.
       #
-      # A value the console does not recognise is IGNORED rather than rejected -- it simply opens
-      # on its own default -- so confirm the console is actually dark after a first sign-in rather
-      # than trusting this line.
-      color_theme: 'Dark'
+      # The string is the product's OWN, which is the console's label with its spaces removed:
+      # 'Win11Dark' is the theme the console lists as Windows 11 Dark. Measured 2026-09-08 on a
+      # converged host, because a value the console does not recognise is not merely ignored --
+      # it rewrites this whole key on first launch with values of its own choosing, and the splash
+      # screen setting seeded beside it goes with it.
+      color_theme: 'Win11Dark'
       disable_splash_screen: true
       show_collection_item_counts: true
     # The scanner's database backups: on, ten kept, compressed -- the vendor's own recommendation.

@@ -850,13 +850,12 @@
     # MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role tracks only
     # files/Set-PdqPackage.ps1.stub). This adds and updates; a package no definition declares is
     # left alone.
+    #
+    # These run while the variables above are still held under TD-007, because the hold is about
+    # COST and the costs are not alike: the command line is paid once per item, and this role
+    # declares one package against forty-five variables. Seconds here, half an hour there.
 
     - name: 'PROCESS | Require Every Declared Definition To Be Present'
-      # PERF-HOLD (TD-007): the command line costs 7-18 s PER LAUNCH and this task pays it
-      # once per item -- 30.8 minutes of a converge. Held off until the object moves to the
-      # product's own sqlite3, which answers in 30-39 ms. Import and prune are held TOGETHER:
-      # a prune running without its import would empty the product.
-      when: false
       vars:
         __found__: "{{ query('ansible.builtin.fileglob', __package_glob__) | map('basename') | sort }}"
 
@@ -872,11 +871,6 @@
           - __found__ == (pdq_deploy_running.packages | sort)
 
     - name: 'PROCESS | Import The Declared Packages'
-      # PERF-HOLD (TD-007): the command line costs 7-18 s PER LAUNCH and this task pays it
-      # once per item -- 30.8 minutes of a converge. Held off until the object moves to the
-      # product's own sqlite3, which answers in 30-39 ms. Import and prune are held TOGETHER:
-      # a prune running without its import would empty the product.
-      when: false
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_deploy_running.service_account.name }}"
@@ -916,11 +910,6 @@
     # accepted and did not perform fails the run.
 
     - name: 'PROCESS | Remove The Undeclared Packages'
-      # PERF-HOLD (TD-007): the command line costs 7-18 s PER LAUNCH and this task pays it
-      # once per item -- 30.8 minutes of a converge. Held off until the object moves to the
-      # product's own sqlite3, which answers in 30-39 ms. Import and prune are held TOGETHER:
-      # a prune running without its import would empty the product.
-      when: false
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_deploy_running.service_account.name }}"

@@ -33,7 +33,7 @@
       <Steps type="list">
         <InstallStep>
           <CustomCommandLine></CustomCommandLine>
-          <FileName>$(Repository)\Google LLC\Google Chrome\$(Google-LLC_Google-Chrome)\Google-Chrome_x86-x64.msi</FileName>
+          <FileName>$(Repository)\Google LLC\Google Chrome\@(Google-LLC_Google-Chrome)\googlechromestandaloneenterprise64.msi</FileName>
           <Files></Files>
           <IncludeDirectory value="false" />
           <LeaveInstallFile value="false" />
@@ -85,7 +85,7 @@
     <CustomVariables type="list">
       <CustomVariable>
         <Name>Google-LLC_Google-Chrome</Name>
-        <Value>147.0.7727.56</Value>
+        <Value>152.0.7977.76</Value>
       </CustomVariable>
     </CustomVariables>
     <PackageDisplaySettings name="DisplaySettings">

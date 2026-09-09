@@ -380,7 +380,7 @@ If (-not $Ansible.CheckMode) {
   # Exactly one default: a second would leave which credential a scan picks to insertion order.
   $Statements.Add(("UPDATE Credentials SET IsDefault = 0 WHERE UserName <> '{0}';" -f $Username))
   $Statements.Add('COMMIT;')
-  $Null = Invoke-NativeCommand -Operation:'Declaring the credential as LAPS' -FilePath:$SQLITE_PATH `
+  $Null = Invoke-NativeCommand -Operation:'Declaring the credential' -FilePath:$SQLITE_PATH `
     -Argument:@($DATABASE_PATH, ($Statements -join ' '))
 }
 

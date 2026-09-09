@@ -735,14 +735,24 @@
 
         - name: 'PROCESS | Stop And Name Why The Credential Could Not Be Declared'
           vars:
-            __why__: >-
-              {{ ((__pdq_inventory_credential__.error | default([]) | first | default({})).exception
-                  | default({})).message | default('', true) }}
+            # The script's own message, or -- when the module failed before PowerShell ran, so
+            # there is no error stream to read -- the guarded field the style guide projects.
+            __raw__: >-
+              {{ (((__pdq_inventory_credential__.error | default([]) | first | default({})).exception
+                   | default({})).message | default('', true))
+                 | default(ansible_failed_result.msg | default('the credential task failed', true), true) }}
+            # Nothing authored here interpolates the password, but the product's own stderr is
+            # copied into a failure verbatim, so the declared secret is removed from whatever comes
+            # back rather than trusted not to appear in it.
+            __secrets__: >-
+              {{ [pdq_inventory_running.credential.password | default('')]
+                 | reject('equalto', '') | list | unique }}
 
           ansible.builtin.fail:
             msg: >-
               PDQ Inventory could not be given the credential it authenticates with:
-              {{ __why__ | default('the script reported no message', true) }}
+              {{ __raw__ | regex_replace('(' ~ (__secrets__ | map('regex_escape') | join('|')) ~ ')', '<redacted>')
+                 if __secrets__ | length > 0 else __raw__ }}
 
 
     #endregion --- [ Process: Declare The Credential PDQ Authenticates With ] ----------------- #
@@ -795,14 +805,25 @@
 
         - name: 'PROCESS | Stop And Name Why The Directory Sync Could Not Be Declared'
           vars:
-            __why__: >-
-              {{ ((__pdq_inventory_sync__.error | default([]) | first | default({})).exception
-                  | default({})).message | default('', true) }}
+            # The script's own message, or -- when the module failed before PowerShell ran, so
+            # there is no error stream to read -- the guarded field the style guide projects.
+            __raw__: >-
+              {{ (((__pdq_inventory_sync__.error | default([]) | first | default({})).exception
+                   | default({})).message | default('', true))
+                 | default(ansible_failed_result.msg | default('the directory sync task failed', true), true) }}
+            # The directory provider's own text is copied into the bind failure verbatim, and the
+            # product's stderr into a native-command failure, so the declared secrets are removed
+            # from whatever comes back rather than trusted not to appear in it.
+            __secrets__: >-
+              {{ [pdq_inventory_running.directory_sync.bind_password | default(''),
+                  pdq_inventory_running.credential.password | default('')]
+                 | reject('equalto', '') | list | unique }}
 
           ansible.builtin.fail:
             msg: >-
               PDQ Inventory could not be given its directory sync containers:
-              {{ __why__ | default('the script reported no message', true) }}
+              {{ __raw__ | regex_replace('(' ~ (__secrets__ | map('regex_escape') | join('|')) ~ ')', '<redacted>')
+                 if __secrets__ | length > 0 else __raw__ }}
 
     # The recap says what the run did without naming a credential: how many containers the product
     # holds, and whether a sync was asked for and finished.

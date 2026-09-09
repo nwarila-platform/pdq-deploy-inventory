@@ -17,17 +17,28 @@
 ---
 pdq_ad_config_defaults:
 
-  # The domain account PDQ authenticates to Active Directory with, and reads LAPS passwords as.
-  # It is a plain member of Domain Users and holds no administrative rights anywhere.
-  service_account:
-    name: ''
-    ou: ''
-    password: ''
+  # The domain accounts PDQ depends on. A LIST, because one directory carries several: the account
+  # that READS the directory for the computer sync, and one per class of machine PDQ deploys to.
+  #
+  # Every one of them is a plain member of Domain Users. This role grants no administrative rights
+  # anywhere, deliberately: what a class account may do on a machine is granted by policy in that
+  # machine's OU, which reaches machines this deployment never built and is not this role's
+  # business. An account created here can do nothing until that policy says otherwise.
+  #
+  # Each entry:
+  # Each entry:
+  #   name      the account name
+  #   ou        distinguished name of the container it is filed in
+  #   password  resolved by the caller; this role never sources, generates or stores one
+  #   groups    OPTIONAL. Groups the account belongs to, BESIDES its primary Domain Users.
+  #
+  # Membership is how a privilege is granted here, because it is how the directory grants them:
+  # LAPS decryption, for instance, is conferred by the group each OU's policy names as its
+  # encryption principal, not by an ACE anyone writes. Naming the group is the whole grant.
+  #
+  # The set is COMPLETE for each account: an account that gained a group elsewhere loses it on the
+  # next converge, and an account naming none is left in Domain Users alone.
+  service_accounts: []
 
   # Where a PDQ server is filed once it joins the domain.
   computer_ou: ''
-
-  # The OUs whose machines PDQ manages, and therefore whose LAPS passwords the service account
-  # must be able to read. Declared, never defaulted: a wrong OU here grants a real permission
-  # over real machines.
-  laps_read_ous: []

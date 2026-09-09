@@ -31,6 +31,14 @@ Key: `HKLM\Software\Microsoft\Policies\LAPS`
 ## Applying this in a new environment
 
 Set these five values on a GPO linked so it reaches the machines PDQ will manage, then extend the
-schema and grant the computer self-write. `pdq_ad_config` then grants the service account its read.
-The role deliberately does not check any of this: a missing schema attribute makes
-`Set-LapsPermissions.ps1` throw by name, at the point the absence matters.
+schema and grant the computer self-write.
+
+Reading a password back needs two separate things, which is the part that catches people out.
+Reading the `msLAPS-*` attributes is an Active Directory permission; DECRYPTING an encrypted
+password is conferred only by membership of the group the policy names in
+`ADPasswordEncryptionPrincipal`. A principal with the read permission and no membership gets
+ciphertext it cannot open, and changing the principal does not re-encrypt what is already stored --
+only the next rotation does.
+
+`pdq_ad_config` grants neither. It creates accounts and sets their group membership; no account in
+this deployment reads a LAPS password today.

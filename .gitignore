@@ -61,6 +61,8 @@
 !/scripts/Set-LapsPermissions.pester.ps1
 !/ansible/playbooks/ad-config.yml
 !/ansible/inventory/directory.yml
+!/ansible/inventory/group_vars/
+!/ansible/inventory/group_vars/all.yml
 !/ansible/inventory/
 !/ansible/playbooks/
 !/docs/
@@ -109,6 +111,7 @@
 !/ansible/applications/pdq_deploy/files/Set-RepositoryContent.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-RepositoryAcl.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqSetting.ps1.stub
+!/ansible/applications/pdq_deploy/files/Set-PdqCredential.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqRegistration.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqPackage.ps1.stub
 !/ansible/applications/pdq_deploy/files/Remove-PdqPackage.ps1.stub

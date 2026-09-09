@@ -120,6 +120,24 @@ pdq_deploy_defaults:
   # FIND-18, dropped from the script's table entirely so declaring one fails as an unknown name).
   # The deployments page's Inventory scan profile is accepted but left undefaulted here: it names
   # an object inside PDQ Inventory that only the caller can know.
+  # The account PDQ Deploy authenticates to a TARGET as, and the single row the product keeps for
+  # it. Each product holds its OWN credential store, so the same account is declared to each: a
+  # credential in Inventory is not one Deploy can deploy with. The product keys a credential on its
+  # username and holds no separate name, so one account is one credential -- either ORDINARY,
+  # authenticating as the account it names, or LAPS, resolving each target's own local
+  # administrator password at connect time.
+  #
+  # Deploy reaches a target over its admin share, so whatever this names has to be a local
+  # administrator ON THAT TARGET; being a domain account is not enough by itself.
+  #
+  # EMPTY IS A DECLARATION, not an omission: with no username the product keeps whatever it already
+  # holds. The password is deployment-specific and secret, so the playbook resolves it and hands
+  # over the value, exactly as it does for the licence and the service account.
+  credential:
+    username: ''
+    password: ''
+    description: ''
+
   preferences:
     alerts:
       auto_update_check_enabled: true

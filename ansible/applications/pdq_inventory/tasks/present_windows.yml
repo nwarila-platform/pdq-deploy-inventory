@@ -723,7 +723,7 @@
               CliPath: "{{ pdq_inventory_running.cli_path }}"
               DatabaseDrive: "{{ pdq_inventory_running.database.drive }}"
               DatabaseDirectory: "{{ pdq_inventory_running.database.directory }}"
-              Credential: "{{ pdq_inventory_running.credential }}"
+              CredentialDeclaration: "{{ pdq_inventory_running.credential }}"
               Product: 'Inventory'
             script: "{{ lookup('ansible.builtin.file', 'Set-PdqCredential.ps1') }}"
 

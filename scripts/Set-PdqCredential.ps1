@@ -27,7 +27,7 @@
         that outside the product would be guessing at someone else's cryptography. So the command
         line owns the secret and the database owns the fields the command line has no words for.
 
-    .PARAMETER Credential
+    .PARAMETER CredentialDeclaration
         The declaration. Keys:
           username     the account the credential names, DOMAIN\name
           password     its password
@@ -57,7 +57,7 @@
         Six digits, one per preference in Verbose, Debug, Information, Warning, Error, Fatal order.
 
     .EXAMPLE
-        .\Set-PdqCredential.ps1 -Product 'Inventory' -Credential @{
+        .\Set-PdqCredential.ps1 -Product 'Inventory' -CredentialDeclaration @{
             username = 'TCN\svc-pdq'; password = '...'; laps_user = 'Administrator'
         } -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe' `
           -DatabaseDrive 'D' -DatabaseDirectory 'PDQ Inventory'
@@ -126,7 +126,7 @@ Param (
     ValueFromPipelineByPropertyName = $False
   )]
   [System.Collections.IDictionary]
-  $Credential,
+  $CredentialDeclaration,
 
   [Parameter(
     DontShow = $False,
@@ -302,22 +302,22 @@ Function Invoke-NativeCommand {
 }
 
 # The declaration, normalised once so Main compares like with like.
-$Username = [System.String]$Credential['username']
-$Password = [System.String]$Credential['password']
+$Username = [System.String]$CredentialDeclaration['username']
+$Password = [System.String]$CredentialDeclaration['password']
 # A declaration carrying laps_user asks for a LAPS credential: the product resolves the target's
 # own local administrator password at connect time. Without it the credential is an ordinary one,
 # authenticating as the account it names. The directory bind needs an ordinary one, because a LAPS
 # credential resolves to a target's local administrator -- an account no directory knows.
-$LapsUser = [System.String]$(If ($Credential.Contains('laps_user')) { $Credential['laps_user'] } Else { '' })
+$LapsUser = [System.String]$(If ($CredentialDeclaration.Contains('laps_user')) { $CredentialDeclaration['laps_user'] } Else { '' })
 $IsLaps = $LapsUser.Length -gt 0
-$Description = [System.String]$(If ($Credential.Contains('description')) { $Credential['description'] } Else { '' })
+$Description = [System.String]$(If ($CredentialDeclaration.Contains('description')) { $CredentialDeclaration['description'] } Else { '' })
 
 # The role only calls this with a username declared, so an empty one means the declaration did not
 # survive the trip rather than that the caller meant nothing by it. Naming the keys that did arrive
 # turns a command line that fails with no subject into a statement about the contract.
 If ($Username.Length -eq 0) {
   Throw ('The credential declaration carried no username. Keys received: {0}' -f (
-      $(If ($Null -eq $Credential) { '(no declaration at all)' } Else { (@($Credential.Keys) | Sort-Object) -join ', ' })
+      $(If ($Null -eq $CredentialDeclaration) { '(no declaration at all)' } Else { (@($CredentialDeclaration.Keys) | Sort-Object) -join ', ' })
     ))
 }
 

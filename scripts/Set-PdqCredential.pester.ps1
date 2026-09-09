@@ -213,14 +213,14 @@ Describe 'Set-PdqCredential' {
       }
       $global:FakeCredentials['tcn\someone-else'].IsDefault = '0'
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:Declaration
       $Ctx.Changed | Should -BeFalse
       $Ctx.Result.msg | Should -BeLike '*already reads back*'
     }
 
     It 'reports a change when the product holds no such credential' {
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:Declaration
       $Ctx.Changed | Should -BeTrue
     }
 
@@ -231,7 +231,7 @@ Describe 'Set-PdqCredential' {
       }
       $global:FakeCredentials['tcn\someone-else'].IsDefault = '0'
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:Declaration
       $Ctx.Changed | Should -BeTrue
     }
 
@@ -242,7 +242,7 @@ Describe 'Set-PdqCredential' {
       }
       # The row itself matches; the store still holds two defaults, which is not the declared state.
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:Declaration
       $Ctx.Changed | Should -BeTrue
       $global:FakeCredentials['tcn\someone-else'].IsDefault | Should -Be '0'
     }
@@ -252,7 +252,7 @@ Describe 'Set-PdqCredential' {
 
     It 'leaves the store holding exactly the declared credential, as the only default' {
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:Declaration
       $Row = $global:FakeCredentials[$script:Declaration.username]
       ('{0}|{1}|{2}|{3}' -f $Row.IsDefault, $Row.AuthenticationType, $Row.LAPSUser, $Row.Description) |
         Should -BeExactly (Get-DeclaredRow)
@@ -262,7 +262,7 @@ Describe 'Set-PdqCredential' {
 
     It 'gives the password to the command line on stdin, never as an argument' {
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:Declaration
       $global:FakeStdin | Should -Contain $script:Declaration.password
       ($global:FakeCliCalls -join ' ') | Should -Not -BeLike ('*' + $script:Declaration.password + '*')
       ($global:FakeSqliteCalls -join ' ') | Should -Not -BeLike ('*' + $script:Declaration.password + '*')
@@ -275,27 +275,27 @@ Describe 'Set-PdqCredential' {
       }
       $global:FakeCredentials['tcn\someone-else'].IsDefault = '0'
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:Declaration
       $Ctx.Changed | Should -BeFalse
       $global:FakeStdin | Should -Contain $script:Declaration.password
     }
 
     It 'uses the Deploy verb for Deploy and the Scan verb for Inventory' {
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:Declaration
       ($global:FakeCliCalls -join ' ') | Should -BeLike '*UpdateDeployCredential*'
 
       $global:FakeCliCalls.Clear()
       $Inventory = $script:Ctx.Clone()
       $Inventory.Product = 'Inventory'
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @Inventory -Credential $script:Declaration
+      & $script:ScriptPath @Inventory -CredentialDeclaration $script:Declaration
       ($global:FakeCliCalls -join ' ') | Should -BeLike '*UpdateScanCredential*'
     }
 
     It 'sets the LAPS fields in one transaction, after the command line has made the row' {
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:Declaration
       $Write = @($global:FakeSqliteCalls | Where-Object { $PSItem -like '*UPDATE Credentials*' })
       $Write | Should -HaveCount 1
       $Write[0] | Should -BeLike '*BEGIN IMMEDIATE;*'
@@ -309,7 +309,7 @@ Describe 'Set-PdqCredential' {
       $Bad = $script:Declaration.Clone()
       $Bad.laps_user = "Admin'; DROP TABLE Credentials; --"
       $Ctx = New-AnsibleContext
-      { & $script:ScriptPath @script:Ctx -Credential $Bad } |
+      { & $script:ScriptPath @script:Ctx -CredentialDeclaration $Bad } |
         Should -Throw -ExpectedMessage '*single quote*'
       $global:FakeSqliteCalls | Should -Not -BeLike '*DROP TABLE*'
     }
@@ -317,7 +317,7 @@ Describe 'Set-PdqCredential' {
     It 'fails loudly, naming the verb and the exit code, when the command line refuses' {
       $global:FakeCliExit = 5
       $Ctx = New-AnsibleContext
-      { & $script:ScriptPath @script:Ctx -Credential $script:Declaration } |
+      { & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:Declaration } |
         Should -Throw -ExpectedMessage '*UpdateDeployCredential exited 5*'
     }
   }
@@ -326,7 +326,7 @@ Describe 'Set-PdqCredential' {
 
     It 'leaves the product holding no LAPS fields at all' {
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -Credential $script:OrdinaryDeclaration
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:OrdinaryDeclaration
       $Row = $global:FakeCredentials[$script:OrdinaryDeclaration.username]
       $Row.AuthenticationType | Should -BeExactly ''
       $Row.LAPSUser | Should -BeExactly ''
@@ -335,7 +335,7 @@ Describe 'Set-PdqCredential' {
 
     It 'says which kind it declared' {
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -Credential $script:OrdinaryDeclaration
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:OrdinaryDeclaration
       $Ctx.Result.msg | Should -BeLike '*ordinary credential*'
       $Ctx.Result.msg | Should -Not -BeLike '*LAPS*'
     }
@@ -347,7 +347,7 @@ Describe 'Set-PdqCredential' {
       }
       $global:FakeCredentials['tcn\someone-else'].IsDefault = '0'
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -Credential $script:OrdinaryDeclaration
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:OrdinaryDeclaration
       $Ctx.Changed | Should -BeFalse
     }
 
@@ -360,7 +360,7 @@ Describe 'Set-PdqCredential' {
       }
       $global:FakeCredentials['tcn\someone-else'].IsDefault = '0'
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -Credential $script:OrdinaryDeclaration
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:OrdinaryDeclaration
       $Ctx.Changed | Should -BeTrue
       $global:FakeCredentials[$script:OrdinaryDeclaration.username].AuthenticationType |
         Should -BeExactly ''
@@ -371,7 +371,7 @@ Describe 'Set-PdqCredential' {
 
     It 'reports the would-be change in check mode and writes nothing' {
       $Ctx = New-AnsibleContext -CheckMode
-      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:Declaration
       $Ctx.Changed | Should -BeTrue
       $Ctx.Result.check_mode | Should -BeTrue
       $global:FakeCliCalls | Should -HaveCount 0
@@ -386,13 +386,13 @@ Describe 'Set-PdqCredential' {
       $global:FakeCredentials['tcn\someone-else'].IsDefault = '0'
       $Ctx = New-AnsibleContext
       $Ctx.Changed | Should -BeTrue
-      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:Declaration
       $Ctx.Changed | Should -BeFalse
     }
 
     It 'emits the result as JSON when nothing provides an $Ansible context' {
       Remove-AnsibleContext
-      $Json = & $script:ScriptPath @script:Ctx -Credential $script:Declaration | Out-String
+      $Json = & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:Declaration | Out-String
       $Parsed = $Json | ConvertFrom-Json
       $Parsed.credential | Should -Be $script:Declaration.username
       $Parsed.laps_user | Should -Be $script:Declaration.laps_user

@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Nicholas Warila
+# SPDX-License-Identifier: MIT
+---
+# What every play in this deployment needs to agree on, and cannot agree on any other way: a play's
+# vars are visible only to that play, and these are used by two of them -- the play that builds the
+# target and the play that configures the products.
+#
+# The domain account PDQ authenticates as. It reads the directory for the computer sync, and it is
+# the identity the console presents to a target, so it is also the account the target admits to its
+# local Administrators. One account, named once, so the grant on the target and the credential in
+# the product can never drift apart. Its password is NOT here: only the plays that hand it to a
+# product resolve it, and they resolve it from the bucket at the moment of use.
+pdq_directory_username: 'tcn\svc-pdq'

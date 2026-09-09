@@ -205,22 +205,6 @@
         remoteip: "{{ hostvars[groups['pdq_servers'] | first].aws_private_ip_address }}"
         state: 'present'
 
-    # Reaching the target is not the same as being allowed in. PDQ copies to ADMIN$ and creates a
-    # service there, so the identity it presents has to be a local administrator ON THIS MACHINE,
-    # and the deployment account is a domain service account that is not one by default -- measured
-    # here: the local Administrators held only Domain Admins and the built-in account.
-    #
-    # This is the local-administrator grant the one-account credential model rests on. A fleet
-    # would place it by Restricted Groups policy; this bed builds its own target, so it is stated
-    # where the target is built. Named as a member, never as the whole membership, so the group's
-    # other members are left exactly as they are.
-    - name: 'PROCESS | Let The Deployment Account Administer This Target'
-      ansible.windows.win_group_membership:
-        members:
-          - "{{ pdq_directory_username }}"
-        name: 'Administrators'
-        state: 'present'
-
   #endregion --- [ Post Tasks ] --------------------------------------------------------------- #
 
 #endregion --- [ Play: Configure The Target ] ------------------------------------------------- #

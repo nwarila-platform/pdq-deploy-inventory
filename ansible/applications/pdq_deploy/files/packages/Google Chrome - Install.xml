@@ -33,7 +33,7 @@
       <Steps type="list">
         <InstallStep>
           <CustomCommandLine></CustomCommandLine>
-          <FileName>$(Repository)\Google LLC\Google Chrome\@(Google-LLC_Google-Chrome)\googlechromestandaloneenterprise64.msi</FileName>
+          <FileName>$(Repository)\Google LLC\Google Chrome\@(Google-LLC_Google-Chrome)\Google-LLC_Google-Chrome_@(Google-LLC_Google-Chrome)_x64.msi</FileName>
           <Files></Files>
           <IncludeDirectory value="false" />
           <LeaveInstallFile value="false" />

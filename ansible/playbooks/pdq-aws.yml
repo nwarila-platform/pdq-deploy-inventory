@@ -437,7 +437,7 @@
               install_dotnet_automatically: true
               dotnet_installer_path: >-
                 {{ pdq_repository_drive }}:\{{ pdq_repository_directory }}\Microsoft
-                Corporation\.NET Framework\4.7.2\NDP472-KB4054530-x86-x64-AllOS-ENU.exe
+                Corporation\.NET Framework\4.7.2\Microsoft-Corporation_NET-Framework_4.7.2_x86-x64.exe
 
           # Inventory ships its own installer from the application repository, verified on the
           # GUEST against this digest immediately before it runs. Same layout as Deploy: the role

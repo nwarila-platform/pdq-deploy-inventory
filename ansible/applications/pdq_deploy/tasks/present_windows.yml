@@ -473,7 +473,19 @@
     # SYSTEM and Administrators have full access, while Users have read-and-execute. rule_action is
     # 'set' so stale grants are removed rather than accumulating.
 
+    # A share admits the identity that READS from it, and that is not only the account the service
+    # runs as. A deployment fetches the package's installer from this share over UNC as the
+    # credential the product deploys with -- a DOMAIN account that shares a NAME with the local
+    # service account and is a different principal entirely, which is why granting one grants
+    # nothing to the other. Read on the share, because NTFS already admits it through Users; the
+    # effective right is the lesser of the two, so the share was the half that refused.
     - name: 'PROCESS | Share The Repository Over The Network'
+      vars:
+        __repository_readers__: >-
+          {{ ([pdq_deploy_running.service_account.name, 'Administrators',
+               pdq_deploy_running.credential.username | default('', true)]
+              | reject('equalto', '') | list | join(',')) }}
+
       ansible.windows.win_share:
         caching_mode: 'Manual'
         description: 'PDQ Deploy package repository'
@@ -481,7 +493,7 @@
         list: false
         name: "{{ pdq_deploy_running.repository.share_name }}"
         path: "{{ __repository_dir__ }}"
-        read: "{{ pdq_deploy_running.service_account.name }},Administrators"
+        read: "{{ __repository_readers__ }}"
         rule_action: 'set'
         state: 'present'
 
@@ -838,6 +850,71 @@
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqVariable.ps1') }}"
 
     #endregion --- [ Process: Import The Pinned Variables ] ----------------------------------- #
+
+    #region ------ [ Process: Declare The Credential PDQ Authenticates With ] ----------------- #
+    # Deploying reaches a target over its admin share, so the product needs an identity to present
+    # there -- and its credential store is its own: the one Inventory holds is not one Deploy can
+    # deploy with. Declared before the packages so the library and the identity that installs from
+    # it are both in place after a single converge.
+    #
+    # ORDINARY, not LAPS. This deployment names one account for everything, and the target admits
+    # it to its local Administrators where the target is built.
+    #
+    # Runs AS the background service user for the same reason the settings do -- the product
+    # answers its own command line only for the account its service runs as. The password reaches
+    # the script as a value and no further: no_log keeps it out of the recap, and the command line
+    # takes it on stdin rather than as an argument. The .ps1 is MATERIALIZED from scripts/ by
+    # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqCredential.ps1.stub).
+
+    - name: 'PROCESS | Declare The Credential PDQ Authenticates With'
+      when: pdq_deploy_running.credential.username | length > 0
+
+      block:
+
+        - name: 'PROCESS | Give The Product The Credential It Authenticates With'
+          become: true
+          become_method: 'ansible.builtin.runas'
+          become_user: "{{ pdq_deploy_running.service_account.name }}"
+          no_log: true
+          register: '__pdq_deploy_credential__'
+          vars:
+            ansible_become_flags: 'logon_type=batch'
+            ansible_become_password: "{{ pdq_deploy_running.service_account.password }}"
+
+          ansible.windows.win_powershell:
+            depth: 3
+            error_action: 'stop'
+            parameters:
+              CliPath: "{{ pdq_deploy_running.cli_path }}"
+              DatabaseDrive: "{{ pdq_deploy_running.database.drive }}"
+              DatabaseDirectory: "{{ pdq_deploy_running.database.directory }}"
+              CredentialDeclaration: "{{ pdq_deploy_running.credential }}"
+              Product: 'Deploy'
+            script: "{{ lookup('ansible.builtin.file', 'Set-PdqCredential.ps1') }}"
+
+      # The task above carries a password, so it is no_log and its failure reaches the recap as
+      # "censored", naming nothing. The script's own message survives on the module's error
+      # stream -- it names the operation and the product's exit code, never a value the script was
+      # handed -- so this says that out loud and fails again, stopping the run here.
+      rescue:
+
+        - name: 'PROCESS | Stop And Name Why The Credential Could Not Be Declared'
+          vars:
+            __raw__: >-
+              {{ (((__pdq_deploy_credential__.error | default([]) | first | default({})).exception
+                   | default({})).message | default('', true))
+                 | default(ansible_failed_result.msg | default('the credential task failed', true), true) }}
+            __secrets__: >-
+              {{ [pdq_deploy_running.credential.password | default('')]
+                 | reject('equalto', '') | list | unique }}
+
+          ansible.builtin.fail:
+            msg: >-
+              PDQ Deploy could not be given the credential it authenticates with:
+              {{ __raw__ | regex_replace('(' ~ (__secrets__ | map('regex_escape') | join('|')) ~ ')', '<redacted>')
+                 if __secrets__ | length > 0 else __raw__ }}
+
+    #endregion --- [ Process: Declare The Credential PDQ Authenticates With ] ----------------- #
 
     #region ------ [ Process: Import The Declared Packages ] ---------------------------------- #
     # Each XML file under files/packages/ is a package the product must hold, exported from the

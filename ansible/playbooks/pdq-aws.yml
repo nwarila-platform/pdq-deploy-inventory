@@ -179,6 +179,50 @@
 
   #endregion --- [ Roles ] -------------------------------------------------------------------- #
 
+  #region ------ [ Post Tasks ] --------------------------------------------------------------- #
+  # A target is not managed because it is domain-joined; it is managed because the console can
+  # reach it. PDQ copies a package to ADMIN$ and starts its runner there, both over SMB, and a
+  # Windows image ships every File and Printer Sharing inbound rule DISABLED -- measured on this
+  # bed: SMB listening, nine rules present, none enabled, so the console's connection is dropped
+  # by the target itself long after the network permits it.
+  #
+  # Scoped to the console's own address rather than the subnet: the subnet is the boundary
+  # terraform can express, this is the boundary the host can, and only one machine on it has any
+  # business opening ADMIN$ here. Runs after the roles because joining the domain is what applies
+  # the profile this rule lands in.
+  post_tasks:
+
+    - name: 'PROCESS | Let The Console Reach This Target Over SMB'
+      community.windows.win_firewall_rule:
+        action: 'allow'
+        description: 'Inbound SMB from the PDQ console, which reaches ADMIN$ to copy a package and start its runner'
+        direction: 'in'
+        enabled: true
+        localport: '445'
+        name: 'PDQ managed target (SMB-In)'
+        profiles: [ 'domain', 'private', 'public' ]
+        protocol: 'tcp'
+        remoteip: "{{ hostvars[groups['pdq_servers'] | first].aws_private_ip_address }}"
+        state: 'present'
+
+    # Reaching the target is not the same as being allowed in. PDQ copies to ADMIN$ and creates a
+    # service there, so the identity it presents has to be a local administrator ON THIS MACHINE,
+    # and the deployment account is a domain service account that is not one by default -- measured
+    # here: the local Administrators held only Domain Admins and the built-in account.
+    #
+    # This is the local-administrator grant the one-account credential model rests on. A fleet
+    # would place it by Restricted Groups policy; this bed builds its own target, so it is stated
+    # where the target is built. Named as a member, never as the whole membership, so the group's
+    # other members are left exactly as they are.
+    - name: 'PROCESS | Let The Deployment Account Administer This Target'
+      ansible.windows.win_group_membership:
+        members:
+          - "{{ pdq_directory_username }}"
+        name: 'Administrators'
+        state: 'present'
+
+  #endregion --- [ Post Tasks ] --------------------------------------------------------------- #
+
 #endregion --- [ Play: Configure The Target ] ------------------------------------------------- #
 
 #region ------ [ Play: PDQ Deploy And Inventory ] --------------------------------------------- #
@@ -199,11 +243,10 @@
     pdq_repository_directory: 'PDQ Repository'
     pdq_repository_drive: 'F'
 
-    # The domain account PDQ reads the directory as, named ONCE here because two declarations
-    # below need the same one: the credential the product must HOLD to bind at sync time, and the
-    # sync declaration this playbook uses to resolve each container. It is an ORDINARY credential
-    # -- a LAPS one resolves to a target's local administrator, which no directory knows.
-    pdq_directory_username: 'tcn\svc-pdq'
+    # The account itself is declared in inventory/group_vars/all.yml, because the play that builds
+    # the target needs the same one and a play's vars do not reach another play. Only its password
+    # is resolved here, where it is handed to the products: the credential the product must HOLD to
+    # bind at sync time, and the sync declaration this playbook binds with directly.
     pdq_directory_password: >-
       {{ lookup('secret',
                 's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-domain-password.txt') }}
@@ -319,6 +362,15 @@
           license_email: >-
             {{ lookup('secret',
                       's3://' ~ aws_account_id ~ '-ansible/applications/pdq/pdq-deploy-license-email.txt') }}
+
+          # The identity Deploy presents to a target. The same account the sync binds as and the
+          # same one the target admits to its local Administrators -- declared again here because
+          # each product keeps its own credential store, so a credential Inventory holds is not
+          # one Deploy can deploy with.
+          credential:
+            username: "{{ pdq_directory_username }}"
+            password: "{{ pdq_directory_password }}"
+            description: 'Deployment account for PDQ Deploy'
 
           # The database grows without bound, so it goes on the volume provisioned for it rather
           # than the system disk. Only the letter belongs here: which disk this host dedicates to

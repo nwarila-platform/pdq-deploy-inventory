@@ -63,12 +63,16 @@ The workflow assumes `nwarila-platform_pdq-deploy-inventory_runner` through `DEP
 The runner reads exactly the two licence objects and the PDQ service-account secret under
 `applications/pdq/`, and the VPN profile and directory-join secret under `host_roles/` — reaching a
 private network and belonging to a directory are states the host is IN, not applications it
-carries, so each is filed beside the role that establishes it. It also reads the versioned installers at
-`PDQ.com/PDQ Deploy/<version>/PDQ_Deploy_x86-x64.exe`,
-`PDQ.com/PDQ Inventory/<version>/PDQ_Inventory_x86-x64.exe`, and
-`OpenVPN.net/OpenVPN Community/<version>/OpenVPN_Community_amd64.msi`. Every installer key keeps
-the version out of the filename, so each grant carries one wildcard, on the version path, and the
-literal filename bounds it (an S3 wildcard can span path separators, so the filename is the pin).
+carries, so each is filed beside the role that establishes it.
+
+Installer access is NOT key-scoped, whatever the statement's name suggests. Read live 2026-09-09,
+policy version v16: the statement `ReadAppRepoByExactPathOnlyNoListing` grants `s3:GetObject` on
+`arn:aws:s3:::<account>-apprepo/*` — the whole bucket, no listing. Per-installer grants bounded by
+a literal filename were the intent and are not what is deployed; the name records the intent and
+the resource records the reality. Narrowing it is a real change, not a documentation fix, and it
+would now have to admit the version inside the filename: the repository was restandardised to
+`<Publisher>_<Application>_<Version>_<arch>.<ext>`, so a filename no longer bounds a version
+wildcard.
 The roles fetch those objects on the controller and copy only the installers to the guest. The operator role has the same
 reads and additionally publishes installers and licences through `admin_s3`.
 

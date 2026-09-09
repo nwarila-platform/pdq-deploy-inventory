@@ -137,7 +137,7 @@ bundle. Its embedded switch table is exactly `/s /S /p /P /x /X`. The measured s
 is:
 
 ```text
-PDQ_Deploy_x86-x64.exe /s
+PDQcom_PDQ-Deploy_20.1.8.0_x86-x64.exe /s
 ```
 
 Clean and repeat silent invocations returned `0` with no reboot, and the wrapper waited

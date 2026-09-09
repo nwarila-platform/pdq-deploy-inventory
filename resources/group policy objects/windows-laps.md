@@ -31,6 +31,27 @@ Key: `HKLM\Software\Microsoft\Policies\LAPS`
 ## Applying this in a new environment
 
 Set these five values on a GPO linked so it reaches the machines PDQ will manage, then extend the
-schema and grant the computer self-write. `pdq_ad_config` then grants the service account its read.
-The role deliberately does not check any of this: a missing schema attribute makes
-`Set-LapsPermissions.ps1` throw by name, at the point the absence matters.
+schema and grant the computer self-write.
+
+Reading a password back needs two separate things, which is the part that catches people out.
+Reading the `msLAPS-*` attributes is an Active Directory permission; DECRYPTING an encrypted
+password is conferred only by membership of the group the policy names in
+`ADPasswordEncryptionPrincipal`. A principal with the read permission and no membership gets
+ciphertext it cannot open, and changing the principal does not re-encrypt what is already stored --
+only the next rotation does.
+
+`pdq_ad_config` grants neither, and configuring LAPS is not PDQ's business: it is a one-time
+environment setup. The role creates accounts and sets their group membership; no account in this
+deployment reads a LAPS password today.
+
+Measured 2026-09-09, for whoever does that setup: the three decrypt groups
+(`TCN_GS-LAPS_Domain-{Workstations,Servers,Controllers}-Decrypt-Password`) are correctly named as
+each OU policy's `ADPasswordEncryptionPrincipal`, but hold **no ACE anywhere** -- not on the domain
+root and not on any OU. Membership therefore confers decryption alone. It works today only because
+their sole member is `Domain Admins`, which reads `msLAPS-*` through `GenericAll` by another route
+entirely. Add a non-administrator to one of those groups and it will decrypt a value it cannot
+read.
+
+Granting each group the five `msLAPS-*` read ACEs on its own OU would make membership the single
+lever for both halves, which is the state worth having -- one grant reviewed per class, instead of
+one per account.

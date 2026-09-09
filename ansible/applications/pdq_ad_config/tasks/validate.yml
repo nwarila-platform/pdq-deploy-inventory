@@ -10,36 +10,60 @@
 ---
 
 - name: 'VALIDATE | Require The Declared Interface'
+  vars:
+    __accounts__: "{{ pdq_ad_config_running.service_accounts | default([], true) }}"
+
   ansible.builtin.assert:
     fail_msg: >-
-      pdq_ad_config is missing its declaration. It requires pdq_ad_config_running.service_account.name,
-      pdq_ad_config_running.service_account.ou, pdq_ad_config_running.service_account.password, pdq_ad_config_running.computer_ou, and a non-empty
-      pdq_ad_config_running.laps_read_ous.
+      pdq_ad_config is missing its declaration. It requires a non-empty
+      pdq_ad_config_running.service_accounts, each entry carrying name, ou and password, plus
+      pdq_ad_config_running.computer_ou.
       The PASSWORD is supplied by the caller: this role does not source it, generate it or store
       it, so the playbook must resolve it and pass the value.
     quiet: true
     that:
-      - pdq_ad_config_running.service_account is defined
-      - pdq_ad_config_running.service_account.name | default('') | length > 0
-      - pdq_ad_config_running.service_account.ou | default('') | length > 0
+      - __accounts__ | length > 0
+      - __accounts__ | rejectattr('name', 'defined') | list | length == 0
+      - __accounts__ | rejectattr('ou', 'defined') | list | length == 0
+      - __accounts__ | rejectattr('password', 'defined') | list | length == 0
+      - __accounts__ | selectattr('name', 'equalto', '') | list | length == 0
+      - __accounts__ | selectattr('ou', 'equalto', '') | list | length == 0
+      - __accounts__ | selectattr('password', 'equalto', '') | list | length == 0
+      # An account declared twice is two declarations of one object, and the second silently wins.
       - >-
-        pdq_ad_config_running.service_account.password
-        | default('') | length > 0
+        (__accounts__ | map(attribute='name') | list | length)
+        == (__accounts__ | map(attribute='name') | unique | list | length)
       - pdq_ad_config_running.computer_ou | default('') | length > 0
-      - pdq_ad_config_running.laps_read_ous | default([]) | length > 0
 
 - name: 'VALIDATE | Require Distinguished Names Where A Distinguished Name Is Meant'
+  vars:
+    __accounts__: "{{ pdq_ad_config_running.service_accounts | default([], true) }}"
+
   ansible.builtin.assert:
     fail_msg: >-
-      pdq_ad_config_running.service_account.ou, pdq_ad_config_running.computer_ou and every entry of pdq_ad_config_running.laps_read_ous must be full
-      distinguished
-      names. A short name silently resolves to the wrong container or to nothing at all.
+      Every account's ou and pdq_ad_config_running.computer_ou must be full distinguished names.
+      A short name silently resolves to the wrong container or to nothing at all.
     quiet: true
     that:
       - >-
-        pdq_ad_config_running.service_account.ou
-        is search('^(OU|CN)=.*,DC=')
+        __accounts__ | map(attribute='ou')
+        | reject('search', '^(OU|CN)=.*,DC=') | list | length == 0
       - pdq_ad_config_running.computer_ou is search('^OU=.*,DC=')
+
+- name: 'VALIDATE | Require A Declared Group List To Name Groups'
+  vars:
+    __accounts__: "{{ pdq_ad_config_running.service_accounts | default([], true) }}"
+
+  ansible.builtin.assert:
+    fail_msg: >-
+      An account declaring groups must name at least one. An empty list says the account is in no
+      group beyond Domain Users, which is what omitting the key already says -- omit it instead,
+      so a reader cannot mistake an empty declaration for an unfinished one.
+    quiet: true
+    that:
       - >-
-        pdq_ad_config_running.laps_read_ous
-        | reject('search', '^OU=.*,DC=') | list | length == 0
+        __accounts__ | rejectattr('groups', 'undefined')
+        | rejectattr('groups') | list | length == 0
+      - >-
+        __accounts__ | rejectattr('groups', 'undefined') | map(attribute='groups') | flatten
+        | select('equalto', '') | list | length == 0

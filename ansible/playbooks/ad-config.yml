@@ -27,19 +27,43 @@
     - role: 'pdq_ad_config'
       vars:
         pdq_ad_config:
-          service_account:
-            name: 'svc-pdq'
-            ou: 'OU=Domain Service Accounts,DC=tcn,DC=trinitytechnicalservices,DC=com'
-            password: >-
-              {{ lookup('secret',
-                        's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-domain-password.txt') }}
+          # Four accounts, each with one job. svc-pdq READS the directory -- it is the computer
+          # sync's bind account, and it is deliberately nothing else: no account here declares
+          # laps_read_ous, because nothing in this deployment reads another machine's local
+          # administrator password. A class account authenticates to a target as itself, and the
+          # rights it needs there come from that machine's OU policy.
+          # The three class accounts are the identities PDQ presents to a machine when it deploys
+          # to it, one per class, so a compromise of the workstation account reaches no server.
+          #
+          # None of them is granted administrative rights here. A class account can do nothing on
+          # a machine until that machine's OU policy adds it to the local Administrators, which is
+          # policy's business and not this role's -- and which is what makes these accounts safe
+          # to create before the policy exists.
+          service_accounts:
+
+            - name: 'svc-pdq'
+              ou: 'OU=Domain Service Accounts,DC=tcn,DC=trinitytechnicalservices,DC=com'
+              password: >-
+                {{ lookup('secret',
+                          's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-domain-password.txt') }}
+
+            - name: 'svc-pdq-ws'
+              ou: 'OU=Domain Service Accounts,DC=tcn,DC=trinitytechnicalservices,DC=com'
+              password: >-
+                {{ lookup('secret',
+                          's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-ws-password.txt') }}
+
+            - name: 'svc-pdq-ms'
+              ou: 'OU=Domain Service Accounts,DC=tcn,DC=trinitytechnicalservices,DC=com'
+              password: >-
+                {{ lookup('secret',
+                          's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-ms-password.txt') }}
+
+            - name: 'svc-pdq-dc'
+              ou: 'OU=Domain Service Accounts,DC=tcn,DC=trinitytechnicalservices,DC=com'
+              password: >-
+                {{ lookup('secret',
+                          's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-dc-password.txt') }}
 
           # Where a PDQ server is filed. The same OU the deploy playbook names as its join target.
           computer_ou: 'OU=PDQ,OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'
-
-          # The machines PDQ manages, and therefore whose LAPS passwords it must read. Domain
-          # Controllers is deliberately absent: LAPS manages the DSRM password there, which needs
-          # a policy this deployment does not set, so a grant would cover nothing.
-          laps_read_ous:
-            - 'OU=Domain Workstations,DC=tcn,DC=trinitytechnicalservices,DC=com'
-            - 'OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'

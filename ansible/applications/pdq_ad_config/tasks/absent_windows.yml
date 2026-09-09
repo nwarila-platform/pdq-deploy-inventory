@@ -2,8 +2,8 @@
 # File: '{{ role_path }}/tasks/absent_windows.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# The inverse of present, region by region: the permissions this role granted are revoked, then
-# the account it created is deleted.
+# The inverse of present: the accounts this role created are deleted. Their group memberships go
+# with them, because a deleted account is not a member of anything.
 #
 # The OU is NOT removed. It is a shared directory container this role did not necessarily create,
 # and other deployments file machines in it -- removing it would take their computers with it.
@@ -24,19 +24,13 @@
 - name: 'PROCESS | Remove The Directory Objects'
   block:
 
-    - name: 'PROCESS | Remove The LAPS Read Permissions From The Declared OUs'
-      ansible.windows.win_powershell:
-        depth: 3
-        error_action: 'stop'
-        parameters:
-          AccountIdentity: "{{ pdq_ad_config_running.service_account.name }}"
-          OrganizationalUnit: "{{ pdq_ad_config_running.laps_read_ous }}"
-          State: 'absent'
-        script: "{{ lookup('ansible.builtin.file', 'Set-LapsPermissions.ps1') }}"
+    - name: 'PROCESS | Remove The PDQ Service Accounts'
+      loop: "{{ pdq_ad_config_running.service_accounts }}"
+      loop_control:
+        label: "{{ item.name }}"
 
-    - name: 'PROCESS | Remove The PDQ Service Account'
       microsoft.ad.user:
-        identity: "CN={{ pdq_ad_config_running.service_account.name }},{{ pdq_ad_config_running.service_account.ou }}"
+        identity: "CN={{ item.name }},{{ item.ou }}"
         state: 'absent'
 
 #endregion --- [ Process: Remove What This Role Created ] ------------------------------------- #

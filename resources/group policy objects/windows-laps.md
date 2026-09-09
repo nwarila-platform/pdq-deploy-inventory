@@ -40,5 +40,18 @@ password is conferred only by membership of the group the policy names in
 ciphertext it cannot open, and changing the principal does not re-encrypt what is already stored --
 only the next rotation does.
 
-`pdq_ad_config` grants neither. It creates accounts and sets their group membership; no account in
-this deployment reads a LAPS password today.
+`pdq_ad_config` grants neither, and configuring LAPS is not PDQ's business: it is a one-time
+environment setup. The role creates accounts and sets their group membership; no account in this
+deployment reads a LAPS password today.
+
+Measured 2026-09-09, for whoever does that setup: the three decrypt groups
+(`TCN_GS-LAPS_Domain-{Workstations,Servers,Controllers}-Decrypt-Password`) are correctly named as
+each OU policy's `ADPasswordEncryptionPrincipal`, but hold **no ACE anywhere** -- not on the domain
+root and not on any OU. Membership therefore confers decryption alone. It works today only because
+their sole member is `Domain Admins`, which reads `msLAPS-*` through `GenericAll` by another route
+entirely. Add a non-administrator to one of those groups and it will decrypt a value it cannot
+read.
+
+Granting each group the five `msLAPS-*` read ACEs on its own OU would make membership the single
+lever for both halves, which is the state worth having -- one grant reviewed per class, instead of
+one per account.

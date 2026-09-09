@@ -686,6 +686,67 @@
 
     #endregion --- [ Process: Apply The Product Settings ] ------------------------------------ #
 
+    #region ------ [ Process: Declare The Credential PDQ Authenticates With ] ----------------- #
+    # The sync below binds as a credential the product must ALREADY HOLD: each container row
+    # stores a credential id, not a username and a password. Nothing else in this deployment
+    # creates that row, so it is declared here, immediately before the task that needs it.
+    #
+    # ORDINARY, not LAPS. The script decides from the declaration, and this one names no
+    # laps_user: a LAPS credential resolves to some target's local administrator, an account no
+    # directory has ever heard of, so it could not bind at all.
+    #
+    # Runs AS the background service user for the same reason the settings do -- the product
+    # answers its own command line only for the account its service runs as. The password reaches
+    # the script as a value and no further: no_log keeps it out of the recap, and the command line
+    # takes it on stdin rather than as an argument. The .ps1 is MATERIALIZED from scripts/ by
+    # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqCredential.ps1.stub).
+
+    - name: 'PROCESS | Declare The Credential PDQ Authenticates With'
+      when: pdq_inventory_running.credential.username | length > 0
+
+      block:
+
+        - name: 'PROCESS | Give The Product The Credential It Authenticates With'
+          become: true
+          become_method: 'ansible.builtin.runas'
+          become_user: "{{ pdq_inventory_running.service_account.name }}"
+          no_log: true
+          register: '__pdq_inventory_credential__'
+          vars:
+            ansible_become_flags: 'logon_type=batch'
+            ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
+
+          ansible.windows.win_powershell:
+            depth: 3
+            error_action: 'stop'
+            parameters:
+              CliPath: "{{ pdq_inventory_running.cli_path }}"
+              DatabaseDrive: "{{ pdq_inventory_running.database.drive }}"
+              DatabaseDirectory: "{{ pdq_inventory_running.database.directory }}"
+              Credential: "{{ pdq_inventory_running.credential }}"
+              Product: 'Inventory'
+            script: "{{ lookup('ansible.builtin.file', 'Set-PdqCredential.ps1') }}"
+
+      # The task above carries a password, so it is no_log and its failure reaches the recap as
+      # "censored", naming nothing. The script's own message survives on the module's error
+      # stream -- it names the operation and the product's exit code, never a value the script was
+      # handed -- so this says that out loud and fails again, stopping the run here.
+      rescue:
+
+        - name: 'PROCESS | Stop And Name Why The Credential Could Not Be Declared'
+          vars:
+            __why__: >-
+              {{ ((__pdq_inventory_credential__.error | default([]) | first | default({})).exception
+                  | default({})).message | default('', true) }}
+
+          ansible.builtin.fail:
+            msg: >-
+              PDQ Inventory could not be given the credential it authenticates with:
+              {{ __why__ | default('the script reported no message', true) }}
+
+
+    #endregion --- [ Process: Declare The Credential PDQ Authenticates With ] ----------------- #
+
     #region ------ [ Process: Declare The Directory Sync Containers ] ------------------------- #
     # The settings above switch the sync on and choose its delete mode; this says WHERE it syncs
     # from. The product exposes no command line for its containers -- ADSync only starts a sync --
@@ -703,25 +764,45 @@
     # files/Set-PdqSyncContainer.ps1.stub); run it before this role.
 
     - name: 'PROCESS | Declare The Directory Sync Containers'
-      become: true
-      become_method: 'ansible.builtin.runas'
-      become_user: "{{ pdq_inventory_running.service_account.name }}"
-      no_log: true
-      register: '__pdq_inventory_sync__'
-      vars:
-        ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
 
-      ansible.windows.win_powershell:
-        depth: 4
-        error_action: 'stop'
-        parameters:
-          CliPath: "{{ pdq_inventory_running.cli_path }}"
-          DatabaseDrive: "{{ pdq_inventory_running.database.drive }}"
-          DatabaseDirectory: "{{ pdq_inventory_running.database.directory }}"
-          DirectorySync: "{{ pdq_inventory_running.directory_sync }}"
-          Operation: 'present'
-        script: "{{ lookup('ansible.builtin.file', 'Set-PdqSyncContainer.ps1') }}"
+      block:
+
+        - name: 'PROCESS | Give The Product Its Directory Sync Containers'
+          become: true
+          become_method: 'ansible.builtin.runas'
+          become_user: "{{ pdq_inventory_running.service_account.name }}"
+          no_log: true
+          register: '__pdq_inventory_sync__'
+          vars:
+            ansible_become_flags: 'logon_type=batch'
+            ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
+
+          ansible.windows.win_powershell:
+            depth: 4
+            error_action: 'stop'
+            parameters:
+              CliPath: "{{ pdq_inventory_running.cli_path }}"
+              DatabaseDrive: "{{ pdq_inventory_running.database.drive }}"
+              DatabaseDirectory: "{{ pdq_inventory_running.database.directory }}"
+              DirectorySync: "{{ pdq_inventory_running.directory_sync }}"
+            script: "{{ lookup('ansible.builtin.file', 'Set-PdqSyncContainer.ps1') }}"
+
+      # The declaration carries a bind password, so the task above is no_log and its failure
+      # reaches the recap as "censored". The script's own message survives on the module's error
+      # stream -- it names the container and what the directory said, never the password -- so
+      # this says that out loud and fails again, stopping the run here.
+      rescue:
+
+        - name: 'PROCESS | Stop And Name Why The Directory Sync Could Not Be Declared'
+          vars:
+            __why__: >-
+              {{ ((__pdq_inventory_sync__.error | default([]) | first | default({})).exception
+                  | default({})).message | default('', true) }}
+
+          ansible.builtin.fail:
+            msg: >-
+              PDQ Inventory could not be given its directory sync containers:
+              {{ __why__ | default('the script reported no message', true) }}
 
     # The recap says what the run did without naming a credential: how many containers the product
     # holds, and whether a sync was asked for and finished.
@@ -731,7 +812,7 @@
 
       ansible.builtin.debug:
         msg: >-
-          Directory sync: {{ __pdq_inventory_sync__.result.containers | default(0) }} container(s)
+          Directory sync: {{ __pdq_inventory_sync__.result.containers | default([], true) | length }} container(s)
           declared for realm {{ pdq_inventory_running.directory_sync.realm | default('(none)') }};
           synced={{ __pdq_inventory_sync__.result.synced | default(false) }}.
 

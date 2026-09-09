@@ -99,6 +99,24 @@ pdq_inventory_defaults:
   # still converges.
   variables: {}
 
+  # The account PDQ authenticates as, and the single row the product keeps for it. The product
+  # keys a credential on its username and holds no separate name, so one account is one
+  # credential: either ORDINARY, authenticating as the account it names, or LAPS, resolving each
+  # target's own local administrator password at connect time. It cannot be both at once.
+  #
+  # The directory sync below needs an ORDINARY one. A LAPS credential resolves to some target's
+  # local administrator, an account no directory has ever heard of, so declaring laps_user here
+  # would break the bind the sync depends on.
+  #
+  # EMPTY IS A DECLARATION, not an omission: with no username the product keeps whatever it
+  # already holds, which is what a deployment that manages no credential should do. The password
+  # is deployment-specific and secret, so the playbook resolves it and hands over the value,
+  # exactly as it does for the licence and the service account.
+  credential:
+    username: ''
+    password: ''
+    description: ''
+
   # The directory PDQ Inventory syncs computers from, and the containers it syncs. The product
   # offers no command line for either, so the declaration is written to its own store and read
   # back from it; a sync it refuses is a failed run, not a warning.

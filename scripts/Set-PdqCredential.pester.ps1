@@ -51,10 +51,18 @@ BeforeAll {
   # The declaration under test: the account PDQ authenticates as, and the local account on the
   # target whose LAPS password the product should fetch.
   $script:Declaration = @{
-    reader_username = 'tcn\svc-pdq'
-    reader_password = 'a-secret-that-must-not-be-an-argument'
+    username = 'tcn\svc-pdq'
+    password = 'a-secret-that-must-not-be-an-argument'
     laps_user       = 'Administrator'
     description     = 'PDQ LAPS reader'
+  }
+
+  # The same account declared without laps_user: an ordinary credential, which is what a
+  # directory bind needs and what a LAPS credential can never be.
+  $script:OrdinaryDeclaration = @{
+    username = 'tcn\svc-pdq'
+    password = 'a-secret-that-must-not-be-an-argument'
+    description     = 'PDQ directory bind'
   }
 
   Function New-AnsibleContext {
@@ -142,11 +150,21 @@ Describe 'Set-PdqCredential' {
       }
 
       # The write arrives as one transaction string; apply both statements in the order given.
+      # Two shapes reach here: a LAPS declaration quotes both fields, an ordinary one sets them
+      # to NULL. The store reads a NULL column back as an empty string, so that is what it keeps.
       If ($Sql -match "UPDATE Credentials SET LAPSUser = '(?<l>[^']*)', AuthenticationType = '(?<a>[^']*)', Description = '(?<d>[^']*)', IsDefault = 1 WHERE UserName = '(?<u>[^']*)'") {
         $U = $Matches['u']
         If ($global:FakeCredentials.ContainsKey($U)) {
           $global:FakeCredentials[$U].LAPSUser = $Matches['l']
           $global:FakeCredentials[$U].AuthenticationType = $Matches['a']
+          $global:FakeCredentials[$U].Description = $Matches['d']
+          $global:FakeCredentials[$U].IsDefault = '1'
+        }
+      } ElseIf ($Sql -match "UPDATE Credentials SET LAPSUser = NULL, AuthenticationType = NULL, Description = '(?<d>[^']*)', IsDefault = 1 WHERE UserName = '(?<u>[^']*)'") {
+        $U = $Matches['u']
+        If ($global:FakeCredentials.ContainsKey($U)) {
+          $global:FakeCredentials[$U].LAPSUser = ''
+          $global:FakeCredentials[$U].AuthenticationType = ''
           $global:FakeCredentials[$U].Description = $Matches['d']
           $global:FakeCredentials[$U].IsDefault = '1'
         }
@@ -189,42 +207,42 @@ Describe 'Set-PdqCredential' {
   Context 'deciding whether anything differs' {
 
     It 'reports no change when the row already reads back as declared' {
-      $global:FakeCredentials[$script:Declaration.reader_username] = @{
+      $global:FakeCredentials[$script:Declaration.username] = @{
         IsDefault = '1'; AuthenticationType = 'LAPS'
         LAPSUser = $script:Declaration.laps_user; Description = $script:Declaration.description
       }
       $global:FakeCredentials['tcn\someone-else'].IsDefault = '0'
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -LapsCredential $script:Declaration
+      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
       $Ctx.Changed | Should -BeFalse
       $Ctx.Result.msg | Should -BeLike '*already reads back*'
     }
 
     It 'reports a change when the product holds no such credential' {
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -LapsCredential $script:Declaration
+      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
       $Ctx.Changed | Should -BeTrue
     }
 
     It 'reports a change when the LAPS user differs' {
-      $global:FakeCredentials[$script:Declaration.reader_username] = @{
+      $global:FakeCredentials[$script:Declaration.username] = @{
         IsDefault = '1'; AuthenticationType = 'LAPS'
         LAPSUser = 'SomeoneElse'; Description = $script:Declaration.description
       }
       $global:FakeCredentials['tcn\someone-else'].IsDefault = '0'
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -LapsCredential $script:Declaration
+      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
       $Ctx.Changed | Should -BeTrue
     }
 
     It 'reports a change when another credential also claims the default' {
-      $global:FakeCredentials[$script:Declaration.reader_username] = @{
+      $global:FakeCredentials[$script:Declaration.username] = @{
         IsDefault = '1'; AuthenticationType = 'LAPS'
         LAPSUser = $script:Declaration.laps_user; Description = $script:Declaration.description
       }
       # The row itself matches; the store still holds two defaults, which is not the declared state.
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -LapsCredential $script:Declaration
+      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
       $Ctx.Changed | Should -BeTrue
       $global:FakeCredentials['tcn\someone-else'].IsDefault | Should -Be '0'
     }
@@ -234,8 +252,8 @@ Describe 'Set-PdqCredential' {
 
     It 'leaves the store holding exactly the declared credential, as the only default' {
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -LapsCredential $script:Declaration
-      $Row = $global:FakeCredentials[$script:Declaration.reader_username]
+      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
+      $Row = $global:FakeCredentials[$script:Declaration.username]
       ('{0}|{1}|{2}|{3}' -f $Row.IsDefault, $Row.AuthenticationType, $Row.LAPSUser, $Row.Description) |
         Should -BeExactly (Get-DeclaredRow)
       @($global:FakeCredentials.Keys | Where-Object { $global:FakeCredentials[$PSItem].IsDefault -eq '1' }) |
@@ -244,40 +262,40 @@ Describe 'Set-PdqCredential' {
 
     It 'gives the password to the command line on stdin, never as an argument' {
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -LapsCredential $script:Declaration
-      $global:FakeStdin | Should -Contain $script:Declaration.reader_password
-      ($global:FakeCliCalls -join ' ') | Should -Not -BeLike ('*' + $script:Declaration.reader_password + '*')
-      ($global:FakeSqliteCalls -join ' ') | Should -Not -BeLike ('*' + $script:Declaration.reader_password + '*')
+      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
+      $global:FakeStdin | Should -Contain $script:Declaration.password
+      ($global:FakeCliCalls -join ' ') | Should -Not -BeLike ('*' + $script:Declaration.password + '*')
+      ($global:FakeSqliteCalls -join ' ') | Should -Not -BeLike ('*' + $script:Declaration.password + '*')
     }
 
     It 'writes the secret again even when the row already matches, so a rotation arrives' {
-      $global:FakeCredentials[$script:Declaration.reader_username] = @{
+      $global:FakeCredentials[$script:Declaration.username] = @{
         IsDefault = '1'; AuthenticationType = 'LAPS'
         LAPSUser = $script:Declaration.laps_user; Description = $script:Declaration.description
       }
       $global:FakeCredentials['tcn\someone-else'].IsDefault = '0'
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -LapsCredential $script:Declaration
+      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
       $Ctx.Changed | Should -BeFalse
-      $global:FakeStdin | Should -Contain $script:Declaration.reader_password
+      $global:FakeStdin | Should -Contain $script:Declaration.password
     }
 
     It 'uses the Deploy verb for Deploy and the Scan verb for Inventory' {
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -LapsCredential $script:Declaration
+      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
       ($global:FakeCliCalls -join ' ') | Should -BeLike '*UpdateDeployCredential*'
 
       $global:FakeCliCalls.Clear()
       $Inventory = $script:Ctx.Clone()
       $Inventory.Product = 'Inventory'
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @Inventory -LapsCredential $script:Declaration
+      & $script:ScriptPath @Inventory -Credential $script:Declaration
       ($global:FakeCliCalls -join ' ') | Should -BeLike '*UpdateScanCredential*'
     }
 
     It 'sets the LAPS fields in one transaction, after the command line has made the row' {
       $Ctx = New-AnsibleContext
-      & $script:ScriptPath @script:Ctx -LapsCredential $script:Declaration
+      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
       $Write = @($global:FakeSqliteCalls | Where-Object { $PSItem -like '*UPDATE Credentials*' })
       $Write | Should -HaveCount 1
       $Write[0] | Should -BeLike '*BEGIN IMMEDIATE;*'
@@ -291,7 +309,7 @@ Describe 'Set-PdqCredential' {
       $Bad = $script:Declaration.Clone()
       $Bad.laps_user = "Admin'; DROP TABLE Credentials; --"
       $Ctx = New-AnsibleContext
-      { & $script:ScriptPath @script:Ctx -LapsCredential $Bad } |
+      { & $script:ScriptPath @script:Ctx -Credential $Bad } |
         Should -Throw -ExpectedMessage '*single quote*'
       $global:FakeSqliteCalls | Should -Not -BeLike '*DROP TABLE*'
     }
@@ -299,8 +317,53 @@ Describe 'Set-PdqCredential' {
     It 'fails loudly, naming the verb and the exit code, when the command line refuses' {
       $global:FakeCliExit = 5
       $Ctx = New-AnsibleContext
-      { & $script:ScriptPath @script:Ctx -LapsCredential $script:Declaration } |
+      { & $script:ScriptPath @script:Ctx -Credential $script:Declaration } |
         Should -Throw -ExpectedMessage '*UpdateDeployCredential exited 5*'
+    }
+  }
+
+  Context 'declaring an ordinary credential' {
+
+    It 'leaves the product holding no LAPS fields at all' {
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -Credential $script:OrdinaryDeclaration
+      $Row = $global:FakeCredentials[$script:OrdinaryDeclaration.username]
+      $Row.AuthenticationType | Should -BeExactly ''
+      $Row.LAPSUser | Should -BeExactly ''
+      $Row.Description | Should -BeExactly $script:OrdinaryDeclaration.description
+    }
+
+    It 'says which kind it declared' {
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -Credential $script:OrdinaryDeclaration
+      $Ctx.Result.msg | Should -BeLike '*ordinary credential*'
+      $Ctx.Result.msg | Should -Not -BeLike '*LAPS*'
+    }
+
+    It 'reports no change when the row already reads back as ordinary' {
+      $global:FakeCredentials[$script:OrdinaryDeclaration.username] = @{
+        IsDefault = '1'; AuthenticationType = ''
+        LAPSUser = ''; Description = $script:OrdinaryDeclaration.description
+      }
+      $global:FakeCredentials['tcn\someone-else'].IsDefault = '0'
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -Credential $script:OrdinaryDeclaration
+      $Ctx.Changed | Should -BeFalse
+    }
+
+    # The kind is the whole difference between an account that can bind to a directory and one
+    # that resolves to a target's local administrator, so changing it must never read as settled.
+    It 'reports a change when the product holds the same account as a LAPS credential' {
+      $global:FakeCredentials[$script:OrdinaryDeclaration.username] = @{
+        IsDefault = '1'; AuthenticationType = 'LAPS'
+        LAPSUser = 'Administrator'; Description = $script:OrdinaryDeclaration.description
+      }
+      $global:FakeCredentials['tcn\someone-else'].IsDefault = '0'
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -Credential $script:OrdinaryDeclaration
+      $Ctx.Changed | Should -BeTrue
+      $global:FakeCredentials[$script:OrdinaryDeclaration.username].AuthenticationType |
+        Should -BeExactly ''
     }
   }
 
@@ -308,30 +371,30 @@ Describe 'Set-PdqCredential' {
 
     It 'reports the would-be change in check mode and writes nothing' {
       $Ctx = New-AnsibleContext -CheckMode
-      & $script:ScriptPath @script:Ctx -LapsCredential $script:Declaration
+      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
       $Ctx.Changed | Should -BeTrue
       $Ctx.Result.check_mode | Should -BeTrue
       $global:FakeCliCalls | Should -HaveCount 0
-      $global:FakeCredentials.ContainsKey($script:Declaration.reader_username) | Should -BeFalse
+      $global:FakeCredentials.ContainsKey($script:Declaration.username) | Should -BeFalse
     }
 
     It 'sets Changed=$False explicitly rather than inheriting the default' {
-      $global:FakeCredentials[$script:Declaration.reader_username] = @{
+      $global:FakeCredentials[$script:Declaration.username] = @{
         IsDefault = '1'; AuthenticationType = 'LAPS'
         LAPSUser = $script:Declaration.laps_user; Description = $script:Declaration.description
       }
       $global:FakeCredentials['tcn\someone-else'].IsDefault = '0'
       $Ctx = New-AnsibleContext
       $Ctx.Changed | Should -BeTrue
-      & $script:ScriptPath @script:Ctx -LapsCredential $script:Declaration
+      & $script:ScriptPath @script:Ctx -Credential $script:Declaration
       $Ctx.Changed | Should -BeFalse
     }
 
     It 'emits the result as JSON when nothing provides an $Ansible context' {
       Remove-AnsibleContext
-      $Json = & $script:ScriptPath @script:Ctx -LapsCredential $script:Declaration | Out-String
+      $Json = & $script:ScriptPath @script:Ctx -Credential $script:Declaration | Out-String
       $Parsed = $Json | ConvertFrom-Json
-      $Parsed.credential | Should -Be $script:Declaration.reader_username
+      $Parsed.credential | Should -Be $script:Declaration.username
       $Parsed.laps_user | Should -Be $script:Declaration.laps_user
       $Parsed.product | Should -Be 'Deploy'
     }

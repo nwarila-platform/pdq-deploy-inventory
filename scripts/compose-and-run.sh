@@ -128,6 +128,14 @@ if [ -x "${FRAMEWORK_DIR}/scripts/materialize-role-scripts.sh" ]; then
     (cd "${FRAMEWORK_DIR}" && ./scripts/materialize-role-scripts.sh)
 fi
 
+# THIS repository's roles track only files/<Name>.ps1.stub as well, and the copies those resolve to
+# are build artifacts that are never committed. They must be refreshed here, from scripts/, BEFORE
+# the overlay carries them into the framework: without it a run silently proves whatever copy was
+# left on disk by an earlier one, which is a passing proof of code that no longer exists.
+if [ -x "${REPO_ROOT}/scripts/materialize-role-scripts.sh" ]; then
+    (cd "${REPO_ROOT}" && ./scripts/materialize-role-scripts.sh)
+fi
+
 # --- 2. Overlay roles into the framework namespace ------------------------------------------ #
 shopt -s nullglob
 role_sources=("${REPO_ROOT}"/ansible/applications/*)

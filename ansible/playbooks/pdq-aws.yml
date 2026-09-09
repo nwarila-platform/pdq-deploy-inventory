@@ -199,6 +199,15 @@
     pdq_repository_directory: 'PDQ Repository'
     pdq_repository_drive: 'F'
 
+    # The domain account PDQ reads the directory as, named ONCE here because two declarations
+    # below need the same one: the credential the product must HOLD to bind at sync time, and the
+    # sync declaration this playbook uses to resolve each container. It is an ORDINARY credential
+    # -- a LAPS one resolves to a target's local administrator, which no directory knows.
+    pdq_directory_username: 'tcn\svc-pdq'
+    pdq_directory_password: >-
+      {{ lookup('secret',
+                's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-domain-password.txt') }}
+
     # The pinned application versions, defined ONCE here and handed to BOTH products below (they
     # share one custom-variable model). The names are the product's own: each is spelled exactly
     # as the fleet's variable export spells it -- <Publisher>_<Product>, words joined by dashes --
@@ -352,12 +361,18 @@
           # insecure: the directory answers nothing on 636 and refuses an anonymous bind, both
           # measured, so the read is plain LDAP on 389. Said here, in the open, rather than left
           # to a default that quietly downgrades.
+          # The product binds as a credential it holds, so the same account is declared twice:
+          # once above as the credential the product stores, and here as the account this
+          # playbook binds with itself to resolve each container's directory GUID.
+          credential:
+            username: "{{ pdq_directory_username }}"
+            password: "{{ pdq_directory_password }}"
+            description: 'Directory bind for computer sync'
+
           directory_sync:
             realm: 'tcn.trinitytechnicalservices.com'
-            bind_username: 'tcn\svc-pdq'
-            bind_password: >-
-              {{ lookup('secret',
-                        's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-domain-password.txt') }}
+            bind_username: "{{ pdq_directory_username }}"
+            bind_password: "{{ pdq_directory_password }}"
             insecure: true
             containers:
               - distinguished_name: 'OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'

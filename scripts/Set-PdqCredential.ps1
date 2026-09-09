@@ -4,32 +4,39 @@
 
 <#
     .SYNOPSIS
-        Declares the credential PDQ authenticates to targets with.
+        Declares a credential PDQ authenticates with.
 
     .DESCRIPTION
-        PDQ reaches a target over its admin share, so the identity it presents has to be a local
-        administrator ON THAT MACHINE. A domain service account is not one, and the account the
-        console runs as is local to the console -- which is why an undeclared deployment scans
-        nothing and deploys nowhere.
+        A credential PDQ holds is either ORDINARY -- it authenticates as the account it names --
+        or LAPS, where the product resolves each target's own local administrator password out of
+        Active Directory at connect time using a domain account authorised to read it. The
+        declaration says which by carrying laps_user, or not.
 
-        A LAPS credential resolves that: the product reads each target's LAPS-managed local
-        administrator password out of Active Directory at connect time, using a domain account
-        authorised to read it. One credential covers every machine, no account holds standing
-        rights anywhere, and the password rotating is the point rather than a problem.
+        Both kinds are needed and they are not interchangeable. Reaching a target over its admin
+        share requires an identity that is a local administrator ON THAT MACHINE. Binding to the
+        directory requires the opposite: an account the directory knows, which a LAPS credential
+        never is, because it resolves to some target's local administrator.
 
-        The command line cannot express one. UpdateScanCredential and UpdateDeployCredential take
-        a username and a password and nothing else, so the LAPS fields are set in the product's
-        own database. The secret is NOT written that way: the command line stores it, because the
-        Password column holds ciphertext behind an '(encrypted)' marker and reproducing that
-        outside the product would be guessing at someone else's cryptography. So the command line
-        owns the secret and the database owns the two fields the command line has no words for.
+        The product keys a credential on its username and holds no separate name, so one account
+        is one credential and cannot be both kinds at once.
 
-    .PARAMETER LapsCredential
+        The command line expresses neither kind fully. UpdateScanCredential and UpdateDeployCredential
+        take a username and a password and nothing else, so the two LAPS fields are written to the
+        product's own database. The secret is NOT written that way: the command line stores it,
+        because the Password column holds ciphertext behind an '(encrypted)' marker and reproducing
+        that outside the product would be guessing at someone else's cryptography. So the command
+        line owns the secret and the database owns the fields the command line has no words for.
+
+    .PARAMETER CredentialDeclaration
         The declaration. Keys:
-          reader_username  the AD account that reads LAPS passwords, DOMAIN\name
-          reader_password  its password
-          laps_user        the managed local administrator on each target, e.g. Administrator
-          description      optional, shown in the console
+          username     the account the credential names, DOMAIN\name
+          password     its password
+          laps_user    OPTIONAL. The managed local administrator on each target, e.g.
+                       Administrator. Present makes this a LAPS credential, and makes
+                       username the account that READS those passwords rather than the
+                       one that authenticates; absent makes it an ordinary credential
+                       authenticating as username itself.
+          description  optional, shown in the console
 
     .PARAMETER Product
         'Deploy' or 'Inventory'. Each keeps its own credential store.
@@ -50,8 +57,8 @@
         Six digits, one per preference in Verbose, Debug, Information, Warning, Error, Fatal order.
 
     .EXAMPLE
-        .\Set-PdqCredential.ps1 -Product 'Inventory' -Credential @{
-            reader_username = 'TCN\svc-pdq'; reader_password = '...'; laps_user = 'Administrator'
+        .\Set-PdqCredential.ps1 -Product 'Inventory' -CredentialDeclaration @{
+            username = 'TCN\svc-pdq'; password = '...'; laps_user = 'Administrator'
         } -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe' `
           -DatabaseDrive 'D' -DatabaseDirectory 'PDQ Inventory'
 
@@ -119,7 +126,7 @@ Param (
     ValueFromPipelineByPropertyName = $False
   )]
   [System.Collections.IDictionary]
-  $LapsCredential,
+  $CredentialDeclaration,
 
   [Parameter(
     DontShow = $False,
@@ -295,27 +302,41 @@ Function Invoke-NativeCommand {
 }
 
 # The declaration, normalised once so Main compares like with like.
-$ReaderUsername = [System.String]$LapsCredential['reader_username']
-$ReaderPassword = [System.String]$LapsCredential['reader_password']
-$LapsUser = [System.String]$LapsCredential['laps_user']
-$Description = [System.String]$(If ($LapsCredential.Contains('description')) { $LapsCredential['description'] } Else { '' })
+$Username = [System.String]$CredentialDeclaration['username']
+$Password = [System.String]$CredentialDeclaration['password']
+# A declaration carrying laps_user asks for a LAPS credential: the product resolves the target's
+# own local administrator password at connect time. Without it the credential is an ordinary one,
+# authenticating as the account it names. The directory bind needs an ordinary one, because a LAPS
+# credential resolves to a target's local administrator -- an account no directory knows.
+$LapsUser = [System.String]$(If ($CredentialDeclaration.Contains('laps_user')) { $CredentialDeclaration['laps_user'] } Else { '' })
+$IsLaps = $LapsUser.Length -gt 0
+$Description = [System.String]$(If ($CredentialDeclaration.Contains('description')) { $CredentialDeclaration['description'] } Else { '' })
+
+# The role only calls this with a username declared, so an empty one means the declaration did not
+# survive the trip rather than that the caller meant nothing by it. Naming the keys that did arrive
+# turns a command line that fails with no subject into a statement about the contract.
+If ($Username.Length -eq 0) {
+  Throw ('The credential declaration carried no username. Keys received: {0}' -f (
+      $(If ($Null -eq $CredentialDeclaration) { '(no declaration at all)' } Else { (@($CredentialDeclaration.Keys) | Sort-Object) -join ', ' })
+    ))
+}
 
 # What the product holds now. A quoted literal is safe here because the value is a username the
 # caller declared, but sqlite has no parameter binding on this command line, so a single quote in
 # it would end the string -- refuse rather than build a statement that means something else.
-If ($ReaderUsername.Contains("'") -or $LapsUser.Contains("'") -or $Description.Contains("'")) {
+If ($Username.Contains("'") -or $LapsUser.Contains("'") -or $Description.Contains("'")) {
   Throw 'A declared credential value contains a single quote, which cannot be expressed safely in this statement.'
 }
 
 $Existing = (Invoke-NativeCommand -Operation:'Reading the credential store' -FilePath:$SQLITE_PATH `
-    -Argument:@($DATABASE_PATH, ("SELECT IsDefault, AuthenticationType, LAPSUser, Description FROM Credentials WHERE UserName = '{0}';" -f $ReaderUsername))).Output
+    -Argument:@($DATABASE_PATH, ("SELECT IsDefault, AuthenticationType, LAPSUser, Description FROM Credentials WHERE UserName = '{0}';" -f $Username))).Output
 $Strays = (Invoke-NativeCommand -Operation:'Counting the credentials that also claim the default' -FilePath:$SQLITE_PATH `
-    -Argument:@($DATABASE_PATH, ("SELECT COUNT(*) FROM Credentials WHERE IsDefault = 1 AND UserName <> '{0}';" -f $ReaderUsername))).Output
+    -Argument:@($DATABASE_PATH, ("SELECT COUNT(*) FROM Credentials WHERE IsDefault = 1 AND UserName <> '{0}';" -f $Username))).Output
 
 # The secret is deliberately absent from this comparison: it is stored as ciphertext behind an
 # '(encrypted)' marker and cannot be read back, so these fields are the whole of what 'changed'
 # can honestly report on. A missing row reads as an empty string and so counts as changed.
-$Declared = '1|{0}|{1}|{2}' -f $LAPS_AUTHENTICATION_TYPE, $LapsUser, $Description
+$Declared = '1|{0}|{1}|{2}' -f $(If ($IsLaps) { $LAPS_AUTHENTICATION_TYPE } Else { '' }), $LapsUser, $Description
 $Changed = ([System.String]$Existing -ne $Declared) -or ([System.String]$Strays -ne '0')
 
 If (-not $Ansible.CheckMode) {
@@ -331,28 +352,35 @@ If (-not $Ansible.CheckMode) {
   $Previous = $ErrorActionPreference
   Try {
     $ErrorActionPreference = 'Continue'
-    $Null = $ReaderPassword | & $CLI_PATH $Verb -Username $ReaderUsername -CreateIfNotExists 2>&1
+    $Null = $Password | & $CLI_PATH $Verb -Username $Username -CreateIfNotExists 2>&1
     $Exit = $LASTEXITCODE
   } Finally {
     $ErrorActionPreference = $Previous
   }
   If ($Exit -ne 0) {
-    Throw ('{0} exited {1} storing the credential for {2}.' -f $Verb, $Exit, $ReaderUsername)
+    Throw ('{0} exited {1} storing the credential for {2}.' -f $Verb, $Exit, $Username)
   }
 
-  # That call writes an ordinary credential, so the fields that make this a LAPS one follow it
-  # every run rather than only when something differs. One transaction: a row carrying a LAPS user
-  # without the matching authentication type is a credential the product would try to use as an
-  # ordinary one, with a password that is not its own.
+  # The command line writes an ordinary credential and has no words for the two LAPS fields, so
+  # they are stated here every run rather than only when something differs -- set for a LAPS
+  # declaration, cleared for an ordinary one, so a credential that stops being LAPS stops being
+  # treated as one. One transaction: a row carrying a LAPS user without the matching
+  # authentication type is a credential the product would use as an ordinary one, with a password
+  # that is not its own.
   $Statements = [System.Collections.Generic.List[System.String]]::new()
   $Statements.Add('PRAGMA busy_timeout = 5000;')
   $Statements.Add('BEGIN IMMEDIATE;')
-  $Statements.Add(("UPDATE Credentials SET LAPSUser = '{0}', AuthenticationType = '{1}', Description = '{2}', IsDefault = 1 WHERE UserName = '{3}';" -f `
-        $LapsUser, $LAPS_AUTHENTICATION_TYPE, $Description, $ReaderUsername))
+  $Kind = If ($IsLaps) {
+    "LAPSUser = '{0}', AuthenticationType = '{1}'" -f $LapsUser, $LAPS_AUTHENTICATION_TYPE
+  } Else {
+    'LAPSUser = NULL, AuthenticationType = NULL'
+  }
+  $Statements.Add(("UPDATE Credentials SET {0}, Description = '{1}', IsDefault = 1 WHERE UserName = '{2}';" -f `
+        $Kind, $Description, $Username))
   # Exactly one default: a second would leave which credential a scan picks to insertion order.
-  $Statements.Add(("UPDATE Credentials SET IsDefault = 0 WHERE UserName <> '{0}';" -f $ReaderUsername))
+  $Statements.Add(("UPDATE Credentials SET IsDefault = 0 WHERE UserName <> '{0}';" -f $Username))
   $Statements.Add('COMMIT;')
-  $Null = Invoke-NativeCommand -Operation:'Declaring the credential as LAPS' -FilePath:$SQLITE_PATH `
+  $Null = Invoke-NativeCommand -Operation:'Declaring the credential' -FilePath:$SQLITE_PATH `
     -Argument:@($DATABASE_PATH, ($Statements -join ' '))
 }
 
@@ -364,13 +392,14 @@ Write-Debug -Message:'Entering Stage: Output'
 $Result = [PSCustomObject]@{
   changed    = [System.Boolean]$Changed
   check_mode = [System.Boolean]$Ansible.CheckMode
-  credential = [System.String]$ReaderUsername
+  credential = [System.String]$Username
   laps_user  = [System.String]$LapsUser
-  msg        = If ($Changed) {
-    'Declared {0} as the default LAPS credential for PDQ {1}' -f $ReaderUsername, $Product
-  } Else {
-    '{0} already reads back as the default LAPS credential for PDQ {1}' -f $ReaderUsername, $Product
-  }
+  msg        = '{0} {1} the default {2} credential for PDQ {3}' -f @(
+    $Username
+    $(If ($Changed) { 'was declared' } Else { 'already reads back as' })
+    $(If ($IsLaps) { 'LAPS' } Else { 'ordinary' })
+    $Product
+  )
   product    = [System.String]$Product
 }
 

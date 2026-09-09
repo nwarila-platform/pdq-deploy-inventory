@@ -277,7 +277,7 @@ pdq_deploy_defaults:
   # time, which is why the playbook supplies only a version and a digest. A repository laid out
   # differently overrides this whole path, with or without the token.
   installer:
-    path: 'PDQ.com/PDQ Deploy/<version>/PDQ_Deploy_x86-x64.exe'
+    path: 'PDQ.com/PDQ Deploy/<version>/PDQcom_PDQ-Deploy_<version>_x86-x64.exe'
 
   #endregion --- [ Installer layout ] -------------------------------------------------------- #
 

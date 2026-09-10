@@ -398,11 +398,10 @@
           # deployment's directory, not a product default, so they are named here; the bind
           # password is resolved by the loader exactly as the licence and the service account are.
           #
-          # Both top-level OUs, subtrees included: that is every computer the directory holds
-          # except the domain controllers, which PDQ has no business managing. It matters because
-          # preferences.active_directory.delete_mode is FullSync, which deletes every computer
-          # that is not inside an Include container -- a narrower list would remove the rest from
-          # the database on the first sync.
+          # All three top-level OUs, subtrees included: every computer the directory holds. It
+          # matters because preferences.active_directory.delete_mode is FullSync, which deletes
+          # every computer that is not inside an Include container -- a narrower list would remove
+          # the rest from the database on the first sync.
           #
           # insecure: the directory answers nothing on 636 and refuses an anonymous bind, both
           # measured, so the read is plain LDAP on 389. Said here, in the open, rather than left
@@ -425,6 +424,9 @@
                 subtree: true
                 include: true
               - distinguished_name: 'OU=Domain Workstations,DC=tcn,DC=trinitytechnicalservices,DC=com'
+                subtree: true
+                include: true
+              - distinguished_name: 'OU=Domain Controllers,DC=tcn,DC=trinitytechnicalservices,DC=com'
                 subtree: true
                 include: true
 

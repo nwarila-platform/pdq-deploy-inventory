@@ -54,6 +54,7 @@ name: AWS Deploy
     paths:
       - 'terraform/**'
       - 'ansible/**'
+      - 'scripts/**'                          # materialized INTO the roles, so it is deployed code
       - '.github/ansible-framework-pin'       # a pin bump changes what is deployed
       - '.github/terraform-framework-pin'
       - '.github/workflows/aws-deploy.yml'

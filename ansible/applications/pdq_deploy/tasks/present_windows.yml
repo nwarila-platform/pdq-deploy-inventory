@@ -72,7 +72,9 @@
 
 - name: 'PROCESS | Install And Licence PDQ Deploy At The Pinned Version'
   vars:
-    __installer_name__: "{{ pdq_deploy_running.installer.path | basename }}"
+    __installer_name__: >-
+      {{ pdq_deploy_running.installer.path
+         | replace('<version>', pdq_deploy_running.installer.version) | basename }}
     __guest_installer__: "{{ pdq_deploy_running.install.staging_dir }}\\{{ __installer_name__ }}"
     __action_required__: "{{ __pdq_deploy_arp__.result.action_required }}"
     __repository_dir__: >-

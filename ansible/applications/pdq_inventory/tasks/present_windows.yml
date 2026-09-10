@@ -67,7 +67,9 @@
 
 - name: 'PROCESS | Install And Licence PDQ Inventory At The Pinned Version'
   vars:
-    __installer_name__: "{{ pdq_inventory_running.installer.path | basename }}"
+    __installer_name__: >-
+      {{ pdq_inventory_running.installer.path
+         | replace('<version>', pdq_inventory_running.installer.version) | basename }}
     __guest_installer__: "{{ pdq_inventory_running.install.staging_dir }}\\{{ __installer_name__ }}"
     __action_required__: "{{ __pdq_inventory_arp__.result.action_required }}"
     # Anchored on THIS role. A bare 'collections/*.xml' is resolved against the whole search path,

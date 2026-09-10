@@ -108,6 +108,11 @@
         domain_member:
           password: { bucket: "{{ aws_account_id }}-ansible" }
           computer_ou: 'OU=PDQ,OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'
+          # The address this host publishes in the realm's DNS. It is the VPC address because that
+          # is what reaches this console: PDQ scans and deploys to machines it learns BY NAME from
+          # the directory, and the tunnel address a multi-homed member would otherwise publish is
+          # unroutable from here and is reissued to a different host later.
+          registration_address: "{{ aws_private_ip_address }}"
     #endregion --- [ Roles: Domain Member ] --------------------------------------------------- #
 
     #region ------ [ Roles: Windows Disk Manager ] -------------------------------------------- #
@@ -175,6 +180,10 @@
         domain_member:
           password: { bucket: "{{ aws_account_id }}-ansible" }
           computer_ou: 'OU=Domain Workstations,DC=tcn,DC=trinitytechnicalservices,DC=com'
+          # The VPC address, for the same reason as the console: this target is scanned and
+          # deployed to BY NAME, and a name that resolves to its tunnel address resolves to
+          # somewhere the console cannot open a connection to.
+          registration_address: "{{ aws_private_ip_address }}"
     #endregion --- [ Roles: Domain Member ] --------------------------------------------------- #
 
   #endregion --- [ Roles ] -------------------------------------------------------------------- #

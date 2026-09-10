@@ -29,13 +29,10 @@
       }
     },
     {
-      "Sid": "ReadOnlyThePDQLicences",
+      "Sid": "ReadAppRepoByExactPathOnlyNoListing",
       "Effect": "Allow",
       "Action": "s3:GetObject",
-      "Resource": [
-        "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-deploy-license.lic",
-        "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-inventory-license.lic"
-      ],
+      "Resource": "arn:aws:s3:::<account-id>-apprepo/*",
       "Condition": {
         "StringEquals": {
           "aws:ResourceAccount": "<account-id>"
@@ -43,12 +40,16 @@
       }
     },
     {
-      "Sid": "ReadOnlyThePDQInstaller",
+      "Sid": "ReadOnlyThePDQLicences",
       "Effect": "Allow",
       "Action": "s3:GetObject",
       "Resource": [
-        "arn:aws:s3:::<account-id>-apprepo/PDQ.com/PDQ Deploy/*/PDQ_Deploy_x86-x64.exe",
-        "arn:aws:s3:::<account-id>-apprepo/PDQ.com/PDQ Inventory/*/PDQ_Inventory_x86-x64.exe"
+        "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-deploy-license.lic",
+        "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-inventory-license.lic",
+        "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-deploy-license-key.lic",
+        "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-inventory-license-key.lic",
+        "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-deploy-license-email.txt",
+        "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-inventory-license-email.txt"
       ],
       "Condition": {
         "StringEquals": {
@@ -61,7 +62,11 @@
       "Effect": "Allow",
       "Action": "s3:GetObject",
       "Resource": [
-        "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-password.txt"
+        "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-password.txt",
+        "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-domain-password.txt",
+        "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-ws-password.txt",
+        "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-ms-password.txt",
+        "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-dc-password.txt"
       ],
       "Condition": {
         "StringEquals": {
@@ -70,13 +75,12 @@
       }
     },
     {
-      "Sid": "ReadOnlyTheNetworkAndDirectoryArtifacts",
+      "Sid": "ReadOnlyTheDomainJoinAndOpenVpnCredentials",
       "Effect": "Allow",
       "Action": "s3:GetObject",
       "Resource": [
-        "arn:aws:s3:::<account-id>-apprepo/OpenVPN.net/OpenVPN Community/*/OpenVPN_Community_amd64.msi",
-        "arn:aws:s3:::<account-id>-ansible/host_roles/remote_client/aws-ec2-test.ovpn",
-        "arn:aws:s3:::<account-id>-ansible/host_roles/domain_member/svc-domainjoin-password.txt"
+        "arn:aws:s3:::<account-id>-ansible/host_roles/domain_member/svc-domainjoin-password.txt",
+        "arn:aws:s3:::<account-id>-ansible/host_roles/remote_client/aws-ec2-test.ovpn"
       ],
       "Condition": {
         "StringEquals": {

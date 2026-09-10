@@ -199,6 +199,7 @@
 !/scripts/Set-RepositoryContent.ps1
 !/scripts/Set-RepositoryContent.pester.ps1
 !/scripts/compose-and-run.sh
+!/scripts/converge-held-bed.sh
 !/scripts/install-hooks.sh
 !/scripts/materialize-role-scripts.sh
 

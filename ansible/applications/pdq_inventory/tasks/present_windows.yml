@@ -704,7 +704,7 @@
     # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqCredential.ps1.stub).
 
     - name: 'PROCESS | Declare The Credential PDQ Authenticates With'
-      when: pdq_inventory_running.credentials | default([], true) | length > 0
+      when: pdq_inventory_running.credentials | default({}, true) | length > 0
 
       block:
 
@@ -712,7 +712,7 @@
           become: true
           become_method: 'ansible.builtin.runas'
           become_user: "{{ pdq_inventory_running.service_account.name }}"
-          loop: "{{ pdq_inventory_running.credentials | default([], true) }}"
+          loop: "{{ pdq_inventory_running.credentials | default({}, true) | dict2items }}"
           loop_control:
             label: '(censored)'
           no_log: true
@@ -728,7 +728,7 @@
               CliPath: "{{ pdq_inventory_running.cli_path }}"
               DatabaseDrive: "{{ pdq_inventory_running.database.drive }}"
               DatabaseDirectory: "{{ pdq_inventory_running.database.directory }}"
-              CredentialDeclaration: "{{ item }}"
+              CredentialDeclaration: "{{ item.value | combine({'username': item.key}) }}"
               Product: 'Inventory'
             script: "{{ lookup('ansible.builtin.file', 'Set-PdqCredential.ps1') }}"
 
@@ -751,8 +751,8 @@
             # copied into a failure verbatim, so the declared secret is removed from whatever comes
             # back rather than trusted not to appear in it.
             __secrets__: >-
-              {{ pdq_inventory_running.credentials | default([], true)
-                 | map(attribute='password') | select('defined') | list
+              {{ pdq_inventory_running.credentials | default({}, true) | dict2items
+                 | map(attribute='value.password') | select('defined') | list
                  | reject('equalto', '') | list | unique }}
 
           ansible.builtin.fail:
@@ -823,8 +823,8 @@
             # from whatever comes back rather than trusted not to appear in it.
             __secrets__: >-
               {{ ([pdq_inventory_running.directory_sync.bind_password | default('')]
-                  + (pdq_inventory_running.credentials | default([], true)
-                     | map(attribute='password') | select('defined') | list))
+                  + (pdq_inventory_running.credentials | default({}, true) | dict2items
+                     | map(attribute='value.password') | select('defined') | list))
                  | reject('equalto', '') | list | unique }}
 
           ansible.builtin.fail:

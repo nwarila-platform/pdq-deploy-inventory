@@ -91,30 +91,24 @@
       of names. See meta/main.yml.
     quiet: true
 
-- name: 'VALIDATE | Require A Credential List The Product Can Settle On'
+- name: 'VALIDATE | Require Credentials The Product Can Settle On'
   when: (state | default('present') | string | lower | trim) == 'present'
   vars:
-    __credentials__: "{{ pdq_deploy_running.credentials | default([], true) }}"
+    __credentials__: "{{ pdq_deploy_running.credentials | default({}, true) }}"
   ansible.builtin.assert:
     that:
-      - __credentials__ is sequence
-      - __credentials__ is not string
-      # The product keys a credential on its username, so an entry without one names no account.
-      - __credentials__ | rejectattr('username', 'defined') | list | length == 0
-      - __credentials__ | selectattr('username', 'eq', '') | list | length == 0
-      # One account is one row, so two entries sharing a username are two writes to the same row
-      # and the second silently wins.
-      - __credentials__ | map(attribute='username') | list | length ==
-        __credentials__ | map(attribute='username') | unique | list | length
+      - __credentials__ is mapping
+      # The product keys a credential on its username, which is why the declaration does too: an
+      # empty key names no account, and two entries cannot name the same one.
+      - __credentials__ | list | reject('match', '.+') | list | length == 0
       # At most one entry may claim the default. Two would take the flag from each other on every
       # converge and never settle, reporting a change the pipeline could not stop making.
-      - __credentials__ | selectattr('is_default', 'defined') | selectattr('is_default')
-        | list | length <= 1
+      - __credentials__ | dict2items | map(attribute='value')
+        | selectattr('is_default', 'defined') | selectattr('is_default') | list | length <= 1
     fail_msg: >-
-      Refusing to deploy: the declared credentials are not a list the product can settle on. Each
-      entry must name a username, and no two may name the same account -- the product keys a
-      credential on its username and holds no separate name, so a repeat is a second write to the
-      same row. At most one entry may claim is_default, because the product marks whichever
-      credential was written last as its default: two claimants would take the flag from each other
-      on every converge and report a change forever.
+      Refusing to deploy: the declared credentials are not something the product can settle on.
+      They are a map keyed by the account each one opens, so a key must name an account. At most
+      one entry may claim is_default, because the product marks whichever credential was written
+      last as its default: two claimants would take the flag from each other on every converge and
+      report a change forever.
     quiet: true

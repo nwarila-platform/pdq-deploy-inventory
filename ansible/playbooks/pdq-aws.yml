@@ -236,8 +236,11 @@
     pdq_repository_directory: 'PDQ Repository'
     pdq_repository_drive: 'F'
 
-    # EVERY account either product authenticates with, declared ONCE, each carrying its own secret.
-    # The password belongs to the account it opens rather than to a variable beside it: the same
+    # Where every PDQ secret lives: one object per account, named after the account it opens.
+    pdq_secret_prefix: "s3://{{ aws_account_id }}-ansible/applications/pdq"
+
+    # EVERY account either product authenticates with, declared ONCE and keyed by the account it
+    # opens. The password belongs to that account rather than to a variable beside it: the same
     # value used to appear in three unrelated places, which is three chances to rotate two of them.
     #
     # One row per machine class, because a target admits the account ITS OU's policy adds to
@@ -246,38 +249,29 @@
     #
     # The directory account is the DEFAULT and says so, rather than relying on being written last.
     # It is the account the sync binds as, and the one a scan should fall back to -- a class account
-    # as default would hand every unattributed scan administrative rights it does not need. The
-    # username itself lives in inventory/group_vars/all.yml, because the play that builds the target
-    # needs the same one and a play's vars do not reach another play.
+    # as default would hand every unattributed scan administrative rights it does not need. Its name
+    # lives in inventory/group_vars/all.yml, because the play that builds the target needs the same
+    # one and a play's vars do not reach another play.
     pdq_credentials:
-      - username: 'tcn\svc-pdq-ws'
-        password: >-
-          {{ lookup('secret',
-                    's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-ws-password.txt') }}
+      'tcn\svc-pdq-ws':
+        password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-ws-password.txt') }}"
         description: 'Workstation class target authentication'
-      - username: 'tcn\svc-pdq-ms'
-        password: >-
-          {{ lookup('secret',
-                    's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-ms-password.txt') }}
+      'tcn\svc-pdq-ms':
+        password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-ms-password.txt') }}"
         description: 'Member server class target authentication'
-      - username: 'tcn\svc-pdq-dc'
-        password: >-
-          {{ lookup('secret',
-                    's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-dc-password.txt') }}
+      'tcn\svc-pdq-dc':
+        password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-dc-password.txt') }}"
         description: 'Domain controller class target authentication'
-      - username: "{{ pdq_directory_username }}"
-        password: >-
-          {{ lookup('secret',
-                    's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-domain-password.txt') }}
+      'tcn\svc-pdq':
+        password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-domain-password.txt') }}"
         description: 'Directory bind for computer sync'
         is_default: true
 
-    # The one entry the sync binds with, and the only credential Deploy is given. Selected from the
-    # list rather than restated, so there is one place a rotation has to reach.
-    pdq_directory_credential: >-
-      {{ pdq_credentials
-         | selectattr('username', 'equalto', pdq_directory_username)
-         | first }}
+    # The one entry the sync binds with, and the only credential Deploy is given. Looked up rather
+    # than restated, so there is one place a rotation has to reach. The lookup is also what checks
+    # the key above against inventory/group_vars/all.yml: a mapping key cannot be templated, so the
+    # directory account is spelled out, and the two disagreeing stops the play here by name.
+    pdq_directory_credential: "{{ pdq_credentials[pdq_directory_username] }}"
 
     # The pinned application versions, defined ONCE here and handed to BOTH products below (they
     # share one custom-variable model). The names are the product's own: each is spelled exactly
@@ -399,7 +393,7 @@
           # per-class identities live in Inventory and Deploy takes a target's credential from
           # there. Declaring them twice would mean two stores to rotate and two chances to
           # disagree about which account opens a given machine.
-          credentials: "{{ [pdq_directory_credential] }}"
+          credentials: "{{ {pdq_directory_username: pdq_directory_credential} }}"
 
           # The database grows without bound, so it goes on the volume provisioned for it rather
           # than the system disk. Only the letter belongs here: which disk this host dedicates to
@@ -460,7 +454,7 @@
 
           directory_sync:
             realm: 'tcn.trinitytechnicalservices.com'
-            bind_username: "{{ pdq_directory_credential.username }}"
+            bind_username: "{{ pdq_directory_username }}"
             bind_password: "{{ pdq_directory_credential.password }}"
             insecure: true
             containers:

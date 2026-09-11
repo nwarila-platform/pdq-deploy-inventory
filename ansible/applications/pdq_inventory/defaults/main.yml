@@ -99,31 +99,35 @@ pdq_inventory_defaults:
   # still converges.
   variables: {}
 
-  # The account PDQ authenticates as, and the single row the product keeps for it. The product
-  # keys a credential on its username and holds no separate name, so one account is one
-  # credential: either ORDINARY, authenticating as the account it names, or LAPS, resolving each
-  # target's own local administrator password at connect time. It cannot be both at once.
+  # The accounts PDQ authenticates as, KEYED BY THE ACCOUNT. The product keys a credential on its
+  # username and holds no separate name, which is why the username is the key here too -- one
+  # account is one row, either ORDINARY, authenticating as the account it names, or LAPS, resolving
+  # each target's own local administrator password at connect time. It cannot be both at once.
   #
-  # The directory sync below needs an ORDINARY one. A LAPS credential resolves to some target's
-  # local administrator, an account no directory has ever heard of, so declaring laps_user here
-  # would break the bind the sync depends on.
+  # The directory sync below binds as one of these, and it must be an ORDINARY one. A LAPS
+  # credential resolves to some target's local administrator, an account no directory has ever
+  # heard of, so declaring laps_user on the bind account would break the sync.
   #
-  # A LIST, because the product holds one row per account and scanning a target opens its admin
-  # share exactly as a deployment does: a workstation, a member server and a domain controller each
-  # admit a different account. Each entry carries its own password -- the secret belongs to the
-  # account it opens, not to a variable beside the list.
+  # More than one, because scanning a target opens its admin share exactly as a deployment does,
+  # and a workstation, a member server and a domain controller each admit a different account. Each
+  # entry carries its own password -- the secret belongs to the account it opens, not to a variable
+  # beside the map:
+  #
+  #     'tcn\svc-pdq-ws':
+  #       password: '...'
+  #       description: 'Workstation class target authentication'
   #
   # EXACTLY ONE entry may claim `is_default: true`, and here that must be the account the directory
   # sync binds as -- validate.yml refuses a bind account that is not among these. It is stated
   # rather than implied by position: the product marks whichever credential was written LAST as the
-  # default, so a list that says nothing would have each entry take the flag from the one before
-  # and never settle.
+  # default, so a declaration that says nothing would have each entry take the flag from the one
+  # before it and never settle.
   #
-  # EMPTY IS A DECLARATION, not an omission: an empty list leaves whatever the product already
+  # EMPTY IS A DECLARATION, not an omission: an empty map leaves whatever the product already
   # holds, which is what a deployment that manages no credential should do. Each password is
   # deployment-specific and secret, so the playbook resolves it and hands over the value, exactly
   # as it does for the licence and the service account.
-  credentials: []
+  credentials: {}
 
   # The directory PDQ Inventory syncs computers from, and the containers it syncs. The product
   # offers no command line for either, so the declaration is written to its own store and read

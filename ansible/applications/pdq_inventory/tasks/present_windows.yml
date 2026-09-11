@@ -822,8 +822,9 @@
             # product's stderr into a native-command failure, so the declared secrets are removed
             # from whatever comes back rather than trusted not to appear in it.
             __secrets__: >-
-              {{ [pdq_inventory_running.directory_sync.bind_password | default(''),
-                  pdq_inventory_running.credential.password | default('')]
+              {{ ([pdq_inventory_running.directory_sync.bind_password | default('')]
+                  + (pdq_inventory_running.credentials | default([], true)
+                     | map(attribute='password') | select('defined') | list))
                  | reject('equalto', '') | list | unique }}
 
           ansible.builtin.fail:

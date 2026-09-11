@@ -37,21 +37,17 @@
 ---
 #region ------ [ Begin: Install PDQ Deploy on Windows ] --------------------------------------- #
 
-# The service account is DECLARED as a credential -- keyed by the account, carrying its password
-# -- because that is the one shape every account in this deployment is written in. Windows wants a
-# bare name in some places and '.\name' in others, so the declaration is read into the two values
-# the rest of this file uses, once, here. no_log because it carries the secret.
+# The service account is declared as the account it logs on as, '.\name'. Windows wants a bare
+# name in some places and the qualified form in others, so the bare one is taken from it once,
+# here, and added alongside. no_log because the declaration carries the secret.
 
 - name: 'BEGIN | Read The Service Account Declaration'
   no_log: true
-  vars:
-    __declaration__: "{{ pdq_deploy_running.service_account | default({}, true) | dict2items | first }}"
-
   ansible.builtin.set_fact:
     pdq_deploy_running: >-
-      {{ pdq_deploy_running | combine({'service_account': {
-           'name': __declaration__.key | regex_replace('^\.\\', ''),
-           'password': __declaration__.value.password | default('', true)}}) }}
+      {{ pdq_deploy_running | combine({'service_account': pdq_deploy_running.service_account
+           | combine({'name': pdq_deploy_running.service_account.username
+                              | default('', true) | regex_replace('^\.\\', '')})}) }}
 
 - name: 'BEGIN | Read The Machine And Decide One Action'
 

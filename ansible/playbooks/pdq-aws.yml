@@ -322,7 +322,6 @@
   #region ------ [ Roles ] -------------------------------------------------------------------- #
   roles:
 
-
     #region ------ [ Roles: PDQ Deploy ] ------------------------------------------------------ #
     - role: 'pdq_deploy'
       vars:
@@ -349,9 +348,9 @@
           # neither product's credential store -- it runs a service, it does not authenticate to a
           # target.
           service_account:
-            '.\svc-pdq':
-              password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-password.txt') }}"
-              description: 'Background service user'
+            username: '.\svc-pdq'
+            password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-password.txt') }}"
+            description: 'Background service user'
 
           # The licence lookup verifies the stored bytes against the pinned digest before passing
           # the decoded value to the role. The licence and its shared registration email are never
@@ -484,9 +483,9 @@
           # The ONE Background Service User both products share, declared exactly as Deploy
           # declares it: keyed by the account, carrying the password that opens it.
           service_account:
-            '.\svc-pdq':
-              password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-password.txt') }}"
-              description: 'Background service user'
+            username: '.\svc-pdq'
+            password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-password.txt') }}"
+            description: 'Background service user'
 
           # Inventory has its OWN licence, distinct from Deploy's. The lookup verifies the stored
           # bytes against the pinned digest before passing the decoded value to the role. The

@@ -18,8 +18,9 @@
 #                                   GUEST immediately before execution — the copy that actually runs.
 #   pdq_inventory.license_key       Decoded licence value, verified by its controller-side lookup.
 #   pdq_inventory.license_email       Address the licence was issued to, resolved by the same lookup.
-#   pdq_inventory.service_account  One entry keyed '.\name' — the local account the background
-#                                service runs as — carrying the password that opens it.
+#   pdq_inventory.service_account.password  Password for the local account the background service
+#                                logs on as. The account itself is service_account.username,
+#                                spelled '.\name' the way Windows spells a local account.
 #   pdq_inventory.database.drive    Drive letter the dedicated database volume is mounted at on the
 #                                   guest; the role consumes the letter, it does not provision the disk.
 # The playbook resolves secret values on the CONTROLLER. The guest is never given cloud credentials.

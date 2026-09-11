@@ -30,14 +30,10 @@
       - pdq_deploy_running.installer.bucket | default('') | length > 0
       - pdq_deploy_running.installer.path | default('') | length > 0
       - pdq_deploy_running.installer.sha256 | default('') is match('^[0-9a-f]{64}$')
-      # Exactly one account runs the service, keyed '.\name' the way Windows spells a local
-      # account, and carrying the secret that opens it.
-      - pdq_deploy_running.service_account | default({}, true) | length == 1
-      - pdq_deploy_running.service_account | default({}, true) | list
-        | reject('match', '^\.\\\\[^\\\\]+$') | list | length == 0
-      - pdq_deploy_running.service_account | default({}, true) | dict2items
-        | map(attribute='value.password') | select('defined') | reject('equalto', '') | list
-        | length == 1
+      # The service account logs on as '.\name' -- Windows' own spelling for a local account --
+      # and its password cannot be empty, because the role sets it on every converge.
+      - pdq_deploy_running.service_account.username | default('') is match('^\.\\\\[^\\\\]+$')
+      - pdq_deploy_running.service_account.password | default('') | length > 0
       - pdq_deploy_running.database.drive | default('') is match('^[A-Za-z]$')
       - pdq_deploy_running.repository.drive | default('') is match('^[A-Za-z]$')
       - pdq_deploy_running.repository.bucket | default('') | length > 0

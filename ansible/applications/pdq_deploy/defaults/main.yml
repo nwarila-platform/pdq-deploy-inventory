@@ -294,22 +294,25 @@ pdq_deploy_defaults:
 
   #region ------ [ Background service user ] ------------------------------------------------- #
 
-  # The Windows account the product's background service runs as, declared the way a credential is:
-  # keyed by the account, carrying the password that opens it. It is LOCAL to this machine, so the
-  # key carries the '.\' Windows itself uses to mean "this computer"; the role takes the bare name
-  # from it for the places Windows wants a name alone.
+  # The Windows account the product's background service runs as: the account it logs on as, and
+  # the password that opens it. ONE account, always, so it is a record rather than a keyed map --
+  # the credentials above are keyed because a key is what stops two entries naming one account, and
+  # a single account has nothing to be unique against.
   #
-  # It is NOT one of the credentials above and never reaches the product's credential store: this
+  # It is NOT one of those credentials and never reaches the product's credential store: this
   # account runs a service, it does not authenticate to a target.
   #
-  # Deploy and Inventory are co-located and share ONE of these, so the account is product identity
-  # rather than a deployment choice -- but it is declared rather than defaulted, because a default
-  # account would MERGE with a caller's differently-named one and leave the role holding two.
+  # '.\' is how Windows spells a local account, and the role takes the bare name from it for the
+  # places Windows wants a name alone. Deploy and Inventory are co-located and share ONE of these,
+  # so the account is product identity and defaults here; only its password is deployment-specific,
+  # and the playbook resolves that on the controller.
   #
   # RENAMING does not retire the old account: present converges what is declared and removes
   # nothing, so the previous name survives as a member of Administrators. Retirement is a removal,
   # and removals belong to state=absent -- rename in two steps.
-  service_account: {}
+  service_account:
+    username: '.\svc-pdq'
+    password: ''
 
   #endregion --- [ Background service user ] ------------------------------------------------- #
 

@@ -55,6 +55,7 @@ BeforeAll {
     password = 'a-secret-that-must-not-be-an-argument'
     laps_user       = 'Administrator'
     description     = 'PDQ LAPS reader'
+    is_default      = $True
   }
 
   # The same account declared without laps_user: an ordinary credential, which is what a
@@ -63,6 +64,15 @@ BeforeAll {
     username = 'tcn\svc-pdq'
     password = 'a-secret-that-must-not-be-an-argument'
     description     = 'PDQ directory bind'
+    is_default      = $True
+  }
+
+  # A credential that does NOT claim the default: one row among several, which is how a deployment
+  # holding an account per machine class declares all but one of them.
+  $script:SecondaryDeclaration = @{
+    username = 'tcn\svc-pdq-ws'
+    password = 'another-secret'
+    description     = 'Workstation class target authentication'
   }
 
   Function New-AnsibleContext {
@@ -152,21 +162,21 @@ Describe 'Set-PdqCredential' {
       # The write arrives as one transaction string; apply both statements in the order given.
       # Two shapes reach here: a LAPS declaration quotes both fields, an ordinary one sets them
       # to NULL. The store reads a NULL column back as an empty string, so that is what it keeps.
-      If ($Sql -match "UPDATE Credentials SET LAPSUser = '(?<l>[^']*)', AuthenticationType = '(?<a>[^']*)', Description = '(?<d>[^']*)', IsDefault = 1 WHERE UserName = '(?<u>[^']*)'") {
+      If ($Sql -match "UPDATE Credentials SET LAPSUser = '(?<l>[^']*)', AuthenticationType = '(?<a>[^']*)', Description = '(?<d>[^']*)', IsDefault = (?<f>[01]) WHERE UserName = '(?<u>[^']*)'") {
         $U = $Matches['u']
         If ($global:FakeCredentials.ContainsKey($U)) {
           $global:FakeCredentials[$U].LAPSUser = $Matches['l']
           $global:FakeCredentials[$U].AuthenticationType = $Matches['a']
           $global:FakeCredentials[$U].Description = $Matches['d']
-          $global:FakeCredentials[$U].IsDefault = '1'
+          $global:FakeCredentials[$U].IsDefault = $Matches['f']
         }
-      } ElseIf ($Sql -match "UPDATE Credentials SET LAPSUser = NULL, AuthenticationType = NULL, Description = '(?<d>[^']*)', IsDefault = 1 WHERE UserName = '(?<u>[^']*)'") {
+      } ElseIf ($Sql -match "UPDATE Credentials SET LAPSUser = NULL, AuthenticationType = NULL, Description = '(?<d>[^']*)', IsDefault = (?<f>[01]) WHERE UserName = '(?<u>[^']*)'") {
         $U = $Matches['u']
         If ($global:FakeCredentials.ContainsKey($U)) {
           $global:FakeCredentials[$U].LAPSUser = ''
           $global:FakeCredentials[$U].AuthenticationType = ''
           $global:FakeCredentials[$U].Description = $Matches['d']
-          $global:FakeCredentials[$U].IsDefault = '1'
+          $global:FakeCredentials[$U].IsDefault = $Matches['f']
         }
       }
       If ($Sql -match "UPDATE Credentials SET IsDefault = 0 WHERE UserName <> '(?<u>[^']*)'") {
@@ -319,6 +329,41 @@ Describe 'Set-PdqCredential' {
       $Ctx = New-AnsibleContext
       { & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:Declaration } |
         Should -Throw -ExpectedMessage '*UpdateDeployCredential exited 5*'
+    }
+  }
+
+  # A deployment holding an account per machine class declares several credentials, and only one is
+  # the product's default. Before is_default existed every declaration claimed the flag, so a list
+  # had each entry take it from the one before: no converge ever settled, and which account ended
+  # up default was decided by write order.
+  Context 'declaring a credential that is not the default' {
+
+    It 'writes the row without the default flag' {
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:SecondaryDeclaration
+      $global:FakeCredentials[$script:SecondaryDeclaration.username].IsDefault | Should -BeExactly '0'
+    }
+
+    It 'leaves the existing default where it is' {
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:SecondaryDeclaration
+      $global:FakeCredentials['tcn\someone-else'].IsDefault | Should -BeExactly '1'
+    }
+
+    It 'says it declared a credential rather than the default one' {
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:SecondaryDeclaration
+      $Ctx.Result.msg | Should -Not -BeLike '*the default*'
+    }
+
+    # The settling test: a list of these runs on every converge, so a second pass over a row that
+    # already reads back as declared must report nothing at all.
+    It 'reports no change on a second declaration of the same row' {
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:SecondaryDeclaration
+      $Again = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:SecondaryDeclaration
+      $Again.Changed | Should -BeFalse
     }
   }
 

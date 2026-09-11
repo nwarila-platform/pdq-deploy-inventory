@@ -311,6 +311,11 @@ $Password = [System.String]$CredentialDeclaration['password']
 $LapsUser = [System.String]$(If ($CredentialDeclaration.Contains('laps_user')) { $CredentialDeclaration['laps_user'] } Else { '' })
 $IsLaps = $LapsUser.Length -gt 0
 $Description = [System.String]$(If ($CredentialDeclaration.Contains('description')) { $CredentialDeclaration['description'] } Else { '' })
+# Exactly one credential can be the product's default, and a deployment holding several -- one per
+# machine class -- must say WHICH. Absent means not the default: a declaration silent on the point
+# should not take the flag from whatever holds it, and a caller declaring a list would otherwise
+# have each entry strip it from the one before and never settle.
+$IsDefault = [System.Boolean]$(If ($CredentialDeclaration.Contains('is_default')) { $CredentialDeclaration['is_default'] } Else { $False })
 
 # The role only calls this with a username declared, so an empty one means the declaration did not
 # survive the trip rather than that the caller meant nothing by it. Naming the keys that did arrive
@@ -330,13 +335,17 @@ If ($Username.Contains("'") -or $LapsUser.Contains("'") -or $Description.Contain
 
 $Existing = (Invoke-NativeCommand -Operation:'Reading the credential store' -FilePath:$SQLITE_PATH `
     -Argument:@($DATABASE_PATH, ("SELECT IsDefault, AuthenticationType, LAPSUser, Description FROM Credentials WHERE UserName = '{0}';" -f $Username))).Output
-$Strays = (Invoke-NativeCommand -Operation:'Counting the credentials that also claim the default' -FilePath:$SQLITE_PATH `
-    -Argument:@($DATABASE_PATH, ("SELECT COUNT(*) FROM Credentials WHERE IsDefault = 1 AND UserName <> '{0}';" -f $Username))).Output
+# Only a declaration that CLAIMS the default cares what else claims it. One that does not is
+# content beside whatever is default, so counting rivals would report drift it will never fix.
+$Strays = If ($IsDefault) {
+  (Invoke-NativeCommand -Operation:'Counting the credentials that also claim the default' -FilePath:$SQLITE_PATH `
+      -Argument:@($DATABASE_PATH, ("SELECT COUNT(*) FROM Credentials WHERE IsDefault = 1 AND UserName <> '{0}';" -f $Username))).Output
+} Else { '0' }
 
 # The secret is deliberately absent from this comparison: it is stored as ciphertext behind an
 # '(encrypted)' marker and cannot be read back, so these fields are the whole of what 'changed'
 # can honestly report on. A missing row reads as an empty string and so counts as changed.
-$Declared = '1|{0}|{1}|{2}' -f $(If ($IsLaps) { $LAPS_AUTHENTICATION_TYPE } Else { '' }), $LapsUser, $Description
+$Declared = '{0}|{1}|{2}|{3}' -f $(If ($IsDefault) { '1' } Else { '0' }), $(If ($IsLaps) { $LAPS_AUTHENTICATION_TYPE } Else { '' }), $LapsUser, $Description
 $Changed = ([System.String]$Existing -ne $Declared) -or ([System.String]$Strays -ne '0')
 
 If (-not $Ansible.CheckMode) {
@@ -375,10 +384,14 @@ If (-not $Ansible.CheckMode) {
   } Else {
     'LAPSUser = NULL, AuthenticationType = NULL'
   }
-  $Statements.Add(("UPDATE Credentials SET {0}, Description = '{1}', IsDefault = 1 WHERE UserName = '{2}';" -f `
-        $Kind, $Description, $Username))
+  $Statements.Add(("UPDATE Credentials SET {0}, Description = '{1}', IsDefault = {2} WHERE UserName = '{3}';" -f `
+        $Kind, $Description, $(If ($IsDefault) { '1' } Else { '0' }), $Username))
   # Exactly one default: a second would leave which credential a scan picks to insertion order.
-  $Statements.Add(("UPDATE Credentials SET IsDefault = 0 WHERE UserName <> '{0}';" -f $Username))
+  # Only the declaration that claims it clears the others -- one that does not must leave the flag
+  # where it is, or a list would strip it entry by entry and end with no default at all.
+  If ($IsDefault) {
+    $Statements.Add(("UPDATE Credentials SET IsDefault = 0 WHERE UserName <> '{0}';" -f $Username))
+  }
   $Statements.Add('COMMIT;')
   $Null = Invoke-NativeCommand -Operation:'Declaring the credential' -FilePath:$SQLITE_PATH `
     -Argument:@($DATABASE_PATH, ($Statements -join ' '))
@@ -394,9 +407,10 @@ $Result = [PSCustomObject]@{
   check_mode = [System.Boolean]$Ansible.CheckMode
   credential = [System.String]$Username
   laps_user  = [System.String]$LapsUser
-  msg        = '{0} {1} the default {2} credential for PDQ {3}' -f @(
+  msg        = '{0} {1} {2}{3} credential for PDQ {4}' -f @(
     $Username
     $(If ($Changed) { 'was declared' } Else { 'already reads back as' })
+    $(If ($IsDefault) { 'the default ' } Else { 'a ' })
     $(If ($IsLaps) { 'LAPS' } Else { 'ordinary' })
     $Product
   )

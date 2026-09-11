@@ -249,48 +249,6 @@
     # Where every PDQ secret lives: one object per account, named after the account it opens.
     pdq_secret_prefix: "s3://{{ aws_account_id }}-ansible/applications/pdq"
 
-    # Each product keeps its OWN credential store, so each is declared on its own below. A
-    # credential Inventory holds is not one Deploy can deploy with, and the two sets are not
-    # required to match -- a shared list would make them agree by construction and hide that.
-    # Both take ANY NUMBER of accounts: the roles loop over whatever they are handed, so widening
-    # either store is adding an entry to it.
-    #
-    # An entry is keyed by the account it opens, because that is how the product itself keys a
-    # credential. Its password belongs to the entry rather than to a variable beside it -- the
-    # same value used to appear in three unrelated places, which is three chances to rotate two.
-    #
-    # EXACTLY ONE entry per store says `is_default: true`, rather than relying on being written
-    # last. The directory account is that one in both: it is what the sync binds as, and what an
-    # unattributed scan should fall back to, where a class account as default would hand that scan
-    # administrative rights it does not need.
-
-    # What PDQ Deploy authenticates to a target as. The directory account alone TODAY, which is a
-    # choice and not a limit: the per-class identities below live in Inventory, and Deploy asks
-    # Inventory for a target's credential at deployment time.
-    pdq_deploy_credentials:
-      'tcn\svc-pdq':
-        password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-domain-password.txt') }}"
-        description: 'Directory bind for computer sync'
-        is_default: true
-
-    # What PDQ Inventory authenticates as. One entry per machine class, because a target admits
-    # the account ITS OU's policy adds to BUILTIN\Administrators and no other -- no single account
-    # opens a workstation, a member server and a domain controller -- plus the directory account
-    # the computer sync binds through.
-    pdq_inventory_credentials:
-      'tcn\svc-pdq-ws':
-        password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-ws-password.txt') }}"
-        description: 'Workstation class target authentication'
-      'tcn\svc-pdq-ms':
-        password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-ms-password.txt') }}"
-        description: 'Member server class target authentication'
-      'tcn\svc-pdq-dc':
-        password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-dc-password.txt') }}"
-        description: 'Domain controller class target authentication'
-      'tcn\svc-pdq':
-        password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-domain-password.txt') }}"
-        description: 'Directory bind for computer sync'
-        is_default: true
 
     # The pinned application versions, defined ONCE here and handed to BOTH products below (they
     # share one custom-variable model). The names are the product's own: each is spelled exactly
@@ -404,8 +362,20 @@
             {{ lookup('secret',
                       's3://' ~ aws_account_id ~ '-ansible/applications/pdq/pdq-deploy-license-email.txt') }}
 
-          # The identities Deploy presents to a target -- this product's own store, declared above.
-          credentials: "{{ pdq_deploy_credentials }}"
+          # What Deploy authenticates to a TARGET as. Each product keeps its OWN store, so each
+          # declares one here: a credential Inventory holds is not one Deploy can deploy with, and
+          # the two sets are not required to match. An entry is keyed by the account it opens,
+          # because that is how the product itself keys a credential, and carries the password that
+          # opens it. Any number of accounts may be declared; EXACTLY ONE may say is_default.
+          #
+          # The directory account alone TODAY, which is a choice and not a limit: the per-class
+          # identities live in Inventory, and Deploy asks Inventory for a target's credential at
+          # deployment time.
+          credentials:
+            'tcn\svc-pdq':
+              password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-domain-password.txt') }}"
+              description: 'Directory bind for computer sync'
+              is_default: true
 
           # The database grows without bound, so it goes on the volume provisioned for it rather
           # than the system disk. Only the letter belongs here: which disk this host dedicates to
@@ -459,15 +429,27 @@
           # to a default that quietly downgrades.
           # Every account, because scanning a target opens its admin share exactly as a
           # deployment does, and Deploy takes a target's credential from this store.
-          credentials: "{{ pdq_inventory_credentials }}"
+          credentials:
+            'tcn\svc-pdq-ws':
+              password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-ws-password.txt') }}"
+              description: 'Workstation class target authentication'
+            'tcn\svc-pdq-ms':
+              password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-ms-password.txt') }}"
+              description: 'Member server class target authentication'
+            'tcn\svc-pdq-dc':
+              password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-dc-password.txt') }}"
+              description: 'Domain controller class target authentication'
+            'tcn\svc-pdq':
+              password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-domain-password.txt') }}"
+              description: 'Directory bind for computer sync'
+              is_default: true
 
           directory_sync:
             realm: 'tcn.trinitytechnicalservices.com'
             # NAMED, not restated. The product stores a reference to a credential row rather than
             # a password, and so does this: the role takes the secret from the entry above, which
-            # is the only place it is written. The name comes from group_vars because the play
-            # that builds the target needs the same one and a play's vars do not reach another.
-            bind_username: "{{ pdq_directory_username }}"
+            # is the only place it is written.
+            bind_username: 'tcn\svc-pdq'
             insecure: true
             containers:
               - distinguished_name: 'OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'

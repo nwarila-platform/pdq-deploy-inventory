@@ -343,13 +343,15 @@
             version: '20.1.8.0'
             sha256: '856dbe3dd4544d4b9ae1f382ee51f2a5f25f41714c462fa4afcff9743cc85eb9'
 
-          # The lookup resolves the shared service-account password on the controller. The value
-          # is passed directly to the role and never written to disk.
+          # The Windows account the background service runs as, declared the way every account
+          # here is: keyed by the account, carrying the password that opens it. '.\' is how Windows
+          # spells "local to this machine". Both products share this ONE account, and it reaches
+          # neither product's credential store -- it runs a service, it does not authenticate to a
+          # target.
           service_account:
-            name: 'svc-pdq'
-            password: >-
-              {{ lookup('secret',
-                        's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-password.txt') }}
+            '.\svc-pdq':
+              password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-password.txt') }}"
+              description: 'Background service user'
 
           # The licence lookup verifies the stored bytes against the pinned digest before passing
           # the decoded value to the role. The licence and its shared registration email are never
@@ -446,9 +448,6 @@
 
           directory_sync:
             realm: 'tcn.trinitytechnicalservices.com'
-            # NAMED, not restated. The product stores a reference to a credential row rather than
-            # a password, and so does this: the role takes the secret from the entry above, which
-            # is the only place it is written.
             bind_username: 'tcn\svc-pdq'
             insecure: true
             containers:
@@ -482,13 +481,12 @@
             version: '20.1.8.0'
             sha256: '48a486f3682cc01218993e72a8006163616166dd5f0fdcd1fab36724710fdbbf'
 
-          # The ONE Background Service User both products share. The lookup resolves the same
-          # controller-side password value used by Deploy and never writes it to disk.
+          # The ONE Background Service User both products share, declared exactly as Deploy
+          # declares it: keyed by the account, carrying the password that opens it.
           service_account:
-            name: 'svc-pdq'
-            password: >-
-              {{ lookup('secret',
-                        's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-password.txt') }}
+            '.\svc-pdq':
+              password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-password.txt') }}"
+              description: 'Background service user'
 
           # Inventory has its OWN licence, distinct from Deploy's. The lookup verifies the stored
           # bytes against the pinned digest before passing the decoded value to the role. The

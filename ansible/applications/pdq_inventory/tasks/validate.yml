@@ -30,7 +30,14 @@
       - pdq_inventory_running.installer.bucket | default('') | length > 0
       - pdq_inventory_running.installer.path | default('') | length > 0
       - pdq_inventory_running.installer.sha256 | default('') is match('^[0-9a-f]{64}$')
-      - pdq_inventory_running.service_account.name | default('') | length > 0
+      # Exactly one account runs the service, keyed '.\name' the way Windows spells a local
+      # account, and carrying the secret that opens it.
+      - pdq_inventory_running.service_account | default({}, true) | length == 1
+      - pdq_inventory_running.service_account | default({}, true) | list
+        | reject('match', '^\.\\\\[^\\\\]+$') | list | length == 0
+      - pdq_inventory_running.service_account | default({}, true) | dict2items
+        | map(attribute='value.password') | select('defined') | reject('equalto', '') | list
+        | length == 1
       - pdq_inventory_running.database.drive | default('') is match('^[A-Za-z]$')
     fail_msg: >-
       Refusing to deploy: a required input is missing or malformed. The playbook must supply the

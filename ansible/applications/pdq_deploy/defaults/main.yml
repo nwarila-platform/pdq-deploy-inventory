@@ -294,16 +294,22 @@ pdq_deploy_defaults:
 
   #region ------ [ Background service user ] ------------------------------------------------- #
 
-  # Deploy and Inventory are co-located and share ONE Background Service User, so the name is
-  # product identity rather than a deployment choice. Its password IS deployment-specific, so the
-  # playbook supplies the value after resolving and validating it on the controller.
+  # The Windows account the product's background service runs as, declared the way a credential is:
+  # keyed by the account, carrying the password that opens it. It is LOCAL to this machine, so the
+  # key carries the '.\' Windows itself uses to mean "this computer"; the role takes the bare name
+  # from it for the places Windows wants a name alone.
+  #
+  # It is NOT one of the credentials above and never reaches the product's credential store: this
+  # account runs a service, it does not authenticate to a target.
+  #
+  # Deploy and Inventory are co-located and share ONE of these, so the account is product identity
+  # rather than a deployment choice -- but it is declared rather than defaulted, because a default
+  # account would MERGE with a caller's differently-named one and leave the role holding two.
   #
   # RENAMING does not retire the old account: present converges what is declared and removes
-  # nothing, so the previous name survives as a member of Administrators (measured 2026-08-20).
-  # Retirement is a removal, and removals belong to state=absent -- rename in two steps.
-  service_account:
-    name: 'svc-pdq'
-    password: ''
+  # nothing, so the previous name survives as a member of Administrators. Retirement is a removal,
+  # and removals belong to state=absent -- rename in two steps.
+  service_account: {}
 
   #endregion --- [ Background service user ] ------------------------------------------------- #
 

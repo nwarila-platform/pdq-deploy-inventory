@@ -339,7 +339,7 @@ $Existing = (Invoke-NativeCommand -Operation:'Reading the credential store' -Fil
 # content beside whatever is default, so counting rivals would report drift it will never fix.
 $Strays = If ($IsDefault) {
   (Invoke-NativeCommand -Operation:'Counting the credentials that also claim the default' -FilePath:$SQLITE_PATH `
-      -Argument:@($DATABASE_PATH, ("SELECT COUNT(*) FROM Credentials WHERE IsDefault = 1 AND UserName <> '{0}';" -f $Username))).Output
+    -Argument:@($DATABASE_PATH, ("SELECT COUNT(*) FROM Credentials WHERE IsDefault = 1 AND UserName <> '{0}';" -f $Username))).Output
 } Else { '0' }
 
 # The secret is deliberately absent from this comparison: it is stored as ciphertext behind an

@@ -86,7 +86,9 @@
     # Flips OpenSSH's DefaultShell to PowerShell and proves the session is elevated. Every module
     # after it depends on that. Pass it NO vars: role params outrank the connection scoping it
     # relies on, and a stray one silently re-breaks the pre-flip stage.
+
     - role: 'os_bootstrap'
+
     #endregion --- [ Roles: OS Bootstrap ] ---------------------------------------------------- #
 
     #region ------ [ Roles: Remote Client ] --------------------------------------------------- #
@@ -94,25 +96,25 @@
     # 'aws_account_id' is an extra-var -- only the pipeline knows which account it deploys into.
     # Skipped when the products are being removed: an uninstall is not a reason to rebuild a
     # tunnel the host is about to stop needing.
+
     - role: 'remote_client'
       when: (state | default('present') | string | lower | trim) != 'absent'
+
     #endregion --- [ Roles: Remote Client ] --------------------------------------------------- #
 
     #region ------ [ Roles: Domain Member ] --------------------------------------------------- #
     # Wraps the platform's join mechanism and defaults the site's realm, account and secret. Only
     # two things are this repository's to say: the account it deploys into, and where a PDQ server
     # is filed -- its own OU, not the deployment servers'.
+
     - role: 'domain_member'
       when: (state | default('present') | string | lower | trim) != 'absent'
       vars:
         domain_member:
           password: { bucket: "{{ aws_account_id }}-ansible" }
           computer_ou: 'OU=PDQ,OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'
-          # The address this host publishes in the realm's DNS. It is the VPC address because that
-          # is what reaches this console: PDQ scans and deploys to machines it learns BY NAME from
-          # the directory, and the tunnel address a multi-homed member would otherwise publish is
-          # unroutable from here and is reissued to a different host later.
           registration_address: "{{ aws_private_ip_address }}"
+
     #endregion --- [ Roles: Domain Member ] --------------------------------------------------- #
 
     #region ------ [ Roles: Windows Disk Manager ] -------------------------------------------- #
@@ -120,6 +122,7 @@
     # resolves it to the attached disk itself -- a volume id only exists after apply. The letters
     # are the contract this play publishes to the products below: Inventory's database on D,
     # Deploy's on E, and the shared package repository on F.
+
     - role: 'windows_disk_manager'
       vars:
         windows_disk_manager:
@@ -137,6 +140,7 @@
               drive_letter: 'F'
               label: 'PDQREPO'
               allocation_unit: 65536
+
     #endregion --- [ Roles: Windows Disk Manager ] -------------------------------------------- #
 
   #endregion --- [ Roles ] -------------------------------------------------------------------- #
@@ -156,34 +160,40 @@
   roles:
 
     #region ------ [ Roles: Host Readiness ] -------------------------------------------------- #
+    # Needs a description here.
     - role: 'host_readiness'
+
     #endregion --- [ Roles: Host Readiness ] -------------------------------------------------- #
 
     #region ------ [ Roles: OS Bootstrap ] ---------------------------------------------------- #
     # Server 2022, not 2025. The inventory names the release's bootstrap role in
     # 'os_bootstrap_role' rather than this play passing it, because a role parameter outranks the
     # connection scoping the pre-flip stage depends on. Pass it NO vars here either.
+
     - role: 'os_bootstrap'
+
     #endregion --- [ Roles: OS Bootstrap ] ---------------------------------------------------- #
 
     #region ------ [ Roles: Remote Client ] --------------------------------------------------- #
+    # Needs a description here.
+
     - role: 'remote_client'
       when: (state | default('present') | string | lower | trim) != 'absent'
+
     #endregion --- [ Roles: Remote Client ] --------------------------------------------------- #
 
     #region ------ [ Roles: Domain Member ] --------------------------------------------------- #
     # 'OU=Domain Workstations' is not a preference: it is one of the two OUs where svc-pdq holds
     # the LAPS read grant, so a target filed anywhere else has a LAPS password PDQ cannot read.
+
     - role: 'domain_member'
       when: (state | default('present') | string | lower | trim) != 'absent'
       vars:
         domain_member:
           password: { bucket: "{{ aws_account_id }}-ansible" }
           computer_ou: 'OU=Domain Workstations,DC=tcn,DC=trinitytechnicalservices,DC=com'
-          # The VPC address, for the same reason as the console: this target is scanned and
-          # deployed to BY NAME, and a name that resolves to its tunnel address resolves to
-          # somewhere the console cannot open a connection to.
           registration_address: "{{ aws_private_ip_address }}"
+
     #endregion --- [ Roles: Domain Member ] --------------------------------------------------- #
 
   #endregion --- [ Roles ] -------------------------------------------------------------------- #
@@ -239,20 +249,35 @@
     # Where every PDQ secret lives: one object per account, named after the account it opens.
     pdq_secret_prefix: "s3://{{ aws_account_id }}-ansible/applications/pdq"
 
-    # EVERY account either product authenticates with, declared ONCE and keyed by the account it
-    # opens. The password belongs to that account rather than to a variable beside it: the same
-    # value used to appear in three unrelated places, which is three chances to rotate two of them.
+    # Each product keeps its OWN credential store, so each is declared on its own below. A
+    # credential Inventory holds is not one Deploy can deploy with, and the two sets are not
+    # required to match -- a shared list would make them agree by construction and hide that.
+    # Both take ANY NUMBER of accounts: the roles loop over whatever they are handed, so widening
+    # either store is adding an entry to it.
     #
-    # One row per machine class, because a target admits the account ITS OU's policy adds to
-    # BUILTIN\Administrators and no other, so no single account can open a workstation, a member
-    # server and a domain controller.
+    # An entry is keyed by the account it opens, because that is how the product itself keys a
+    # credential. Its password belongs to the entry rather than to a variable beside it -- the
+    # same value used to appear in three unrelated places, which is three chances to rotate two.
     #
-    # The directory account is the DEFAULT and says so, rather than relying on being written last.
-    # It is the account the sync binds as, and the one a scan should fall back to -- a class account
-    # as default would hand every unattributed scan administrative rights it does not need. Its name
-    # lives in inventory/group_vars/all.yml, because the play that builds the target needs the same
-    # one and a play's vars do not reach another play.
-    pdq_credentials:
+    # EXACTLY ONE entry per store says `is_default: true`, rather than relying on being written
+    # last. The directory account is that one in both: it is what the sync binds as, and what an
+    # unattributed scan should fall back to, where a class account as default would hand that scan
+    # administrative rights it does not need.
+
+    # What PDQ Deploy authenticates to a target as. The directory account alone TODAY, which is a
+    # choice and not a limit: the per-class identities below live in Inventory, and Deploy asks
+    # Inventory for a target's credential at deployment time.
+    pdq_deploy_credentials:
+      'tcn\svc-pdq':
+        password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-domain-password.txt') }}"
+        description: 'Directory bind for computer sync'
+        is_default: true
+
+    # What PDQ Inventory authenticates as. One entry per machine class, because a target admits
+    # the account ITS OU's policy adds to BUILTIN\Administrators and no other -- no single account
+    # opens a workstation, a member server and a domain controller -- plus the directory account
+    # the computer sync binds through.
+    pdq_inventory_credentials:
       'tcn\svc-pdq-ws':
         password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-ws-password.txt') }}"
         description: 'Workstation class target authentication'
@@ -267,11 +292,11 @@
         description: 'Directory bind for computer sync'
         is_default: true
 
-    # The one entry the sync binds with, and the only credential Deploy is given. Looked up rather
-    # than restated, so there is one place a rotation has to reach. The lookup is also what checks
-    # the key above against inventory/group_vars/all.yml: a mapping key cannot be templated, so the
-    # directory account is spelled out, and the two disagreeing stops the play here by name.
-    pdq_directory_credential: "{{ pdq_credentials[pdq_directory_username] }}"
+    # The entry the sync binds with, taken from Inventory's store because that is the store the
+    # sync runs out of. The lookup is also what checks the key above against
+    # inventory/group_vars/all.yml: a mapping key cannot be templated, so the directory account is
+    # spelled out, and the two disagreeing stops the play here by name.
+    pdq_directory_credential: "{{ pdq_inventory_credentials[pdq_directory_username] }}"
 
     # The pinned application versions, defined ONCE here and handed to BOTH products below (they
     # share one custom-variable model). The names are the product's own: each is spelled exactly
@@ -385,15 +410,8 @@
             {{ lookup('secret',
                       's3://' ~ aws_account_id ~ '-ansible/applications/pdq/pdq-deploy-license-email.txt') }}
 
-          # The identity Deploy presents to a target. The same account the sync binds as and the
-          # same one the target admits to its local Administrators -- declared again here because
-          # each product keeps its own credential store, so a credential Inventory holds is not
-          # one Deploy can deploy with.
-          # ONE credential, and only one. Deploy does not hold an account per machine class: the
-          # per-class identities live in Inventory and Deploy takes a target's credential from
-          # there. Declaring them twice would mean two stores to rotate and two chances to
-          # disagree about which account opens a given machine.
-          credentials: "{{ {pdq_directory_username: pdq_directory_credential} }}"
+          # The identities Deploy presents to a target -- this product's own store, declared above.
+          credentials: "{{ pdq_deploy_credentials }}"
 
           # The database grows without bound, so it goes on the volume provisioned for it rather
           # than the system disk. Only the letter belongs here: which disk this host dedicates to
@@ -450,7 +468,7 @@
           # playbook binds with itself to resolve each container's directory GUID.
           # Every account, because scanning a target opens its admin share exactly as a
           # deployment does, and Deploy takes a target's credential from this store.
-          credentials: "{{ pdq_credentials }}"
+          credentials: "{{ pdq_inventory_credentials }}"
 
           directory_sync:
             realm: 'tcn.trinitytechnicalservices.com'

@@ -869,7 +869,7 @@
     # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqCredential.ps1.stub).
 
     - name: 'PROCESS | Declare The Credential PDQ Authenticates With'
-      when: pdq_deploy_running.credential.username | length > 0
+      when: pdq_deploy_running.credentials | default([], true) | length > 0
 
       block:
 
@@ -877,6 +877,9 @@
           become: true
           become_method: 'ansible.builtin.runas'
           become_user: "{{ pdq_deploy_running.service_account.name }}"
+          loop: "{{ pdq_deploy_running.credentials | default([], true) }}"
+          loop_control:
+            label: '(censored)'
           no_log: true
           register: '__pdq_deploy_credential__'
           vars:
@@ -890,7 +893,7 @@
               CliPath: "{{ pdq_deploy_running.cli_path }}"
               DatabaseDrive: "{{ pdq_deploy_running.database.drive }}"
               DatabaseDirectory: "{{ pdq_deploy_running.database.directory }}"
-              CredentialDeclaration: "{{ pdq_deploy_running.credential }}"
+              CredentialDeclaration: "{{ item }}"
               Product: 'Deploy'
             script: "{{ lookup('ansible.builtin.file', 'Set-PdqCredential.ps1') }}"
 
@@ -903,11 +906,13 @@
         - name: 'PROCESS | Stop And Name Why The Credential Could Not Be Declared'
           vars:
             __raw__: >-
-              {{ (((__pdq_deploy_credential__.error | default([]) | first | default({})).exception
+              {{ ((((__pdq_deploy_credential__.results | default([], true) | selectattr('failed', 'defined')
+                    | selectattr('failed') | first | default({}, true)).error | default([]) | first | default({})).exception
                    | default({})).message | default('', true))
                  | default(ansible_failed_result.msg | default('the credential task failed', true), true) }}
             __secrets__: >-
-              {{ [pdq_deploy_running.credential.password | default('')]
+              {{ pdq_deploy_running.credentials | default([], true)
+                 | map(attribute='password') | select('defined') | list
                  | reject('equalto', '') | list | unique }}
 
           ansible.builtin.fail:

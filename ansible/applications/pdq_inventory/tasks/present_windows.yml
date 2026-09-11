@@ -704,7 +704,7 @@
     # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqCredential.ps1.stub).
 
     - name: 'PROCESS | Declare The Credential PDQ Authenticates With'
-      when: pdq_inventory_running.credential.username | length > 0
+      when: pdq_inventory_running.credentials | default([], true) | length > 0
 
       block:
 
@@ -712,6 +712,9 @@
           become: true
           become_method: 'ansible.builtin.runas'
           become_user: "{{ pdq_inventory_running.service_account.name }}"
+          loop: "{{ pdq_inventory_running.credentials | default([], true) }}"
+          loop_control:
+            label: '(censored)'
           no_log: true
           register: '__pdq_inventory_credential__'
           vars:
@@ -725,7 +728,7 @@
               CliPath: "{{ pdq_inventory_running.cli_path }}"
               DatabaseDrive: "{{ pdq_inventory_running.database.drive }}"
               DatabaseDirectory: "{{ pdq_inventory_running.database.directory }}"
-              CredentialDeclaration: "{{ pdq_inventory_running.credential }}"
+              CredentialDeclaration: "{{ item }}"
               Product: 'Inventory'
             script: "{{ lookup('ansible.builtin.file', 'Set-PdqCredential.ps1') }}"
 
@@ -740,14 +743,16 @@
             # The script's own message, or -- when the module failed before PowerShell ran, so
             # there is no error stream to read -- the guarded field the style guide projects.
             __raw__: >-
-              {{ (((__pdq_inventory_credential__.error | default([]) | first | default({})).exception
+              {{ ((((__pdq_inventory_credential__.results | default([], true) | selectattr('failed', 'defined')
+                    | selectattr('failed') | first | default({}, true)).error | default([]) | first | default({})).exception
                    | default({})).message | default('', true))
                  | default(ansible_failed_result.msg | default('the credential task failed', true), true) }}
             # Nothing authored here interpolates the password, but the product's own stderr is
             # copied into a failure verbatim, so the declared secret is removed from whatever comes
             # back rather than trusted not to appear in it.
             __secrets__: >-
-              {{ [pdq_inventory_running.credential.password | default('')]
+              {{ pdq_inventory_running.credentials | default([], true)
+                 | map(attribute='password') | select('defined') | list
                  | reject('equalto', '') | list | unique }}
 
           ansible.builtin.fail:

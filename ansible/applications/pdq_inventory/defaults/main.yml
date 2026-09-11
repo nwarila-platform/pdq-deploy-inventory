@@ -108,14 +108,22 @@ pdq_inventory_defaults:
   # local administrator, an account no directory has ever heard of, so declaring laps_user here
   # would break the bind the sync depends on.
   #
-  # EMPTY IS A DECLARATION, not an omission: with no username the product keeps whatever it
-  # already holds, which is what a deployment that manages no credential should do. The password
-  # is deployment-specific and secret, so the playbook resolves it and hands over the value,
-  # exactly as it does for the licence and the service account.
-  credential:
-    username: ''
-    password: ''
-    description: ''
+  # A LIST, because the product holds one row per account and scanning a target opens its admin
+  # share exactly as a deployment does: a workstation, a member server and a domain controller each
+  # admit a different account. Each entry carries its own password -- the secret belongs to the
+  # account it opens, not to a variable beside the list.
+  #
+  # EXACTLY ONE entry may claim `is_default: true`, and here that must be the account the directory
+  # sync binds as -- validate.yml refuses a bind account that is not among these. It is stated
+  # rather than implied by position: the product marks whichever credential was written LAST as the
+  # default, so a list that says nothing would have each entry take the flag from the one before
+  # and never settle.
+  #
+  # EMPTY IS A DECLARATION, not an omission: an empty list leaves whatever the product already
+  # holds, which is what a deployment that manages no credential should do. Each password is
+  # deployment-specific and secret, so the playbook resolves it and hands over the value, exactly
+  # as it does for the licence and the service account.
+  credentials: []
 
   # The directory PDQ Inventory syncs computers from, and the containers it syncs. The product
   # offers no command line for either, so the declaration is written to its own store and read

@@ -292,12 +292,6 @@
         description: 'Directory bind for computer sync'
         is_default: true
 
-    # The entry the sync binds with, taken from Inventory's store because that is the store the
-    # sync runs out of. The lookup is also what checks the key above against
-    # inventory/group_vars/all.yml: a mapping key cannot be templated, so the directory account is
-    # spelled out, and the two disagreeing stops the play here by name.
-    pdq_directory_credential: "{{ pdq_inventory_credentials[pdq_directory_username] }}"
-
     # The pinned application versions, defined ONCE here and handed to BOTH products below (they
     # share one custom-variable model). The names are the product's own: each is spelled exactly
     # as the fleet's variable export spells it -- <Publisher>_<Product>, words joined by dashes --
@@ -463,17 +457,17 @@
           # insecure: the directory answers nothing on 636 and refuses an anonymous bind, both
           # measured, so the read is plain LDAP on 389. Said here, in the open, rather than left
           # to a default that quietly downgrades.
-          # The product binds as a credential it holds, so the same account is declared twice:
-          # once above as the credential the product stores, and here as the account this
-          # playbook binds with itself to resolve each container's directory GUID.
           # Every account, because scanning a target opens its admin share exactly as a
           # deployment does, and Deploy takes a target's credential from this store.
           credentials: "{{ pdq_inventory_credentials }}"
 
           directory_sync:
             realm: 'tcn.trinitytechnicalservices.com'
+            # NAMED, not restated. The product stores a reference to a credential row rather than
+            # a password, and so does this: the role takes the secret from the entry above, which
+            # is the only place it is written. The name comes from group_vars because the play
+            # that builds the target needs the same one and a play's vars do not reach another.
             bind_username: "{{ pdq_directory_username }}"
-            bind_password: "{{ pdq_directory_credential.password }}"
             insecure: true
             containers:
               - distinguished_name: 'OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'

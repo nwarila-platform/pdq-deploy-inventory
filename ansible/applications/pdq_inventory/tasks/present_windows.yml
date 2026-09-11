@@ -793,6 +793,10 @@
           vars:
             ansible_become_flags: 'logon_type=batch'
             ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
+            __pdq_inventory_bind_password__: >-
+              {{ (pdq_inventory_running.credentials | default({}, true))[
+                   pdq_inventory_running.directory_sync.bind_username | default('', true)
+                 ].password | default('', true) }}
 
           ansible.windows.win_powershell:
             depth: 4
@@ -801,7 +805,11 @@
               CliPath: "{{ pdq_inventory_running.cli_path }}"
               DatabaseDrive: "{{ pdq_inventory_running.database.drive }}"
               DatabaseDirectory: "{{ pdq_inventory_running.database.directory }}"
-              DirectorySync: "{{ pdq_inventory_running.directory_sync }}"
+              # The declaration names its bind account; the secret comes from the credential
+              # store, so it is stated once and this is where the two are joined.
+              DirectorySync: >-
+                {{ pdq_inventory_running.directory_sync
+                   | combine({'bind_password': __pdq_inventory_bind_password__}) }}
             script: "{{ lookup('ansible.builtin.file', 'Set-PdqSyncContainer.ps1') }}"
 
       # The declaration carries a bind password, so the task above is no_log and its failure

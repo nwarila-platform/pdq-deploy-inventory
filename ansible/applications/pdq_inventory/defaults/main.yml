@@ -140,8 +140,14 @@ pdq_inventory_defaults:
   # mode alone are the same decision made twice; the validate task refuses the pair that would
   # empty the database.
   #
-  # The bind password is deployment-specific and secret, so the playbook resolves it and hands
-  # over the value, exactly as it does for the licence and the service account.
+  # The bind account is NAMED, not restated: bind_username must be one of the credentials declared
+  # above, and the role takes that entry's password from there. The product itself stores only a
+  # REFERENCE to a credential row, and this declaration matches it -- so the secret is written in
+  # exactly one place and a rotation reaches both the store and the bind at once.
+  #
+  # A container may bind as a different account than the sync does, and then it states BOTH
+  # bind_username and bind_password for itself: per-account resolution belongs to whoever declares
+  # the pair, and a container naming only the account would silently borrow this one's password.
   #
   # 'insecure' opts the directory read down to plain LDAP on 389. It is false here because a
   # default that downgrades is a default nobody audits; a directory that answers nothing on 636
@@ -149,7 +155,6 @@ pdq_inventory_defaults:
   directory_sync:
     realm: ''
     bind_username: ''
-    bind_password: ''
     insecure: false
     containers: []
 

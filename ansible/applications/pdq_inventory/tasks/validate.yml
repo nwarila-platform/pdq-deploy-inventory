@@ -129,12 +129,11 @@
     __credential__: "{{ __credentials__[__sync__.bind_username | default('', true)] | default({}, true) }}"
   ansible.builtin.assert:
     that:
-      # A container list needs somewhere to bind and something to bind as; without all three the
+      # A container list needs somewhere to bind and something to bind as; without both the
       # product would hold containers it can never read.
       - __containers__ | length == 0 or
         (__sync__.realm | default('') | length > 0 and
-         __sync__.bind_username | default('') | length > 0 and
-         __sync__.bind_password | default('') | length > 0)
+         __sync__.bind_username | default('') | length > 0)
       # The bind account must be AMONG the declared credentials, or the product would bind through
       # a row this run never wrote and the sync would run as somebody else. Declaring none at all
       # is left alone deliberately -- the defaults say that keeps whatever the product holds, and
@@ -142,14 +141,19 @@
       - __containers__ | length == 0 or
         __credentials__ | length == 0 or
         (__sync__.bind_username | default('', true)) in __credentials__
-      # And that entry must carry the same secret and be ORDINARY: the playbook reads the directory
-      # with the declared bind values while the product binds through its stored row, so a pair
-      # that disagrees converges and then syncs as somebody else -- and a LAPS credential resolves
-      # to some target's local administrator, an account no directory has heard of.
+      # And that entry must be ORDINARY. The role reads the directory with the password from this
+      # entry, and a LAPS credential resolves to some target's local administrator -- an account no
+      # directory has heard of -- so the bind would fail on every run.
       - __credential__ | length == 0 or
         __containers__ | length == 0 or
-        (__credential__.password == (__sync__.bind_password | default('')) and
-         (__credential__.laps_user | default('') | length == 0))
+        __credential__.laps_user | default('') | length == 0
+      # A container binding as a different account states BOTH halves for itself. Naming only the
+      # account would leave it borrowing the sync's password and authenticating as somebody it is
+      # not; naming only a password names no account at all.
+      - __containers__ | selectattr('bind_username', 'defined')
+        | rejectattr('bind_password', 'defined') | list | length == 0
+      - __containers__ | selectattr('bind_password', 'defined')
+        | rejectattr('bind_username', 'defined') | list | length == 0
       # Every container is a distinguished name plus the two flags the product stores.
       - __containers__ | rejectattr('distinguished_name', 'defined') | list | length == 0
       - __containers__ | selectattr('distinguished_name', 'eq', '') | list | length == 0
@@ -161,11 +165,12 @@
     fail_msg: >-
       Refusing to deploy: the directory sync declaration is one the product cannot act on.
       Containers require a realm, a bind username and a bind password, and each container requires
-      a distinguished_name. When credentials are declared alongside them, the bind account must be
-      one of them, carrying the same password and no laps_user: the product binds through the
-      credential row it stores while this playbook reads the directory with the declared bind
-      values, and a LAPS credential resolves to a target's local administrator instead of a
-      directory account. With delete_mode FullSync at least one container must be included:
+      a distinguished_name. The bind account is NAMED, not restated: bind_username must be one of
+      the declared credentials and must not be a LAPS one, because the role takes that entry's
+      password to read the directory and a LAPS credential resolves to a target's local
+      administrator instead of a directory account. A container that binds as a different account
+      states both bind_username and bind_password for itself -- half a pair would borrow this
+      declaration's password and authenticate as somebody it is not. With delete_mode FullSync at least one container must be included:
       FullSync removes every computer that is not inside an Include container, so a list of
       exclusions alone would empty the database on the first sync.
     quiet: true

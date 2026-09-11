@@ -493,12 +493,13 @@
     # service account and is a different principal entirely, which is why granting one grants
     # nothing to the other. Read on the share, because NTFS already admits it through Users; the
     # effective right is the lesser of the two, so the share was the half that refused. Every
-    # declared account is admitted, and those are the KEYS of the credential map.
+    # declared account is admitted.
     - name: 'PROCESS | Share The Repository Over The Network'
       vars:
         __repository_readers__: >-
           {{ (([pdq_deploy_running.service_account.name, 'Administrators']
-               + (pdq_deploy_running.credentials | default({}, true) | list))
+               + (pdq_deploy_running.credentials | default([], true)
+                  | map(attribute='username') | select('defined') | list))
               | reject('equalto', '') | list | unique | join(',')) }}
 
       ansible.windows.win_share:
@@ -882,7 +883,7 @@
     # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqCredential.ps1.stub).
 
     - name: 'PROCESS | Declare The Credential PDQ Authenticates With'
-      when: pdq_deploy_running.credentials | default({}, true) | length > 0
+      when: pdq_deploy_running.credentials | default([], true) | length > 0
 
       block:
 
@@ -890,7 +891,7 @@
           become: true
           become_method: 'ansible.builtin.runas'
           become_user: "{{ pdq_deploy_running.service_account.name }}"
-          loop: "{{ pdq_deploy_running.credentials | default({}, true) | dict2items }}"
+          loop: "{{ pdq_deploy_running.credentials | default([], true) }}"
           loop_control:
             label: '(censored)'
           no_log: true
@@ -906,7 +907,7 @@
               CliPath: "{{ pdq_deploy_running.cli_path }}"
               DatabaseDrive: "{{ pdq_deploy_running.database.drive }}"
               DatabaseDirectory: "{{ pdq_deploy_running.database.directory }}"
-              CredentialDeclaration: "{{ item.value | combine({'username': item.key}) }}"
+              CredentialDeclaration: "{{ item }}"
               Product: 'Deploy'
             script: "{{ lookup('ansible.builtin.file', 'Set-PdqCredential.ps1') }}"
 
@@ -924,8 +925,8 @@
                    | default({})).message | default('', true))
                  | default(ansible_failed_result.msg | default('the credential task failed', true), true) }}
             __secrets__: >-
-              {{ pdq_deploy_running.credentials | default({}, true) | dict2items
-                 | map(attribute='value.password') | select('defined') | list
+              {{ pdq_deploy_running.credentials | default([], true)
+                 | map(attribute='password') | select('defined') | list
                  | reject('equalto', '') | list | unique }}
 
           ansible.builtin.fail:

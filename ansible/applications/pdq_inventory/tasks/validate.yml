@@ -87,23 +87,29 @@
 - name: 'VALIDATE | Require Credentials The Product Can Settle On'
   when: (state | default('present') | string | lower | trim) == 'present'
   vars:
-    __credentials__: "{{ pdq_inventory_running.credentials | default({}, true) }}"
+    __credentials__: "{{ pdq_inventory_running.credentials | default([], true) }}"
+    __usernames__: "{{ __credentials__ | map(attribute='username') | select('defined') | list }}"
   ansible.builtin.assert:
     that:
-      - __credentials__ is mapping
-      # The product keys a credential on its username, which is why the declaration does too: an
-      # empty key names no account, and two entries cannot name the same one.
-      - __credentials__ | list | reject('match', '.+') | list | length == 0
+      - __credentials__ is sequence
+      - __credentials__ is not string
+      # The product keys a credential on its username and holds no separate name, so an entry
+      # without one names no account -- and two entries naming the SAME account are two writes to
+      # one row, where the second silently wins.
+      - __credentials__ | rejectattr('username', 'defined') | list | length == 0
+      - __usernames__ | reject('match', '.+') | list | length == 0
+      - __usernames__ | length == __usernames__ | unique | list | length
       # At most one entry may claim the default. Two would take the flag from each other on every
       # converge and never settle, reporting a change the pipeline could not stop making.
-      - __credentials__ | dict2items | map(attribute='value')
-        | selectattr('is_default', 'defined') | selectattr('is_default') | list | length <= 1
+      - __credentials__ | selectattr('is_default', 'defined') | selectattr('is_default')
+        | list | length <= 1
     fail_msg: >-
       Refusing to deploy: the declared credentials are not something the product can settle on.
-      They are a map keyed by the account each one opens, so a key must name an account. At most
-      one entry may claim is_default, because the product marks whichever credential was written
-      last as its default: two claimants would take the flag from each other on every converge and
-      report a change forever.
+      Each entry must name a username, and no two may name the same account -- the product keys a
+      credential on its username and holds no separate name, so a repeat is a second write to the
+      same row. At most one entry may claim is_default, because the product marks whichever
+      credential was written last as its default: two claimants would take the flag from each other
+      on every converge and report a change forever.
     quiet: true
 
 - name: 'VALIDATE | Require A Directory Sync Delete Mode The Product Recognises'
@@ -127,9 +133,13 @@
   vars:
     __sync__: "{{ pdq_inventory_running.directory_sync | default({}, true) }}"
     __containers__: "{{ __sync__.containers | default([], true) }}"
-    __credentials__: "{{ pdq_inventory_running.credentials | default({}, true) }}"
+    __credentials__: "{{ pdq_inventory_running.credentials | default([], true) }}"
+    __usernames__: "{{ __credentials__ | map(attribute='username') | select('defined') | list }}"
     # The declared entry the containers bind through, if this run declares it at all.
-    __credential__: "{{ __credentials__[__sync__.bind_username | default('', true)] | default({}, true) }}"
+    __credential__: >-
+      {{ __credentials__ | selectattr('username', 'defined')
+         | selectattr('username', 'equalto', __sync__.bind_username | default('', true))
+         | first | default({}, true) }}
   ansible.builtin.assert:
     that:
       # A container list needs somewhere to bind and something to bind as; without both the
@@ -142,8 +152,8 @@
       # is left alone deliberately -- the defaults say that keeps whatever the product holds, and
       # the sync script fails clearly and by name if what it holds cannot bind.
       - __containers__ | length == 0 or
-        __credentials__ | length == 0 or
-        (__sync__.bind_username | default('', true)) in __credentials__
+        __usernames__ | length == 0 or
+        (__sync__.bind_username | default('', true)) in __usernames__
       # And that entry must be ORDINARY. The role reads the directory with the password from this
       # entry, and a LAPS credential resolves to some target's local administrator -- an account no
       # directory has heard of -- so the bind would fail on every run.

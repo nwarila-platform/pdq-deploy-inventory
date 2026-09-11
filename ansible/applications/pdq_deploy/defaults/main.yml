@@ -120,23 +120,26 @@ pdq_deploy_defaults:
   # FIND-18, dropped from the script's table entirely so declaring one fails as an unknown name).
   # The deployments page's Inventory scan profile is accepted but left undefaulted here: it names
   # an object inside PDQ Inventory that only the caller can know.
-  # The accounts PDQ Deploy authenticates to a TARGET as, KEYED BY THE ACCOUNT. Each product holds
-  # its OWN credential store, so the same account is declared to each: a credential in Inventory is
-  # not one Deploy can deploy with. The product keys a credential on its username and holds no
-  # separate name, which is why the username is the key here too -- one account is one row, either
-  # ORDINARY, authenticating as the account it names, or LAPS, resolving each target's own local
+  # The accounts PDQ Deploy authenticates to a TARGET as: each names the account it opens and
+  # carries the password that opens it, the same shape the service account is declared in. Each
+  # product holds its OWN credential store, so the same account is declared to each -- a credential
+  # in Inventory is not one Deploy can deploy with. One account is one row, either ORDINARY,
+  # authenticating as the account it names, or LAPS, resolving each target's own local
   # administrator password at connect time.
   #
   # Deploy reaches a target over its admin share, so whatever this names has to be a local
   # administrator ON THAT TARGET; being a domain account is not enough by itself.
   #
   # More than one, because a workstation, a member server and a domain controller each admit a
-  # different account to their local Administrators. Each entry carries its own password -- the
-  # secret belongs to the account it opens, not to a variable beside the map:
-  #
-  #     'tcn\svc-pdq-ws':
+  # different account to their local Administrators. The secret belongs to the account it opens,
+  # not to a variable beside the list:  #
+  #     - username: 'tcn\svc-pdq-ws'
   #       password: '...'
   #       description: 'Workstation class target authentication'
+  #
+  # The product keys a credential on its USERNAME and holds no separate name, so no two entries may
+  # name the same account -- validate.yml refuses a repeat, because the second would silently
+  # overwrite the first.
   #
   # EXACTLY ONE entry may claim `is_default: true`, and that is the account the product uses when
   # nothing names one. It is stated rather than implied by position: the product marks whichever
@@ -144,10 +147,10 @@ pdq_deploy_defaults:
   # entry take the flag from the one before it and never settle -- every converge would report a
   # change it could not stop making.
   #
-  # EMPTY IS A DECLARATION, not an omission: an empty map leaves whatever the product already
+  # EMPTY IS A DECLARATION, not an omission: an empty list leaves whatever the product already
   # holds. Each password is deployment-specific and secret, so the playbook resolves it and hands
   # over the value, exactly as it does for the licence and the service account.
-  credentials: {}
+  credentials: []
 
   preferences:
     alerts:

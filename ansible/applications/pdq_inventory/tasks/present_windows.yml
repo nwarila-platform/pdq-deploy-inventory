@@ -716,7 +716,7 @@
     # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqCredential.ps1.stub).
 
     - name: 'PROCESS | Declare The Credential PDQ Authenticates With'
-      when: pdq_inventory_running.credentials | default({}, true) | length > 0
+      when: pdq_inventory_running.credentials | default([], true) | length > 0
 
       block:
 
@@ -724,7 +724,7 @@
           become: true
           become_method: 'ansible.builtin.runas'
           become_user: "{{ pdq_inventory_running.service_account.name }}"
-          loop: "{{ pdq_inventory_running.credentials | default({}, true) | dict2items }}"
+          loop: "{{ pdq_inventory_running.credentials | default([], true) }}"
           loop_control:
             label: '(censored)'
           no_log: true
@@ -740,7 +740,7 @@
               CliPath: "{{ pdq_inventory_running.cli_path }}"
               DatabaseDrive: "{{ pdq_inventory_running.database.drive }}"
               DatabaseDirectory: "{{ pdq_inventory_running.database.directory }}"
-              CredentialDeclaration: "{{ item.value | combine({'username': item.key}) }}"
+              CredentialDeclaration: "{{ item }}"
               Product: 'Inventory'
             script: "{{ lookup('ansible.builtin.file', 'Set-PdqCredential.ps1') }}"
 
@@ -763,8 +763,8 @@
             # copied into a failure verbatim, so the declared secret is removed from whatever comes
             # back rather than trusted not to appear in it.
             __secrets__: >-
-              {{ pdq_inventory_running.credentials | default({}, true) | dict2items
-                 | map(attribute='value.password') | select('defined') | list
+              {{ pdq_inventory_running.credentials | default([], true)
+                 | map(attribute='password') | select('defined') | list
                  | reject('equalto', '') | list | unique }}
 
           ansible.builtin.fail:
@@ -806,9 +806,11 @@
             ansible_become_flags: 'logon_type=batch'
             ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
             __pdq_inventory_bind_password__: >-
-              {{ (pdq_inventory_running.credentials | default({}, true))[
-                   pdq_inventory_running.directory_sync.bind_username | default('', true)
-                 ].password | default('', true) }}
+              {{ (pdq_inventory_running.credentials | default([], true)
+                  | selectattr('username', 'defined')
+                  | selectattr('username', 'equalto',
+                               pdq_inventory_running.directory_sync.bind_username | default('', true))
+                  | first | default({}, true)).password | default('', true) }}
 
           ansible.windows.win_powershell:
             depth: 4
@@ -843,8 +845,8 @@
             # from whatever comes back rather than trusted not to appear in it.
             __secrets__: >-
               {{ ([pdq_inventory_running.directory_sync.bind_password | default('')]
-                  + (pdq_inventory_running.credentials | default({}, true) | dict2items
-                     | map(attribute='value.password') | select('defined') | list))
+                  + (pdq_inventory_running.credentials | default([], true)
+                     | map(attribute='password') | select('defined') | list))
                  | reject('equalto', '') | list | unique }}
 
           ansible.builtin.fail:

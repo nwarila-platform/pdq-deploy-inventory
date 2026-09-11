@@ -373,7 +373,7 @@
           # identities live in Inventory, and Deploy asks Inventory for a target's credential at
           # deployment time.
           credentials:
-            'tcn\svc-pdq':
+            - username: 'tcn\svc-pdq'
               password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-domain-password.txt') }}"
               description: 'Directory bind for computer sync'
               is_default: true
@@ -431,16 +431,16 @@
           # Every account, because scanning a target opens its admin share exactly as a
           # deployment does, and Deploy takes a target's credential from this store.
           credentials:
-            'tcn\svc-pdq-ws':
+            - username: 'tcn\svc-pdq-ws'
               password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-ws-password.txt') }}"
               description: 'Workstation class target authentication'
-            'tcn\svc-pdq-ms':
+            - username: 'tcn\svc-pdq-ms'
               password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-ms-password.txt') }}"
               description: 'Member server class target authentication'
-            'tcn\svc-pdq-dc':
+            - username: 'tcn\svc-pdq-dc'
               password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-dc-password.txt') }}"
               description: 'Domain controller class target authentication'
-            'tcn\svc-pdq':
+            - username: 'tcn\svc-pdq'
               password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-domain-password.txt') }}"
               description: 'Directory bind for computer sync'
               is_default: true

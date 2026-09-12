@@ -152,6 +152,11 @@ pdq_inventory_defaults:
   # bind_username and bind_password for itself: per-account resolution belongs to whoever declares
   # the pair, and a container naming only the account would silently borrow this one's password.
   #
+  # A container may also sync from a DIFFERENT DIRECTORY than the one named here: it states its
+  # own realm, and binds as an account that directory knows. The product holds one domain row per
+  # realm, each pointing at the account its containers bind as; the role owns those rows, so a
+  # second directory is one more container, not a second declaration.
+  #
   # 'insecure' opts the directory read down to plain LDAP on 389. It is false here because a
   # default that downgrades is a default nobody audits; a directory that answers nothing on 636
   # says so in its own declaration.

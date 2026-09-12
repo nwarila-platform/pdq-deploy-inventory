@@ -170,6 +170,10 @@
       # Every container is a distinguished name plus the two flags the product stores.
       - __containers__ | rejectattr('distinguished_name', 'defined') | list | length == 0
       - __containers__ | selectattr('distinguished_name', 'eq', '') | list | length == 0
+      # A container may sync from a directory other than the one the declaration names, and then
+      # its realm must actually name one.
+      - __containers__ | selectattr('realm', 'defined') | map(attribute='realm')
+        | reject('match', '.+') | list | length == 0
       # FullSync deletes every computer outside an Include container. A declaration that names
       # containers but includes none of them empties the database on the first sync.
       - __containers__ | length == 0 or
@@ -177,8 +181,8 @@
         (__containers__ | selectattr('include', 'defined') | selectattr('include') | list | length > 0)
     fail_msg: >-
       Refusing to deploy: the directory sync declaration is one the product cannot act on.
-      Containers require a realm, a bind username and a bind password, and each container requires
-      a distinguished_name. The bind account is NAMED, not restated: bind_username must be one of
+      Containers require a realm and a bind username, and each container requires a
+      distinguished_name; a container naming its own realm must name a non-empty one. The bind account is NAMED, not restated: bind_username must be one of
       the declared credentials and must not be a LAPS one, because the role takes that entry's
       password to read the directory and a LAPS credential resolves to a target's local
       administrator instead of a directory account. A container that binds as a different account

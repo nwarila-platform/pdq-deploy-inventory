@@ -2,14 +2,13 @@
 
 Installs PDQ Deploy at a pinned version and brings it up as an all-in-one **Central Server** on
 Windows. In one converge it installs the product, applies the licence, ensures the shared PDQ
-service account and records its credential with the product, places the database on its dedicated
-drive, creates the package repository on a second drive and enforces its directory permissions,
-publishes it as an encrypted read-only network share, writes the script that fills it, sets
-Central Server mode and the console port, applies the product preferences, reconciles the pinned
-variables and the declared packages, seeds the per-user console defaults, authorises the console
-users, chooses the event-log
-severities and service-manager behaviour, and records the registration that would otherwise stop
-the first console with a popup.
+service account and records the credentials the product authenticates to targets with, places the
+database on its dedicated drive, creates the package repository on a second drive and enforces its
+directory permissions, publishes it as an encrypted read-only network share, writes the script that
+fills it, sets Central Server mode and the console port, applies the product preferences, reconciles
+the pinned variables and the declared packages, seeds the per-user console defaults, authorises the
+console users, chooses the event-log severities and service-manager behaviour, and records the
+registration that would otherwise stop the first console with a popup.
 
 Everything moves through the controller: it fetches each artifact from S3 and hands the installer
 to the target, so the guest never receives cloud credentials. The installer is verified against
@@ -41,8 +40,9 @@ role uses. The controller's Ansible environment needs the `amazon.aws` collectio
 Required deployment-specific inputs carry an account id or change with every version and every
 site, so the playbook states them where a reader can see them: the installer (bucket, four-part
 version, digest), the licence (bucket, object, digest, and the email it was issued to), the
-service-account password (bucket and object), one drive letter each for the database and
-repository, and the repository's own bucket and region. The caller may also replace the default all-addresses listener with explicit addresses.
+service-account password (bucket and object), the password behind each declared target
+credential, one drive letter each for the database and repository, and the repository's own bucket
+and region. The caller may also replace the default all-addresses listener with explicit addresses.
 `tasks/validate.yml` enforces these inputs on the controller before anything touches the guest.
 
 ## Configuration

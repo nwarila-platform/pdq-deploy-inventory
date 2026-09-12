@@ -30,7 +30,10 @@
       - pdq_inventory_running.installer.bucket | default('') | length > 0
       - pdq_inventory_running.installer.path | default('') | length > 0
       - pdq_inventory_running.installer.sha256 | default('') is match('^[0-9a-f]{64}$')
-      - pdq_inventory_running.service_account.name | default('') | length > 0
+      # The service account logs on as '.\name' -- Windows' own spelling for a local account --
+      # and its password cannot be empty, because the role sets it on every converge.
+      - pdq_inventory_running.service_account.username | default('') is match('^\.\\\\[^\\\\]+$')
+      - pdq_inventory_running.service_account.password | default('') | length > 0
       - pdq_inventory_running.database.drive | default('') is match('^[A-Za-z]$')
     fail_msg: >-
       Refusing to deploy: a required input is missing or malformed. The playbook must supply the
@@ -81,6 +84,34 @@
       console_users must be a list of names. See meta/main.yml.
     quiet: true
 
+- name: 'VALIDATE | Require Credentials The Product Can Settle On'
+  when: (state | default('present') | string | lower | trim) == 'present'
+  vars:
+    __credentials__: "{{ pdq_inventory_running.credentials | default([], true) }}"
+    __usernames__: "{{ __credentials__ | map(attribute='username') | select('defined') | list }}"
+  ansible.builtin.assert:
+    that:
+      - __credentials__ is sequence
+      - __credentials__ is not string
+      # The product keys a credential on its username and holds no separate name, so an entry
+      # without one names no account -- and two entries naming the SAME account are two writes to
+      # one row, where the second silently wins.
+      - __credentials__ | rejectattr('username', 'defined') | list | length == 0
+      - __usernames__ | reject('match', '.+') | list | length == 0
+      - __usernames__ | length == __usernames__ | unique | list | length
+      # At most one entry may claim the default. Two would take the flag from each other on every
+      # converge and never settle, reporting a change the pipeline could not stop making.
+      - __credentials__ | selectattr('is_default', 'defined') | selectattr('is_default')
+        | list | length <= 1
+    fail_msg: >-
+      Refusing to deploy: the declared credentials are not something the product can settle on.
+      Each entry must name a username, and no two may name the same account -- the product keys a
+      credential on its username and holds no separate name, so a repeat is a second write to the
+      same row. At most one entry may claim is_default, because the product marks whichever
+      credential was written last as its default: two claimants would take the flag from each other
+      on every converge and report a change forever.
+    quiet: true
+
 - name: 'VALIDATE | Require A Directory Sync Delete Mode The Product Recognises'
   when: (state | default('present') | string | lower | trim) == 'present'
   ansible.builtin.assert:
@@ -102,30 +133,54 @@
   vars:
     __sync__: "{{ pdq_inventory_running.directory_sync | default({}, true) }}"
     __containers__: "{{ __sync__.containers | default([], true) }}"
-    __credential__: "{{ pdq_inventory_running.credential | default({}, true) }}"
-
+    __credentials__: "{{ pdq_inventory_running.credentials | default([], true) }}"
+    __usernames__: "{{ __credentials__ | map(attribute='username') | select('defined') | list }}"
+    # The declared entry the containers bind through, if this run declares it at all.
+    __credential__: >-
+      {{ __credentials__ | selectattr('username', 'defined')
+         | selectattr('username', 'equalto', __sync__.bind_username | default('', true))
+         | first | default({}, true) }}
   ansible.builtin.assert:
     that:
-      # A container list needs somewhere to bind and something to bind as; without all three the
+      # A container list needs somewhere to bind and something to bind as; without both the
       # product would hold containers it can never read.
       - __containers__ | length == 0 or
         (__sync__.realm | default('') | length > 0 and
-         __sync__.bind_username | default('') | length > 0 and
-         __sync__.bind_password | default('') | length > 0)
-      # When this run manages the credential, it must be the one the containers bind as: the same
-      # account, ordinary, and carrying the same secret. The product binds through its stored
-      # credential while this playbook reads the directory directly with the declared bind values,
-      # so a pair that disagrees converges and then syncs as somebody else. Declaring no credential
+         __sync__.bind_username | default('') | length > 0)
+      # The bind account must be AMONG the declared credentials, or the product would bind through
+      # a row this run never wrote and the sync would run as somebody else. Declaring none at all
       # is left alone deliberately -- the defaults say that keeps whatever the product holds, and
       # the sync script fails clearly and by name if what it holds cannot bind.
-      - __credential__.username | default('') | length == 0 or
+      - __containers__ | length == 0 or
+        __usernames__ | length == 0 or
+        (__sync__.bind_username | default('', true)) in __usernames__
+      # And that entry must be ORDINARY. The role reads the directory with the password from this
+      # entry, and a LAPS credential resolves to some target's local administrator -- an account no
+      # directory has heard of -- so the bind would fail on every run.
+      - __credential__ | length == 0 or
         __containers__ | length == 0 or
-        (__credential__.username == (__sync__.bind_username | default('')) and
-         __credential__.password == (__sync__.bind_password | default('')) and
-         (__credential__.laps_user | default('') | length == 0))
+        __credential__.laps_user | default('') | length == 0
+      # A container binding as a different account NAMES it, and the name must be one of the
+      # declared credentials -- the role hands the script that list and nothing else holds the
+      # secret. It must be ordinary too, for the reason above.
+      - __containers__ | selectattr('bind_username', 'defined') | map(attribute='bind_username')
+        | reject('in', __usernames__) | list | length == 0
+      - __credentials__ | selectattr('laps_user', 'defined') | rejectattr('laps_user', 'equalto', '')
+        | map(attribute='username') | list
+        | select('in', __containers__ | selectattr('bind_username', 'defined') | map(attribute='bind_username') | list)
+        | list | length == 0
+      # No password is ever stated here. The product points a container at a credential row by
+      # id, and this declaration points at one by name; a password beside the name would be a
+      # second copy of a secret that already lives in the credential it names.
+      - __sync__.bind_password is not defined
+      - __containers__ | selectattr('bind_password', 'defined') | list | length == 0
       # Every container is a distinguished name plus the two flags the product stores.
       - __containers__ | rejectattr('distinguished_name', 'defined') | list | length == 0
       - __containers__ | selectattr('distinguished_name', 'eq', '') | list | length == 0
+      # A container may sync from a directory other than the one the declaration names, and then
+      # its realm must actually name one.
+      - __containers__ | selectattr('realm', 'defined') | map(attribute='realm')
+        | reject('match', '.+') | list | length == 0
       # FullSync deletes every computer outside an Include container. A declaration that names
       # containers but includes none of them empties the database on the first sync.
       - __containers__ | length == 0 or
@@ -133,11 +188,13 @@
         (__containers__ | selectattr('include', 'defined') | selectattr('include') | list | length > 0)
     fail_msg: >-
       Refusing to deploy: the directory sync declaration is one the product cannot act on.
-      Containers require a realm, a bind username and a bind password, and each container requires
-      a distinguished_name. A credential declared alongside them must name that same bind account,
-      carry the same password and no laps_user, because the product binds through the credential it
-      stores while this playbook reads the directory with the declared bind values -- and a LAPS
-      credential resolves to a target's local administrator instead of a directory account. With delete_mode FullSync at least one container must be included:
-      FullSync removes every computer that is not inside an Include container, so a list of
-      exclusions alone would empty the database on the first sync.
+      Containers require a realm and a bind username, and each container requires a
+      distinguished_name; a container naming its own realm must name a non-empty one. Every bind
+      account -- the declaration's and any container's own -- is NAMED, never restated: it must be
+      one of the declared credentials and must not be a LAPS one, because the script is handed that
+      list and resolves the secret by name, and a LAPS credential resolves to a target's local
+      administrator instead of a directory account. A bind_password anywhere in the declaration is
+      refused: the secret lives in the credential the name points at. With delete_mode FullSync at
+      least one container must be included: FullSync removes every computer that is not inside an
+      Include container, so a list of exclusions alone would empty the database on the first sync.
     quiet: true

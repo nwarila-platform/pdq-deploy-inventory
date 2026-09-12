@@ -49,21 +49,28 @@ BeforeAll {
     DatabaseDirectory = 'PDQ Inventory'
   }
 
+  # A bind account anywhere in the declaration is a NAME into this list; the declaration itself
+  # never carries a password.
+  Function New-Credential {
+    Param ([System.String]$Username)
+    @{ username = $Username; password = 'not-a-real-password' }
+  }
+
   Function New-Declaration {
     Param ([System.Object[]]$Container, [Switch]$Insecure)
     @{
       realm         = $script:Realm
       bind_username = 'TCN\svc-pdq'
-      bind_password = 'not-a-real-password'
       insecure      = $Insecure.IsPresent
       containers    = $Container
     }
   }
 
   Function New-Container {
-    Param ([System.String]$Dn, [System.String]$BindUsername)
+    Param ([System.String]$Dn, [System.String]$BindUsername, [System.String]$Realm)
     $c = @{ distinguished_name = $Dn; include = $True; subtree = $True }
-    If ($BindUsername) { $c['bind_username'] = $BindUsername; $c['bind_password'] = 'not-a-real-password' }
+    If ($BindUsername) { $c['bind_username'] = $BindUsername }
+    If ($Realm) { $c['realm'] = $Realm }
     $c
   }
 
@@ -96,12 +103,18 @@ Describe 'Set-PdqSyncContainer' {
     $script:SqlitePath = Join-Path (Split-Path $script:CliPath -Parent) 'sqlite3.exe'
 
     # The product's tables, as the stub models them.
-    $global:FakeRows = @{}          # dn -> @{ UserId; IncludeSubtree; IsInclude }
+    $global:FakeRows = @{}          # dn -> @{ Realm; UserId; IncludeSubtree; IsInclude }
+    # The product ships ONE domain row: no name, no credential, bind as the console user.
+    $global:FakeDomainRows = [System.Collections.Generic.List[System.Collections.Hashtable]]::new()
+    $global:FakeDomainRows.Add(@{ Id = '1'; Name = ''; CredentialsId = ''; IsCurrentUser = '1' })
     # Ordinal, deliberately: the product held 'TCN\svc-pdq' (ordinary) and 'tcn\svc-pdq' (LAPS)
     # as separate rows differing only in case, which a default PowerShell hashtable cannot express.
     $global:FakeCredentials = [System.Collections.Hashtable]::new([System.StringComparer]::Ordinal)
     $global:FakeCredentials['TCN\svc-pdq'] = @{ Id = 5; Auth = 'None' }
     $global:FakeCredentials['tcn\svc-pdq'] = @{ Id = 3; Auth = 'LAPS' }
+    # What the declaration handed over, fresh per test: the accounts the product holds above are
+    # the rows it wrote from exactly this list.
+    $script:Ctx['CredentialDeclarations'] = @((New-Credential 'TCN\svc-pdq'), (New-Credential 'tcn\svc-pdq'))
     $global:FakeSqlCalls = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeCliCalls = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeBindAuth = [System.Collections.Generic.List[System.String]]::new()
@@ -140,8 +153,23 @@ Describe 'Set-PdqSyncContainer' {
       If ($sql -match "DELETE FROM ADSyncContainers WHERE DistinguishedName = '(?<d>[^']*)'") {
         $global:FakeRows.Remove($Matches['d'])
       }
-      If ($sql -match "INSERT INTO ADSyncContainers .*VALUES \('[^']*', '[^']*', '[^']*', (?<c>\d+), (?<s>\d+), (?<i>\d+), '(?<d>[^']*)'\)") {
-        $global:FakeRows[$Matches['d']] = @{ UserId = $Matches['c']; IncludeSubtree = $Matches['s']; IsInclude = $Matches['i'] }
+      If ($sql -match "INSERT INTO ADSyncContainers .*VALUES \('(?<r>[^']*)', '[^']*', '[^']*', (?<c>\d+), (?<s>\d+), (?<i>\d+), '(?<d>[^']*)'\)") {
+        $global:FakeRows[$Matches['d']] = @{ Realm = $Matches['r']; UserId = $Matches['c']; IncludeSubtree = $Matches['s']; IsInclude = $Matches['i'] }
+      }
+      If ($sql -like 'SELECT ActiveDirectoryDomainId ||*') {
+        ForEach ($r In $global:FakeDomainRows) { '{0}|{1}|{2}|{3}' -f $r.Id, $r.Name, $r.CredentialsId, $r.IsCurrentUser }
+        $global:LASTEXITCODE = 0; Return
+      }
+      If ($sql -match "UPDATE ActiveDirectoryDomains SET Name = '(?<n>[^']*)', CredentialsId = (?<c>\d+), IsCurrentUser = 0 WHERE ActiveDirectoryDomainId = (?<i>\d+)") {
+        $r = $global:FakeDomainRows | Where-Object { $PSItem.Id -eq $Matches['i'] } | Select-Object -First 1
+        $r.Name = $Matches['n']; $r.CredentialsId = $Matches['c']; $r.IsCurrentUser = '0'
+      }
+      If ($sql -match "INSERT INTO ActiveDirectoryDomains \(Name, CredentialsId, IsCurrentUser\) VALUES \('(?<n>[^']*)', (?<c>\d+), 0\)") {
+        $global:FakeDomainRows.Add(@{ Id = [System.String]($global:FakeDomainRows.Count + 1); Name = $Matches['n']; CredentialsId = $Matches['c']; IsCurrentUser = '0' })
+      }
+      If ($sql -match "DELETE FROM ActiveDirectoryDomains WHERE ActiveDirectoryDomainId = (?<i>\d+)") {
+        $gone = $global:FakeDomainRows | Where-Object { $PSItem.Id -eq $Matches['i'] } | Select-Object -First 1
+        If ($gone) { $global:FakeDomainRows.Remove($gone) | Out-Null }
       }
       $global:LASTEXITCODE = 0
     } | Out-Null
@@ -243,12 +271,66 @@ Describe 'Set-PdqSyncContainer' {
 
     It 'lets a container name its own bind account' {
       $global:FakeCredentials['TCN\svc-other'] = @{ Id = 9; Auth = 'None' }
+      $script:Ctx['CredentialDeclarations'] += (New-Credential 'TCN\svc-other')
       $Ctx = New-AnsibleContext
       & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @(
           (New-Container $script:WksDn),
           (New-Container $script:RootDn 'TCN\svc-other')) -Insecure)
       $global:FakeRows[$script:WksDn].UserId | Should -Be '5'
       $global:FakeRows[$script:RootDn].UserId | Should -Be '9'
+    }
+  }
+
+  Context 'the directories' {
+
+    It 'owns one credentialed domain row per realm, adopting the row the product ships' {
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @((New-Container $script:WksDn)) -Insecure)
+      $global:FakeDomainRows | Should -HaveCount 1
+      $global:FakeDomainRows[0].Name | Should -Be $script:Realm
+      $global:FakeDomainRows[0].CredentialsId | Should -Be '5'
+      # Never the console user: that is the row as the product ships it, and it binds as whoever
+      # happens to be logged in.
+      $global:FakeDomainRows[0].IsCurrentUser | Should -Be '0'
+    }
+
+    It 'syncs a container from a second realm, bound at that realm as the account it names' {
+      $global:FakeCredentials['OTHER\svc-pdq'] = @{ Id = 9; Auth = 'None' }
+      $script:Ctx['CredentialDeclarations'] += (New-Credential 'OTHER\svc-pdq')
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @(
+          (New-Container $script:WksDn),
+          (New-Container 'OU=Workstations,DC=other,DC=example,DC=com' 'OTHER\svc-pdq' 'other.example.com')) -Insecure)
+      $global:FakeBindPath | Should -Contain 'LDAP://other.example.com/OU=Workstations,DC=other,DC=example,DC=com'
+      $global:FakeRows['OU=Workstations,DC=other,DC=example,DC=com'].Realm | Should -Be 'other.example.com'
+      $global:FakeDomainRows | Should -HaveCount 2
+      $other = $global:FakeDomainRows | Where-Object { $PSItem.Name -eq 'other.example.com' }
+      $other.CredentialsId | Should -Be '9'
+      $other.IsCurrentUser | Should -Be '0'
+      $Ctx.Result.realms | Should -Contain 'other.example.com'
+    }
+
+    It 'removes a domain row for a realm the declaration no longer names' {
+      $global:FakeDomainRows.Add(@{ Id = '7'; Name = 'stale.example.com'; CredentialsId = '5'; IsCurrentUser = '0' })
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @((New-Container $script:WksDn)) -Insecure)
+      $Ctx.Changed | Should -BeTrue
+      $global:FakeDomainRows.Name | Should -Not -Contain 'stale.example.com'
+    }
+
+    It 'reports no change when the domain rows already match, and writes nothing in check mode' {
+      $decl = New-Declaration -Container @((New-Container $script:WksDn)) -Insecure
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync $decl
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync $decl
+      $Ctx.Changed | Should -BeFalse
+      # Drift the row back to the shipped state: check mode must report it and leave it.
+      $global:FakeDomainRows[0].IsCurrentUser = '1'
+      $Ctx = New-AnsibleContext -CheckMode
+      & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync $decl
+      $Ctx.Changed | Should -BeTrue
+      $global:FakeDomainRows[0].IsCurrentUser | Should -Be '1'
     }
   }
 
@@ -291,7 +373,19 @@ Describe 'Set-PdqSyncContainer' {
         Should -Throw -ExpectedMessage '*not an ordinary credential*'
     }
 
+    It 'refuses a bind account the declaration did not hand over, naming it and its container' {
+      # The product holds it, so the id resolves; the declaration never listed it, so there is
+      # no secret to bind with. The failure names the account rather than a password.
+      $global:FakeCredentials['TCN\svc-ghost'] = @{ Id = 11; Auth = 'None' }
+      $Ctx = New-AnsibleContext
+      { & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @(
+            (New-Container $script:WksDn 'TCN\svc-ghost')) -Insecure) } | Should -Throw '*TCN\svc-ghost*not among the declared credentials*'
+      $global:FakeBindPath | Should -HaveCount 0
+    }
+
     It 'refuses an account the product does not hold' {
+      # Handed over, so the declaration's own check passes and the product's absence is what fails.
+      $script:Ctx['CredentialDeclarations'] += (New-Credential 'TCN\nobody')
       $Ctx = New-AnsibleContext
       { & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @((New-Container $script:WksDn 'TCN\nobody')) -Insecure) } |
         Should -Throw -ExpectedMessage '*not an ordinary credential*'
@@ -339,6 +433,7 @@ Describe 'Set-PdqSyncContainer' {
       $Json = & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @((New-Container $script:WksDn)) -Insecure) | Out-String
       $Parsed = $Json | ConvertFrom-Json
       $Parsed.realm | Should -Be $script:Realm
+      $Parsed.realms | Should -Contain $script:Realm
       $Parsed.protocol | Should -Be 'ldap'
       $Parsed.containers | Should -Contain $script:WksDn
     }

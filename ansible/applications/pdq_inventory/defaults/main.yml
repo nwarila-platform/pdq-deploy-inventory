@@ -99,23 +99,38 @@ pdq_inventory_defaults:
   # still converges.
   variables: {}
 
-  # The account PDQ authenticates as, and the single row the product keeps for it. The product
-  # keys a credential on its username and holds no separate name, so one account is one
-  # credential: either ORDINARY, authenticating as the account it names, or LAPS, resolving each
-  # target's own local administrator password at connect time. It cannot be both at once.
+  # The accounts PDQ authenticates as: each names the account it opens and carries the password
+  # that opens it, the same shape the service account is declared in. One account is one row,
+  # either ORDINARY, authenticating as the account it names, or LAPS, resolving each target's own
+  # local administrator password at connect time. It cannot be both at once.
   #
-  # The directory sync below needs an ORDINARY one. A LAPS credential resolves to some target's
-  # local administrator, an account no directory has ever heard of, so declaring laps_user here
-  # would break the bind the sync depends on.
+  # The directory sync below binds as one of these, and it must be an ORDINARY one. A LAPS
+  # credential resolves to some target's local administrator, an account no directory has ever
+  # heard of, so declaring laps_user on the bind account would break the sync.
   #
-  # EMPTY IS A DECLARATION, not an omission: with no username the product keeps whatever it
-  # already holds, which is what a deployment that manages no credential should do. The password
-  # is deployment-specific and secret, so the playbook resolves it and hands over the value,
-  # exactly as it does for the licence and the service account.
-  credential:
-    username: ''
-    password: ''
-    description: ''
+  # More than one, because scanning a target opens its admin share exactly as a deployment does,
+  # and a workstation, a member server and a domain controller each admit a different account. The
+  # secret belongs to the account it opens, not to a variable beside the list
+  #
+  #     - username: 'DOMAIN\svc-pdq-ws'
+  #       password: '...'
+  #       description: 'Workstation class target authentication'
+  #
+  # The product keys a credential on its USERNAME and holds no separate name, so no two entries may
+  # name the same account -- validate.yml refuses a repeat, because the second would silently
+  # overwrite the first.
+  #
+  # EXACTLY ONE entry may claim `is_default: true`, and here that must be the account the directory
+  # sync binds as -- validate.yml refuses a bind account that is not among these. It is stated
+  # rather than implied by position: the product marks whichever credential was written LAST as the
+  # default, so a declaration that says nothing would have each entry take the flag from the one
+  # before it and never settle.
+  #
+  # EMPTY IS A DECLARATION, not an omission: an empty list leaves whatever the product already
+  # holds, which is what a deployment that manages no credential should do. Each password is
+  # deployment-specific and secret, so the playbook resolves it and hands over the value, exactly
+  # as it does for the licence and the service account.
+  credentials: []
 
   # The directory PDQ Inventory syncs computers from, and the containers it syncs. The product
   # offers no command line for either, so the declaration is written to its own store and read
@@ -128,8 +143,20 @@ pdq_inventory_defaults:
   # mode alone are the same decision made twice; the validate task refuses the pair that would
   # empty the database.
   #
-  # The bind password is deployment-specific and secret, so the playbook resolves it and hands
-  # over the value, exactly as it does for the licence and the service account.
+  # The bind account is NAMED, not restated: bind_username must be one of the credentials declared
+  # above, and the role takes that entry's password from there. The product itself stores only a
+  # REFERENCE to a credential row, and this declaration matches it -- so the secret is written in
+  # exactly one place and a rotation reaches both the store and the bind at once.
+  #
+  # A container may bind as a different account than the sync does, and then it NAMES that one
+  # the same way -- another of the credentials above. No password is ever stated here, at either
+  # level: the product points a container at a credential row by id, this declaration points at
+  # one by name, and the role hands the script the whole list to resolve each secret from.
+  #
+  # A container may also sync from a DIFFERENT DIRECTORY than the one named here: it states its
+  # own realm, and names an account that directory knows. The product holds one domain row per
+  # realm, each pointing at the account its containers bind as; the role owns those rows, so a
+  # second directory is one more container, not a second declaration.
   #
   # 'insecure' opts the directory read down to plain LDAP on 389. It is false here because a
   # default that downgrades is a default nobody audits; a directory that answers nothing on 636
@@ -137,7 +164,6 @@ pdq_inventory_defaults:
   directory_sync:
     realm: ''
     bind_username: ''
-    bind_password: ''
     insecure: false
     containers: []
 
@@ -293,7 +319,9 @@ pdq_inventory_defaults:
   # product's real names -- so older builds stay addressable for rollback rather than being
   # overwritten in place. The literal token <version> is replaced with installer.version at fetch
   # time, which is why the playbook supplies only a version and a digest. A repository laid out
-  # differently overrides this whole path, with or without the token.
+  # differently overrides this whole path, with or without the token. It is defaulted rather than
+  # required because the layout is the same wherever this fleet deploys -- only the BUCKET carries
+  # an account id, which is why that one is the caller's to state and this one is not.
   installer:
     path: 'PDQ.com/PDQ Inventory/<version>/PDQcom_PDQ-Inventory_<version>_x86-x64.exe'
 
@@ -301,16 +329,25 @@ pdq_inventory_defaults:
 
   #region ------ [ Background service user ] ------------------------------------------------- #
 
-  # Deploy and Inventory are co-located and share ONE Background Service User, so the name is
-  # product identity rather than a deployment choice. Its password IS deployment-specific, so the
-  # playbook supplies the value after resolving and validating it on the controller.
+  # The Windows account the product's background service runs as: the account it logs on as, and
+  # the password that opens it. ONE account, always, so it is a record rather than a keyed map --
+  # the credentials above are keyed because a key is what stops two entries naming one account, and
+  # a single account has nothing to be unique against.
+  #
+  # It is NOT one of those credentials and never reaches the product's credential store: this
+  # account runs a service, it does not authenticate to a target.
+  #
+  # '.\' is how Windows spells a local account, and the role takes the bare name from it for the
+  # places Windows wants a name alone. Deploy and Inventory are co-located and share ONE of these,
+  # so the account is product identity and defaults here; only its password is deployment-specific,
+  # and the playbook resolves that on the controller.
   #
   # RENAMING does not retire the old account: present converges what is declared and removes
   # nothing, so the previous name survives as a member of Administrators. Retirement is a removal,
   # and removals belong to state=absent -- rename in two steps.
   service_account:
-    name: 'svc-pdq'
-    password: null
+    username: '.\svc-pdq'
+    password: ''
 
   #endregion --- [ Background service user ] ------------------------------------------------- #
 

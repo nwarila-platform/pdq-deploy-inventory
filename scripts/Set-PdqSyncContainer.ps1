@@ -19,13 +19,19 @@
     involved.
 
     The bind account is ORDINARY, never a LAPS credential. A LAPS credential resolves to the
-    target's local administrator, which a directory has never heard of. It is stored per container
-    rather than per domain -- measured, by pointing the domain row at an account that cannot bind
-    and watching the containers sync anyway -- so a container may be read by an account delegated
+    target's local administrator, which a directory has never heard of. Each CONTAINER carries its
+    own -- measured, by pointing the domain row at an account that cannot bind and watching the
+    containers sync anyway -- so a container may be read by an account delegated
     to just that part of the tree.
 
 .PARAMETER CliPath
     Full path to PDQInventory.exe. The sqlite tool is taken from beside it.
+
+.PARAMETER CredentialDeclarations
+    Every credential the product holds, as declared to it: each names a username and carries the
+    password that opens it. A bind account anywhere in DirectorySync is a NAME into this list --
+    the secret is never restated beside the name, here or in the product, whose container row
+    points at a credential row by id.
 
 .PARAMETER DatabaseDirectory
     The directory holding Database.db on DatabaseDrive.
@@ -37,9 +43,19 @@
     Three digits: ErrorActionPreference, Set-PSDebug, Set-StrictMode.
 
 .PARAMETER DirectorySync
-    The declaration: realm, bind_username, bind_password, and containers. Each container carries a
-    distinguished_name and the two booleans the product stores, and may name its own bind_username
-    and bind_password.
+    The declaration: realm, bind_username, and containers. Each container carries a
+    distinguished_name and the two booleans the product stores, and may name its own realm and
+    bind_username -- a container in a second directory says which, and names an account that
+    directory knows. No password appears anywhere in it: every bind account is a name into
+    CredentialDeclarations.
+
+    The product binds each DOMAIN through its row in ActiveDirectoryDomains, and each CONTAINER
+    through the container's own credential. The row it ships has an empty Name and IsCurrentUser
+    set, which binds as whoever is at the console -- that only ever worked while the console user
+    happened to be a domain account, and fails by name the moment it is not. This script owns those
+    rows: one per realm the containers name, pointing at the account the first container declared
+    for that realm binds as, with the shipped row adopted for the first realm rather than left
+    beside a second row that names it.
 
     'insecure' opts the directory read down to plain LDAP on 389. It defaults to false, so the read
     is over LDAPS unless a declaration deliberately says otherwise, and the script never chooses
@@ -76,6 +92,17 @@ Param (
   [ValidateNotNullOrEmpty()]
   [System.String]
   $CliPath,
+
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [AllowEmptyCollection()]
+  [System.Collections.IDictionary[]]
+  $CredentialDeclarations,
 
   [Parameter(
     DontShow = $False,
@@ -287,6 +314,15 @@ Function Invoke-NativeCommand {
   Return [PSCustomObject]@{ Exit = [System.Int32]$Exit; Output = $Written.ToArray() }
 }
 
+# The secrets, keyed by the account they open. Ordinal, as the product keys them: it has held
+# 'TCN\svc-pdq' and 'tcn\svc-pdq' as two rows.
+$Secrets = [System.Collections.Generic.Dictionary[System.String, System.String]]::new([System.StringComparer]::Ordinal)
+ForEach ($Credential In @($CredentialDeclarations)) {
+  If ($Null -ne $Credential -and $Credential.Contains('username')) {
+    $Secrets[[System.String]$Credential['username']] = [System.String]$(If ($Credential.Contains('password')) { $Credential['password'] } Else { '' })
+  }
+}
+
 # The declaration, normalised once so Main compares like with like.
 $Realm = [System.String]$DirectorySync['realm']
 $Insecure = [System.Boolean]$(If ($DirectorySync.Contains('insecure')) { $DirectorySync['insecure'] } Else { $False })
@@ -296,14 +332,23 @@ ForEach ($Container In @($DirectorySync['containers'])) {
       dn       = ([System.String]$Container['distinguished_name']).Trim()
       subtree  = [System.Int32][System.Boolean]$Container['subtree']
       include  = [System.Int32][System.Boolean]$Container['include']
+      realm    = ([System.String]$(If ($Container.Contains('realm')) { $Container['realm'] } Else { $DirectorySync['realm'] })).Trim()
       username = [System.String]$(If ($Container.Contains('bind_username')) { $Container['bind_username'] } Else { $DirectorySync['bind_username'] })
-      password = [System.String]$(If ($Container.Contains('bind_password')) { $Container['bind_password'] } Else { $DirectorySync['bind_password'] })
     })
+}
+# Each bind account must be one the declaration handed over, because the directory read below
+# needs its secret and nothing else holds it. Failing here names the account; failing at the bind
+# would name a password.
+ForEach ($Container In $Declared) {
+  If (-not $Secrets.ContainsKey($Container.username)) {
+    Throw ('{0} is named as the bind account for {1} but is not among the declared credentials, so nothing can bind as it.' -f $Container.username, $Container.dn)
+  }
+  $Container['password'] = $Secrets[$Container.username]
 }
 
 # A quoted literal is safe here because these are values the caller declared, but sqlite has no
 # parameter binding on the command line it is given, so a single quote in one would end the string.
-ForEach ($Value In @($Realm) + @($Declared | ForEach-Object { $PSItem.dn; $PSItem.username })) {
+ForEach ($Value In @($Realm) + @($Declared | ForEach-Object { $PSItem.dn; $PSItem.realm; $PSItem.username })) {
   If ($Value.Contains("'")) {
     Throw ('A declared value contains a single quote, which cannot be expressed safely in this statement: {0}' -f $Value)
   }
@@ -337,6 +382,9 @@ ForEach ($Container In $Declared) {
   If ($CredentialId.Length -eq 0) {
     Throw ('{0} is not an ordinary credential this product holds, so it cannot bind to the directory. A LAPS credential cannot be used: it resolves to the target''s local administrator.' -f $Container.username)
   }
+  # Kept on the container: the domain rows below point each realm at the account its first
+  # container binds as, and that is decided here whether or not the container itself changes.
+  $Container['credential_id'] = $CredentialId
 
   $Wanted = '{0}|{1}|{2}' -f $CredentialId, $Container.subtree, $Container.include
   If ($Existing.ContainsKey($Container.dn) -and $Existing[$Container.dn] -eq $Wanted) {
@@ -364,7 +412,7 @@ ForEach ($Container In $Declared) {
     [System.DirectoryServices.AuthenticationTypes]::SecureSocketsLayer
   }
   $Entry = New-Object System.DirectoryServices.DirectoryEntry(
-    ('LDAP://{0}/{1}' -f $Realm, $Container.dn), $Container.username, $Container.password,
+    ('LDAP://{0}/{1}' -f $Container.realm, $Container.dn), $Container.username, $Container.password,
     $Authentication)
   Try {
     $Null = $Entry.RefreshCache(@('objectGUID'))
@@ -375,7 +423,7 @@ ForEach ($Container In $Declared) {
       " A secure bind that reports the server is not operational is usually the directory presenting no certificate on 636, not a wrong password; declare insecure only as a deliberate, temporary exception."
     }
     $Reason = $PSItem.Exception.GetBaseException().Message
-    Throw ('{0} could not be read from {1} over {2} as {3}: {4}.{5}' -f $Container.dn, $Realm, $Protocol, $Container.username, $Reason, $Hint)
+    Throw ('{0} could not be read from {1} over {2} as {3}: {4}.{5}' -f $Container.dn, $Container.realm, $Protocol, $Container.username, $Reason, $Hint)
   } Finally {
     # Disposal must not replace the reason the bind failed with a complaint about disposal.
     Try { $Entry.Dispose() } Catch { Write-Debug -Message:'The directory entry could not be disposed.' }
@@ -386,7 +434,7 @@ ForEach ($Container In $Declared) {
   $Statements.Add(("DELETE FROM ADSyncContainers WHERE DistinguishedName = '{0}';" -f $Container.dn))
   $Statements.Add((
       "INSERT INTO ADSyncContainers (DomainName, Name, Guid, UserId, IncludeSubtree, IsInclude, DistinguishedName) VALUES ('{0}', '{1}', '{2}', {3}, {4}, {5}, '{6}');" -f `
-        $Realm, $Realm, $Guid, $CredentialId, $Container.subtree, $Container.include, $Container.dn))
+        $Container.realm, $Container.realm, $Guid, $CredentialId, $Container.subtree, $Container.include, $Container.dn))
   $Statements.Add('COMMIT;')
   $Null = Invoke-NativeCommand -Operation:('Declaring the sync container {0}' -f $Container.dn) -FilePath:$SQLITE_PATH `
     -Argument:@($DATABASE_PATH, ($Statements -join ' '))
@@ -404,11 +452,44 @@ ForEach ($Present In @($Existing.Keys)) {
     -Argument:@($DATABASE_PATH, ("DELETE FROM ADSyncContainers WHERE DistinguishedName = '{0}';" -f $Present))
 }
 
-# The realm the containers belong to. The product does not use this row's credential for the bind
-# -- each container carries its own -- but the row must name the domain the containers sit in.
-If (-not $Ansible.CheckMode) {
-  $Null = Invoke-NativeCommand -Operation:'Declaring the directory' -FilePath:$SQLITE_PATH `
-    -Argument:@($DATABASE_PATH, ("UPDATE ActiveDirectoryDomains SET Name = '{0}';" -f $Realm))
+# One domain row per realm the containers name, each pointing at the account the first container
+# declared for that realm binds as, and never at the console user. The product binds the DOMAIN
+# through this row and each CONTAINER through its own credential, so the row cannot be left as the
+# product ships it -- IsCurrentUser with no credential -- or the sync runs as whoever happens to be
+# logged in. The shipped row is adopted for the first realm; a row naming a realm no container
+# names is removed, because the declaration is the complete set here too.
+$Realms = [System.Collections.Specialized.OrderedDictionary]::new()
+ForEach ($Container In $Declared) {
+  If (-not $Realms.Contains($Container.realm)) { $Realms[$Container.realm] = [System.String]$Container['credential_id'] }
+}
+$DomainRows = [System.Collections.Generic.List[System.Collections.IDictionary]]::new()
+ForEach ($Row In @((Invoke-NativeCommand -Operation:'Reading the directories' -FilePath:$SQLITE_PATH `
+        -Argument:@($DATABASE_PATH, "SELECT ActiveDirectoryDomainId || '|' || COALESCE(Name, '') || '|' || COALESCE(CredentialsId, '') || '|' || COALESCE(IsCurrentUser, 0) FROM ActiveDirectoryDomains;")).Output)) {
+  $Field = [System.String[]]@(([System.String]$Row) -split '\|')
+  If ($Field.Count -ge 4) { $DomainRows.Add(@{ id = $Field[0]; name = $Field[1]; credential_id = $Field[2]; current_user = $Field[3] }) }
+}
+$Unclaimed = [System.Collections.Generic.Queue[System.Collections.IDictionary]]::new()
+ForEach ($Row In $DomainRows) { If ($Row.name.Length -eq 0) { $Unclaimed.Enqueue($Row) } }
+ForEach ($Name In @($Realms.Keys)) {
+  $Wanted = $Realms[$Name]
+  $Row = $DomainRows | Where-Object { $PSItem.name -eq $Name } | Select-Object -First 1
+  If ($Null -eq $Row -and $Unclaimed.Count -gt 0) { $Row = $Unclaimed.Dequeue() }
+  If ($Null -ne $Row -and $Row.name -eq $Name -and $Row.credential_id -eq $Wanted -and $Row.current_user -eq '0') { Continue }
+  $Changed = $True
+  If ($Ansible.CheckMode) { Continue }
+  $Statement = If ($Null -ne $Row) {
+    "UPDATE ActiveDirectoryDomains SET Name = '{0}', CredentialsId = {1}, IsCurrentUser = 0 WHERE ActiveDirectoryDomainId = {2};" -f $Name, $Wanted, $Row.id
+  } Else {
+    "INSERT INTO ActiveDirectoryDomains (Name, CredentialsId, IsCurrentUser) VALUES ('{0}', {1}, 0);" -f $Name, $Wanted
+  }
+  $Null = Invoke-NativeCommand -Operation:('Declaring the directory {0}' -f $Name) -FilePath:$SQLITE_PATH -Argument:@($DATABASE_PATH, $Statement)
+}
+ForEach ($Row In $DomainRows) {
+  If ($Row.name.Length -eq 0 -or $Realms.Contains($Row.name)) { Continue }
+  $Changed = $True
+  If ($Ansible.CheckMode) { Continue }
+  $Null = Invoke-NativeCommand -Operation:('Removing the undeclared directory {0}' -f $Row.name) -FilePath:$SQLITE_PATH `
+    -Argument:@($DATABASE_PATH, ("DELETE FROM ActiveDirectoryDomains WHERE ActiveDirectoryDomainId = {0};" -f $Row.id))
 }
 
 # Start a sync and read the product's own verdict. A container records its failure in its own row,
@@ -445,12 +526,13 @@ $Result = [PSCustomObject]@{
   check_mode = [System.Boolean]$Ansible.CheckMode
   containers = [System.String[]]@($Declared | ForEach-Object { $PSItem.dn })
   msg        = If ($Changed) {
-    '{0} sync container(s) declared for {1}' -f $Declared.Count, $Realm
+    '{0} sync container(s) declared for {1}' -f $Declared.Count, (@($Realms.Keys) -join ', ')
   } Else {
-    '{0} sync container(s) already read back as declared for {1}' -f $Declared.Count, $Realm
+    '{0} sync container(s) already read back as declared for {1}' -f $Declared.Count, (@($Realms.Keys) -join ', ')
   }
   protocol   = [System.String]$(If ($Insecure) { 'ldap' } Else { 'ldaps' })
   realm      = [System.String]$Realm
+  realms     = [System.String[]]@($Realms.Keys)
   synced     = [System.Boolean]$Synced
 }
 

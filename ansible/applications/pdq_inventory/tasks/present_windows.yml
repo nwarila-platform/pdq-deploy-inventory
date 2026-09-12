@@ -32,6 +32,18 @@
 ---
 #region ------ [ Begin: Install PDQ Inventory on Windows ] ------------------------------------ #
 
+# The service account is declared as the account it logs on as, '.\name'. Windows wants a bare
+# name in some places and the qualified form in others, so the bare one is taken from it once,
+# here, and added alongside. no_log because the declaration carries the secret.
+
+- name: 'BEGIN | Read The Service Account Declaration'
+  no_log: true
+  ansible.builtin.set_fact:
+    pdq_inventory_running: >-
+      {{ pdq_inventory_running | combine({'service_account': pdq_inventory_running.service_account
+           | combine({'name': pdq_inventory_running.service_account.username
+                              | default('', true) | regex_replace('^\.\\', '')})}) }}
+
 - name: 'BEGIN | Read The Machine And Decide One Action'
 
   # Begin The 'Begin' Block
@@ -704,7 +716,7 @@
     # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqCredential.ps1.stub).
 
     - name: 'PROCESS | Declare The Credential PDQ Authenticates With'
-      when: pdq_inventory_running.credential.username | length > 0
+      when: pdq_inventory_running.credentials | default([], true) | length > 0
 
       block:
 
@@ -712,6 +724,9 @@
           become: true
           become_method: 'ansible.builtin.runas'
           become_user: "{{ pdq_inventory_running.service_account.name }}"
+          loop: "{{ pdq_inventory_running.credentials | default([], true) }}"
+          loop_control:
+            label: '(censored)'
           no_log: true
           register: '__pdq_inventory_credential__'
           vars:
@@ -725,7 +740,7 @@
               CliPath: "{{ pdq_inventory_running.cli_path }}"
               DatabaseDrive: "{{ pdq_inventory_running.database.drive }}"
               DatabaseDirectory: "{{ pdq_inventory_running.database.directory }}"
-              CredentialDeclaration: "{{ pdq_inventory_running.credential }}"
+              CredentialDeclaration: "{{ item }}"
               Product: 'Inventory'
             script: "{{ lookup('ansible.builtin.file', 'Set-PdqCredential.ps1') }}"
 
@@ -740,14 +755,16 @@
             # The script's own message, or -- when the module failed before PowerShell ran, so
             # there is no error stream to read -- the guarded field the style guide projects.
             __raw__: >-
-              {{ (((__pdq_inventory_credential__.error | default([]) | first | default({})).exception
+              {{ ((((__pdq_inventory_credential__.results | default([], true) | selectattr('failed', 'defined')
+                    | selectattr('failed') | first | default({}, true)).error | default([]) | first | default({})).exception
                    | default({})).message | default('', true))
                  | default(ansible_failed_result.msg | default('the credential task failed', true), true) }}
             # Nothing authored here interpolates the password, but the product's own stderr is
             # copied into a failure verbatim, so the declared secret is removed from whatever comes
             # back rather than trusted not to appear in it.
             __secrets__: >-
-              {{ [pdq_inventory_running.credential.password | default('')]
+              {{ pdq_inventory_running.credentials | default([], true)
+                 | map(attribute='password') | select('defined') | list
                  | reject('equalto', '') | list | unique }}
 
           ansible.builtin.fail:
@@ -770,8 +787,8 @@
     # act on them. An empty declaration is still a declaration -- it converges a host that syncs
     # nothing, and writes nothing on a second run.
     #
-    # The bind password reaches the script as a value and no further: no_log keeps it out of the
-    # recap, and the script never writes it to disk. The .ps1 is MATERIALIZED from scripts/ by
+    # The credential store reaches the script as a value and no further: no_log keeps it out of
+    # the recap, and the script never writes it to disk. The .ps1 is MATERIALIZED from scripts/ by
     # scripts/materialize-role-scripts.sh (the role tracks only
     # files/Set-PdqSyncContainer.ps1.stub); run it before this role.
 
@@ -796,6 +813,10 @@
               CliPath: "{{ pdq_inventory_running.cli_path }}"
               DatabaseDrive: "{{ pdq_inventory_running.database.drive }}"
               DatabaseDirectory: "{{ pdq_inventory_running.database.directory }}"
+              # Every bind account in the declaration is a NAME into the credential store, so
+              # the store goes with it and the script resolves each secret by that name --
+              # exactly as the product resolves each container's credential row by it.
+              CredentialDeclarations: "{{ pdq_inventory_running.credentials | default([], true) }}"
               DirectorySync: "{{ pdq_inventory_running.directory_sync }}"
             script: "{{ lookup('ansible.builtin.file', 'Set-PdqSyncContainer.ps1') }}"
 
@@ -817,8 +838,8 @@
             # product's stderr into a native-command failure, so the declared secrets are removed
             # from whatever comes back rather than trusted not to appear in it.
             __secrets__: >-
-              {{ [pdq_inventory_running.directory_sync.bind_password | default(''),
-                  pdq_inventory_running.credential.password | default('')]
+              {{ pdq_inventory_running.credentials | default([], true)
+                 | map(attribute='password') | select('defined') | list
                  | reject('equalto', '') | list | unique }}
 
           ansible.builtin.fail:

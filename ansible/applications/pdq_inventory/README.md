@@ -2,12 +2,12 @@
 
 Installs PDQ Inventory at a pinned version and brings it up as an all-in-one **Central Server** on
 Windows. In one converge it installs the product, applies the licence, runs the background service
-under the shared PDQ service account, places the database on its dedicated drive, sets Central
-Server mode and the console port, applies the product's preferences, reconciles the pinned
-variables and the owned collections, seeds the per-user console defaults, authorises the console
-users, chooses the event-log severities, and records the registration that would otherwise stop
-the first console with a popup. PDQ Inventory is a scanner, so — unlike `pdq_deploy` — it
-publishes **no package repository and no network share**.
+under the shared PDQ service account, records the credentials the product authenticates with,
+places the database on its dedicated drive, sets Central Server mode and the console port, applies
+the product's preferences, reconciles the pinned variables and the owned collections, seeds the
+per-user console defaults, authorises the console users, chooses the event-log severities, and
+records the registration that would otherwise stop the first console with a popup. PDQ Inventory is
+a scanner, so — unlike `pdq_deploy` — it publishes **no package repository and no network share**.
 
 Both declarations are complete. The variable map is the whole set: a converge adds what is
 missing, corrects what differs, removes what the map does not name, and proves each removal from
@@ -46,7 +46,8 @@ role uses. The controller's Ansible environment needs the `amazon.aws` collectio
 Required deployment-specific inputs carry an account id or change with every version and every
 site, so the playbook states them where a reader can see them: the installer (bucket, four-part
 version, digest), the licence (bucket, object, digest, and the email it was issued to), the
-service-account password (bucket and object), and the database drive letter. The caller may also
+service-account password (bucket and object), the password behind each declared credential, and
+the database drive letter. The caller may also
 replace the default all-addresses listener with explicit addresses. `tasks/validate.yml` enforces
 these inputs on the controller before anything touches the guest.
 

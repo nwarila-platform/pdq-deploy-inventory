@@ -11,7 +11,6 @@
 # were universally safe, so the playbook states them where a reader can see what is installed.
 #
 #   pdq_inventory.installer.bucket  S3 bucket holding the installer (the application repository).
-#   pdq_inventory.installer.path    Object key of the PDQ Inventory installer.
 #   pdq_inventory.installer.version Four-part product version the installer delivers; the role
 #                                   compares it against the installed console to stay idempotent.
 #   pdq_inventory.installer.sha256  Lowercase 64-character digest of that object. Verified on the

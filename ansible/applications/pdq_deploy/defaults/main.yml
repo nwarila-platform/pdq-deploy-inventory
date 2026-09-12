@@ -132,8 +132,9 @@ pdq_deploy_defaults:
   #
   # More than one, because a workstation, a member server and a domain controller each admit a
   # different account to their local Administrators. The secret belongs to the account it opens,
-  # not to a variable beside the list:  #
-  #     - username: 'tcn\svc-pdq-ws'
+  # not to a variable beside the list
+  #
+  #     - username: 'DOMAIN\svc-pdq-ws'
   #       password: '...'
   #       description: 'Workstation class target authentication'
   #
@@ -289,7 +290,9 @@ pdq_deploy_defaults:
   # product's real names -- so older builds stay addressable for rollback rather than being
   # overwritten in place. The literal token <version> is replaced with installer.version at fetch
   # time, which is why the playbook supplies only a version and a digest. A repository laid out
-  # differently overrides this whole path, with or without the token.
+  # differently overrides this whole path, with or without the token. It is defaulted rather than
+  # required because the layout is the same wherever this fleet deploys -- only the BUCKET carries
+  # an account id, which is why that one is the caller's to state and this one is not.
   installer:
     path: 'PDQ.com/PDQ Deploy/<version>/PDQcom_PDQ-Deploy_<version>_x86-x64.exe'
 

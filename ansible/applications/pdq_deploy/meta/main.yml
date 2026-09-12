@@ -11,7 +11,6 @@
 # were universally safe, so the playbook states them where a reader can see what is installed.
 #
 #   pdq_deploy.installer.bucket  S3 bucket holding the installer (the application repository).
-#   pdq_deploy.installer.path    Object key of the PDQ Deploy installer.
 #   pdq_deploy.installer.version Four-part product version the installer delivers; the role
 #                                compares it against the installed console to stay idempotent.
 #   pdq_deploy.installer.sha256  Lowercase 64-character digest of that object. Verified on the

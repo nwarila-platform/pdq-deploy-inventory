@@ -11,3 +11,9 @@
 # the product can never drift apart. Its password is NOT here: only the plays that hand it to a
 # product resolve it, and they resolve it from the bucket at the moment of use.
 pdq_directory_username: 'tcn\svc-pdq'
+
+# This directory's base, which every OU in every play is written relative to. Named once here
+# because three plays need the same one -- the play that files the server, the play that files the
+# target, and the play that tells PDQ which containers to sync -- and a play's vars reach none of
+# the others. Moving the deployment to another directory is this one edit.
+domain_base_dn: 'DC=tcn,DC=trinitytechnicalservices,DC=com'

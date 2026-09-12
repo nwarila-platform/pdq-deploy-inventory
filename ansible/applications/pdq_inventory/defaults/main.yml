@@ -148,12 +148,13 @@ pdq_inventory_defaults:
   # REFERENCE to a credential row, and this declaration matches it -- so the secret is written in
   # exactly one place and a rotation reaches both the store and the bind at once.
   #
-  # A container may bind as a different account than the sync does, and then it states BOTH
-  # bind_username and bind_password for itself: per-account resolution belongs to whoever declares
-  # the pair, and a container naming only the account would silently borrow this one's password.
+  # A container may bind as a different account than the sync does, and then it NAMES that one
+  # the same way -- another of the credentials above. No password is ever stated here, at either
+  # level: the product points a container at a credential row by id, this declaration points at
+  # one by name, and the role hands the script the whole list to resolve each secret from.
   #
   # A container may also sync from a DIFFERENT DIRECTORY than the one named here: it states its
-  # own realm, and binds as an account that directory knows. The product holds one domain row per
+  # own realm, and names an account that directory knows. The product holds one domain row per
   # realm, each pointing at the account its containers bind as; the role owns those rows, so a
   # second directory is one more container, not a second declaration.
   #

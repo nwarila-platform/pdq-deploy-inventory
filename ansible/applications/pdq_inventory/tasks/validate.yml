@@ -160,13 +160,20 @@
       - __credential__ | length == 0 or
         __containers__ | length == 0 or
         __credential__.laps_user | default('') | length == 0
-      # A container binding as a different account states BOTH halves for itself. Naming only the
-      # account would leave it borrowing the sync's password and authenticating as somebody it is
-      # not; naming only a password names no account at all.
-      - __containers__ | selectattr('bind_username', 'defined')
-        | rejectattr('bind_password', 'defined') | list | length == 0
-      - __containers__ | selectattr('bind_password', 'defined')
-        | rejectattr('bind_username', 'defined') | list | length == 0
+      # A container binding as a different account NAMES it, and the name must be one of the
+      # declared credentials -- the role hands the script that list and nothing else holds the
+      # secret. It must be ordinary too, for the reason above.
+      - __containers__ | selectattr('bind_username', 'defined') | map(attribute='bind_username')
+        | reject('in', __usernames__) | list | length == 0
+      - __credentials__ | selectattr('laps_user', 'defined') | rejectattr('laps_user', 'equalto', '')
+        | map(attribute='username') | list
+        | select('in', __containers__ | selectattr('bind_username', 'defined') | map(attribute='bind_username') | list)
+        | list | length == 0
+      # No password is ever stated here. The product points a container at a credential row by
+      # id, and this declaration points at one by name; a password beside the name would be a
+      # second copy of a secret that already lives in the credential it names.
+      - __sync__.bind_password is not defined
+      - __containers__ | selectattr('bind_password', 'defined') | list | length == 0
       # Every container is a distinguished name plus the two flags the product stores.
       - __containers__ | rejectattr('distinguished_name', 'defined') | list | length == 0
       - __containers__ | selectattr('distinguished_name', 'eq', '') | list | length == 0
@@ -182,12 +189,12 @@
     fail_msg: >-
       Refusing to deploy: the directory sync declaration is one the product cannot act on.
       Containers require a realm and a bind username, and each container requires a
-      distinguished_name; a container naming its own realm must name a non-empty one. The bind account is NAMED, not restated: bind_username must be one of
-      the declared credentials and must not be a LAPS one, because the role takes that entry's
-      password to read the directory and a LAPS credential resolves to a target's local
-      administrator instead of a directory account. A container that binds as a different account
-      states both bind_username and bind_password for itself -- half a pair would borrow this
-      declaration's password and authenticate as somebody it is not. With delete_mode FullSync at least one container must be included:
-      FullSync removes every computer that is not inside an Include container, so a list of
-      exclusions alone would empty the database on the first sync.
+      distinguished_name; a container naming its own realm must name a non-empty one. Every bind
+      account -- the declaration's and any container's own -- is NAMED, never restated: it must be
+      one of the declared credentials and must not be a LAPS one, because the script is handed that
+      list and resolves the secret by name, and a LAPS credential resolves to a target's local
+      administrator instead of a directory account. A bind_password anywhere in the declaration is
+      refused: the secret lives in the credential the name points at. With delete_mode FullSync at
+      least one container must be included: FullSync removes every computer that is not inside an
+      Include container, so a list of exclusions alone would empty the database on the first sync.
     quiet: true

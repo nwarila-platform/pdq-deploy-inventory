@@ -49,12 +49,18 @@ BeforeAll {
     DatabaseDirectory = 'PDQ Inventory'
   }
 
+  # A bind account anywhere in the declaration is a NAME into this list; the declaration itself
+  # never carries a password.
+  Function New-Credential {
+    Param ([System.String]$Username)
+    @{ username = $Username; password = 'not-a-real-password' }
+  }
+
   Function New-Declaration {
     Param ([System.Object[]]$Container, [Switch]$Insecure)
     @{
       realm         = $script:Realm
       bind_username = 'TCN\svc-pdq'
-      bind_password = 'not-a-real-password'
       insecure      = $Insecure.IsPresent
       containers    = $Container
     }
@@ -63,7 +69,7 @@ BeforeAll {
   Function New-Container {
     Param ([System.String]$Dn, [System.String]$BindUsername, [System.String]$Realm)
     $c = @{ distinguished_name = $Dn; include = $True; subtree = $True }
-    If ($BindUsername) { $c['bind_username'] = $BindUsername; $c['bind_password'] = 'not-a-real-password' }
+    If ($BindUsername) { $c['bind_username'] = $BindUsername }
     If ($Realm) { $c['realm'] = $Realm }
     $c
   }
@@ -106,6 +112,9 @@ Describe 'Set-PdqSyncContainer' {
     $global:FakeCredentials = [System.Collections.Hashtable]::new([System.StringComparer]::Ordinal)
     $global:FakeCredentials['TCN\svc-pdq'] = @{ Id = 5; Auth = 'None' }
     $global:FakeCredentials['tcn\svc-pdq'] = @{ Id = 3; Auth = 'LAPS' }
+    # What the declaration handed over, fresh per test: the accounts the product holds above are
+    # the rows it wrote from exactly this list.
+    $script:Ctx['CredentialDeclarations'] = @((New-Credential 'TCN\svc-pdq'), (New-Credential 'tcn\svc-pdq'))
     $global:FakeSqlCalls = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeCliCalls = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeBindAuth = [System.Collections.Generic.List[System.String]]::new()
@@ -262,6 +271,7 @@ Describe 'Set-PdqSyncContainer' {
 
     It 'lets a container name its own bind account' {
       $global:FakeCredentials['TCN\svc-other'] = @{ Id = 9; Auth = 'None' }
+      $script:Ctx['CredentialDeclarations'] += (New-Credential 'TCN\svc-other')
       $Ctx = New-AnsibleContext
       & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @(
           (New-Container $script:WksDn),
@@ -286,6 +296,7 @@ Describe 'Set-PdqSyncContainer' {
 
     It 'syncs a container from a second realm, bound at that realm as the account it names' {
       $global:FakeCredentials['OTHER\svc-pdq'] = @{ Id = 9; Auth = 'None' }
+      $script:Ctx['CredentialDeclarations'] += (New-Credential 'OTHER\svc-pdq')
       $Ctx = New-AnsibleContext
       & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @(
           (New-Container $script:WksDn),
@@ -362,7 +373,19 @@ Describe 'Set-PdqSyncContainer' {
         Should -Throw -ExpectedMessage '*not an ordinary credential*'
     }
 
+    It 'refuses a bind account the declaration did not hand over, naming it and its container' {
+      # The product holds it, so the id resolves; the declaration never listed it, so there is
+      # no secret to bind with. The failure names the account rather than a password.
+      $global:FakeCredentials['TCN\svc-ghost'] = @{ Id = 11; Auth = 'None' }
+      $Ctx = New-AnsibleContext
+      { & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @(
+            (New-Container $script:WksDn 'TCN\svc-ghost')) -Insecure) } | Should -Throw '*TCN\svc-ghost*not among the declared credentials*'
+      $global:FakeBindPath | Should -HaveCount 0
+    }
+
     It 'refuses an account the product does not hold' {
+      # Handed over, so the declaration's own check passes and the product's absence is what fails.
+      $script:Ctx['CredentialDeclarations'] += (New-Credential 'TCN\nobody')
       $Ctx = New-AnsibleContext
       { & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @((New-Container $script:WksDn 'TCN\nobody')) -Insecure) } |
         Should -Throw -ExpectedMessage '*not an ordinary credential*'

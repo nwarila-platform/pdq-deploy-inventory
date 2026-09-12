@@ -27,6 +27,12 @@
 .PARAMETER CliPath
     Full path to PDQInventory.exe. The sqlite tool is taken from beside it.
 
+.PARAMETER CredentialDeclarations
+    Every credential the product holds, as declared to it: each names a username and carries the
+    password that opens it. A bind account anywhere in DirectorySync is a NAME into this list --
+    the secret is never restated beside the name, here or in the product, whose container row
+    points at a credential row by id.
+
 .PARAMETER DatabaseDirectory
     The directory holding Database.db on DatabaseDrive.
 
@@ -37,10 +43,11 @@
     Three digits: ErrorActionPreference, Set-PSDebug, Set-StrictMode.
 
 .PARAMETER DirectorySync
-    The declaration: realm, bind_username, bind_password, and containers. Each container carries a
-    distinguished_name and the two booleans the product stores, and may name its own realm,
-    bind_username and bind_password -- a container in a second directory says which, and binds as
-    an account that directory knows.
+    The declaration: realm, bind_username, and containers. Each container carries a
+    distinguished_name and the two booleans the product stores, and may name its own realm and
+    bind_username -- a container in a second directory says which, and names an account that
+    directory knows. No password appears anywhere in it: every bind account is a name into
+    CredentialDeclarations.
 
     The product binds each DOMAIN through its row in ActiveDirectoryDomains, and each CONTAINER
     through the container's own credential. The row it ships has an empty Name and IsCurrentUser
@@ -85,6 +92,17 @@ Param (
   [ValidateNotNullOrEmpty()]
   [System.String]
   $CliPath,
+
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [AllowEmptyCollection()]
+  [System.Collections.IDictionary[]]
+  $CredentialDeclarations,
 
   [Parameter(
     DontShow = $False,
@@ -296,6 +314,15 @@ Function Invoke-NativeCommand {
   Return [PSCustomObject]@{ Exit = [System.Int32]$Exit; Output = $Written.ToArray() }
 }
 
+# The secrets, keyed by the account they open. Ordinal, as the product keys them: it has held
+# 'TCN\svc-pdq' and 'tcn\svc-pdq' as two rows.
+$Secrets = [System.Collections.Generic.Dictionary[System.String, System.String]]::new([System.StringComparer]::Ordinal)
+ForEach ($Credential In @($CredentialDeclarations)) {
+  If ($Null -ne $Credential -and $Credential.Contains('username')) {
+    $Secrets[[System.String]$Credential['username']] = [System.String]$(If ($Credential.Contains('password')) { $Credential['password'] } Else { '' })
+  }
+}
+
 # The declaration, normalised once so Main compares like with like.
 $Realm = [System.String]$DirectorySync['realm']
 $Insecure = [System.Boolean]$(If ($DirectorySync.Contains('insecure')) { $DirectorySync['insecure'] } Else { $False })
@@ -307,8 +334,16 @@ ForEach ($Container In @($DirectorySync['containers'])) {
       include  = [System.Int32][System.Boolean]$Container['include']
       realm    = ([System.String]$(If ($Container.Contains('realm')) { $Container['realm'] } Else { $DirectorySync['realm'] })).Trim()
       username = [System.String]$(If ($Container.Contains('bind_username')) { $Container['bind_username'] } Else { $DirectorySync['bind_username'] })
-      password = [System.String]$(If ($Container.Contains('bind_password')) { $Container['bind_password'] } Else { $DirectorySync['bind_password'] })
     })
+}
+# Each bind account must be one the declaration handed over, because the directory read below
+# needs its secret and nothing else holds it. Failing here names the account; failing at the bind
+# would name a password.
+ForEach ($Container In $Declared) {
+  If (-not $Secrets.ContainsKey($Container.username)) {
+    Throw ('{0} is named as the bind account for {1} but is not among the declared credentials, so nothing can bind as it.' -f $Container.username, $Container.dn)
+  }
+  $Container['password'] = $Secrets[$Container.username]
 }
 
 # A quoted literal is safe here because these are values the caller declared, but sqlite has no

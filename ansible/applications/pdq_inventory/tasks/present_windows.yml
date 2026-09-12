@@ -787,8 +787,8 @@
     # act on them. An empty declaration is still a declaration -- it converges a host that syncs
     # nothing, and writes nothing on a second run.
     #
-    # The bind password reaches the script as a value and no further: no_log keeps it out of the
-    # recap, and the script never writes it to disk. The .ps1 is MATERIALIZED from scripts/ by
+    # The credential store reaches the script as a value and no further: no_log keeps it out of
+    # the recap, and the script never writes it to disk. The .ps1 is MATERIALIZED from scripts/ by
     # scripts/materialize-role-scripts.sh (the role tracks only
     # files/Set-PdqSyncContainer.ps1.stub); run it before this role.
 
@@ -805,12 +805,6 @@
           vars:
             ansible_become_flags: 'logon_type=batch'
             ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
-            __pdq_inventory_bind_password__: >-
-              {{ (pdq_inventory_running.credentials | default([], true)
-                  | selectattr('username', 'defined')
-                  | selectattr('username', 'equalto',
-                               pdq_inventory_running.directory_sync.bind_username | default('', true))
-                  | first | default({}, true)).password | default('', true) }}
 
           ansible.windows.win_powershell:
             depth: 4
@@ -819,11 +813,11 @@
               CliPath: "{{ pdq_inventory_running.cli_path }}"
               DatabaseDrive: "{{ pdq_inventory_running.database.drive }}"
               DatabaseDirectory: "{{ pdq_inventory_running.database.directory }}"
-              # The declaration names its bind account; the secret comes from the credential
-              # store, so it is stated once and this is where the two are joined.
-              DirectorySync: >-
-                {{ pdq_inventory_running.directory_sync
-                   | combine({'bind_password': __pdq_inventory_bind_password__}) }}
+              # Every bind account in the declaration is a NAME into the credential store, so
+              # the store goes with it and the script resolves each secret by that name --
+              # exactly as the product resolves each container's credential row by it.
+              CredentialDeclarations: "{{ pdq_inventory_running.credentials | default([], true) }}"
+              DirectorySync: "{{ pdq_inventory_running.directory_sync }}"
             script: "{{ lookup('ansible.builtin.file', 'Set-PdqSyncContainer.ps1') }}"
 
       # The declaration carries a bind password, so the task above is no_log and its failure
@@ -844,9 +838,8 @@
             # product's stderr into a native-command failure, so the declared secrets are removed
             # from whatever comes back rather than trusted not to appear in it.
             __secrets__: >-
-              {{ ([pdq_inventory_running.directory_sync.bind_password | default('')]
-                  + (pdq_inventory_running.credentials | default([], true)
-                     | map(attribute='password') | select('defined') | list))
+              {{ pdq_inventory_running.credentials | default([], true)
+                 | map(attribute='password') | select('defined') | list
                  | reject('equalto', '') | list | unique }}
 
           ansible.builtin.fail:

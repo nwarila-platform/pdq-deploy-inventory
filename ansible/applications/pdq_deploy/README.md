@@ -15,9 +15,21 @@ to the target, so the guest never receives cloud credentials. The installer is v
 its pinned SHA-256 on the guest before execution, the licence is verified against its pinned
 SHA-256 before use, and the in-memory service-account password is rejected if it is empty.
 
-> **Scope: domainless lab profile.** The defaults target a standalone Windows host with a local
-> service account and local console users; a domain service account, group-based console
-> authorisation, and RBAC hardening await a directory service.
+## Domain and credentials
+
+The host is domain-joined, but the background service stays under a **local** account — the one
+`service_account` names, `.\svc-pdq` by default, shared with `pdq_inventory`. What the product
+presents to a *target* is a **domain** account, and those are `credentials`: a list of records,
+each naming the account, carrying the password that opens it, and — for exactly one — claiming
+`is_default`. The flag is stated because the product marks whichever row was written last as its
+default; a list that said nothing would never settle. Each product keeps its own credential store,
+so an account is declared to the product that uses it: Deploy holds the read-only directory
+account alone, because the per-class identities live in Inventory and Deploy takes a target's
+credential from there at deployment time. Every declared account is also admitted to the
+repository share, since a deployment fetches its installer over UNC as that account.
+
+An empty list is a declaration: it leaves whatever credentials the product holds. Nothing in this
+role names a directory, an account or a cloud account; those facts are the caller's.
 
 ## Composition and prerequisites
 
@@ -40,9 +52,10 @@ role uses. The controller's Ansible environment needs the `amazon.aws` collectio
 Required deployment-specific inputs carry an account id or change with every version and every
 site, so the playbook states them where a reader can see them: the installer (bucket, four-part
 version, digest), the licence (bucket, object, digest, and the email it was issued to), the
-service-account password (bucket and object), the password behind each declared target
-credential, one drive letter each for the database and repository, and the repository's own bucket
-and region. The caller may also replace the default all-addresses listener with explicit addresses.
+service-account password (bucket and object), each credential the product authenticates to a
+target with (account, password, and which one is the default), one drive letter each for the
+database and repository, and the repository's own bucket and region. The caller may also replace the
+default all-addresses listener with explicit addresses.
 `tasks/validate.yml` enforces these inputs on the controller before anything touches the guest.
 
 ## Configuration
@@ -118,6 +131,8 @@ name), and name it in `packages:`.
   same operating mode, under one service account; the mode is written literally, never offered.
 - **One package repository and network share.** Deploy owns their directory, ACL, and share state
   on the caller-supplied repository drive.
+- **A local service, domain credentials.** The service logs on as a local account; every account
+  the product authenticates to a target with is a directory account, declared as a credential.
 - The console port defaults to the product's own **6336**.
 
 ## First-class PowerShell
@@ -126,7 +141,8 @@ Guest-side logic that a task cannot express cleanly is a first-class PowerShell 
 and Pester-tested once under `scripts/` and materialized into the role by
 `scripts/materialize-role-scripts.sh` (the role tracks only the `.ps1.stub` markers). The role uses
 `Get-InstalledSoftware.ps1`, `Set-PdqSetting.ps1`, `Set-PdqVariable.ps1`,
-`Remove-PdqVariable.ps1`, and `Set-PdqRegistration.ps1`, all shared with `pdq_inventory`, plus
+`Remove-PdqVariable.ps1`, `Set-PdqCredential.ps1`, and `Set-PdqRegistration.ps1`, all shared with
+`pdq_inventory`, plus
 Deploy's own `Set-RepositoryAcl.ps1` for the package directory and `Set-PdqPackage.ps1` /
 `Remove-PdqPackage.ps1` for the packages.
 

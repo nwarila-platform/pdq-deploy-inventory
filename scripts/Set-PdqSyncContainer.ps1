@@ -66,7 +66,9 @@
     Six digits, one per stream, in the order the LOG_LEVELS table names them.
 
 .PARAMETER SyncTimeoutSeconds
-    How long to wait for the product to finish a sync it was asked to start. Zero does not wait.
+    How long to wait for the product to finish a sync it was asked to start. A positive wait that
+    ends without the sync finishing is a failure; zero does not wait, and then `synced` reports
+    false because nothing was observed to finish.
 
 .OUTPUTS
     One object carrying changed, check_mode, containers, realm, synced and msg.
@@ -348,9 +350,15 @@ ForEach ($Container In $Declared) {
 
 # A quoted literal is safe here because these are values the caller declared, but sqlite has no
 # parameter binding on the command line it is given, so a single quote in one would end the string.
+# The read-back below frames rows with '|' and lines, so those two cannot be carried either: a
+# value holding one would never read back equal and would report a change forever.
 ForEach ($Value In @($Realm) + @($Declared | ForEach-Object { $PSItem.dn; $PSItem.realm; $PSItem.username })) {
-  If ($Value.Contains("'")) {
-    Throw ('A declared value contains a single quote, which cannot be expressed safely in this statement: {0}' -f $Value)
+  $Offence = If ($Value.Contains("'")) { 'a single quote' }
+  ElseIf ($Value.Contains('|')) { 'a pipe' }
+  ElseIf ($Value.Contains("`n") -or $Value.Contains("`r")) { 'a line break' }
+  Else { $Null }
+  If ($Null -ne $Offence) {
+    Throw ('A declared value contains {0}, which cannot be expressed safely in this statement: {1}' -f $Offence, $Value)
   }
 }
 
@@ -360,13 +368,15 @@ ForEach ($Value In @($Realm) + @($Declared | ForEach-Object { $PSItem.dn; $PSIte
 
 # What the product holds now, keyed by the one field it does not rewrite. Name is deliberately NOT
 # the key: the product replaces it with '<domain>/<container path>' after a sync, so a comparison
-# on Name would report a change on every run forever.
+# on Name would report a change on every run forever. Everything else the declaration decides is
+# compared -- the realm and the GUID included, so a container moved to another directory, or
+# recreated at the same name with a new object, is rewritten rather than left as it was.
 $ExistingRows = (Invoke-NativeCommand -Operation:'Reading the sync containers' -FilePath:$SQLITE_PATH `
-    -Argument:@($DATABASE_PATH, 'SELECT DistinguishedName || ''|'' || UserId || ''|'' || IncludeSubtree || ''|'' || IsInclude FROM ADSyncContainers;')).Output
+    -Argument:@($DATABASE_PATH, 'SELECT DistinguishedName || ''|'' || UserId || ''|'' || IncludeSubtree || ''|'' || IsInclude || ''|'' || COALESCE(DomainName, '''') || ''|'' || COALESCE(Guid, '''') FROM ADSyncContainers;')).Output
 $Existing = @{}
 ForEach ($Row In @($ExistingRows)) {
   $Field = [System.String[]]@(([System.String]$Row) -split '\|')
-  If ($Field.Count -ge 4) { $Existing[$Field[0]] = ($Field[1..3] -join '|') }
+  If ($Field.Count -ge 6) { $Existing[$Field[0]] = ($Field[1..5] -join '|') }
 }
 
 $Changed = $False
@@ -385,14 +395,6 @@ ForEach ($Container In $Declared) {
   # Kept on the container: the domain rows below point each realm at the account its first
   # container binds as, and that is decided here whether or not the container itself changes.
   $Container['credential_id'] = $CredentialId
-
-  $Wanted = '{0}|{1}|{2}' -f $CredentialId, $Container.subtree, $Container.include
-  If ($Existing.ContainsKey($Container.dn) -and $Existing[$Container.dn] -eq $Wanted) {
-    Continue
-  }
-
-  $Changed = $True
-  If ($Ansible.CheckMode) { $Applied.Add($Container.dn); Continue }
 
   # Resolved inline rather than through a helper: DirectoryEntry takes the password as a string,
   # so a helper could only take one too, and wrapping it in a SecureString first would be theatre
@@ -428,6 +430,14 @@ ForEach ($Container In $Declared) {
     # Disposal must not replace the reason the bind failed with a complaint about disposal.
     Try { $Entry.Dispose() } Catch { Write-Debug -Message:'The directory entry could not be disposed.' }
   }
+
+  $Wanted = '{0}|{1}|{2}|{3}|{4}' -f $CredentialId, $Container.subtree, $Container.include, $Container.realm, $Guid
+  If ($Existing.ContainsKey($Container.dn) -and $Existing[$Container.dn] -eq $Wanted) {
+    Continue
+  }
+
+  $Changed = $True
+  If ($Ansible.CheckMode) { $Applied.Add($Container.dn); Continue }
   $Statements = [System.Collections.Generic.List[System.String]]::new()
   $Statements.Add('PRAGMA busy_timeout = 5000;')
   $Statements.Add('BEGIN IMMEDIATE;')
@@ -470,10 +480,16 @@ ForEach ($Row In @((Invoke-NativeCommand -Operation:'Reading the directories' -F
 }
 $Unclaimed = [System.Collections.Generic.Queue[System.Collections.IDictionary]]::new()
 ForEach ($Row In $DomainRows) { If ($Row.name.Length -eq 0) { $Unclaimed.Enqueue($Row) } }
+# Exactly one row survives per realm. Each realm takes the FIRST row already naming it, else adopts
+# an unnamed one; every other row -- a second row naming a realm, a realm nobody declared, a
+# spare unnamed row -- is removed. With no realm declared, one unnamed row is kept as the product
+# ships it, so a product told to sync from nowhere is left as it was installed.
+$Kept = [System.Collections.Generic.HashSet[System.String]]::new()
 ForEach ($Name In @($Realms.Keys)) {
   $Wanted = $Realms[$Name]
   $Row = $DomainRows | Where-Object { $PSItem.name -eq $Name } | Select-Object -First 1
   If ($Null -eq $Row -and $Unclaimed.Count -gt 0) { $Row = $Unclaimed.Dequeue() }
+  If ($Null -ne $Row) { $Null = $Kept.Add([System.String]$Row.id) }
   If ($Null -ne $Row -and $Row.name -eq $Name -and $Row.credential_id -eq $Wanted -and $Row.current_user -eq '0') { Continue }
   $Changed = $True
   If ($Ansible.CheckMode) { Continue }
@@ -484,18 +500,25 @@ ForEach ($Name In @($Realms.Keys)) {
   }
   $Null = Invoke-NativeCommand -Operation:('Declaring the directory {0}' -f $Name) -FilePath:$SQLITE_PATH -Argument:@($DATABASE_PATH, $Statement)
 }
+If ($Realms.Count -eq 0 -and $Unclaimed.Count -gt 0) { $Null = $Kept.Add([System.String]$Unclaimed.Dequeue().id) }
 ForEach ($Row In $DomainRows) {
-  If ($Row.name.Length -eq 0 -or $Realms.Contains($Row.name)) { Continue }
+  If ($Kept.Contains([System.String]$Row.id)) { Continue }
   $Changed = $True
   If ($Ansible.CheckMode) { Continue }
-  $Null = Invoke-NativeCommand -Operation:('Removing the undeclared directory {0}' -f $Row.name) -FilePath:$SQLITE_PATH `
+  $Null = Invoke-NativeCommand -Operation:('Removing the directory row {0}' -f $(If ($Row.name.Length -gt 0) { $Row.name } Else { '(unnamed)' })) -FilePath:$SQLITE_PATH `
     -Argument:@($DATABASE_PATH, ("DELETE FROM ActiveDirectoryDomains WHERE ActiveDirectoryDomainId = {0};" -f $Row.id))
 }
 
 # Start a sync and read the product's own verdict. A container records its failure in its own row,
 # so this asserts against the product rather than against this script's report of itself.
+#
+# Never from nowhere: with no container declared there is nothing to sync from, and under
+# FullSync the product deletes every computer outside an Include container -- with none declared,
+# that is every computer it holds (vendor documentation, ActiveDirectory sync modes). Removing the
+# rows is the whole of what an empty declaration asks for; the product's own schedule is the
+# operator's to disable first.
 $Synced = $False
-If ($Changed -and -not $Ansible.CheckMode) {
+If ($Changed -and $Declared.Count -gt 0 -and -not $Ansible.CheckMode) {
   # The product stamps LastSync when it finishes. Waiting on that rather than on a fixed sleep is
   # what makes the verdict below the product's own: a sleep long enough to be safe is still a guess,
   # and one short enough to be quick would read the PREVIOUS sync's result.
@@ -503,17 +526,24 @@ If ($Changed -and -not $Ansible.CheckMode) {
   $Before = ([System.String](Invoke-NativeCommand -Operation:'Reading the last sync time' -FilePath:$SQLITE_PATH -Argument:@($DATABASE_PATH, $LastSyncQuery)).Output).Trim()
   $Null = Invoke-NativeCommand -Operation:'Starting the directory sync' -FilePath:$CLI_PATH -Argument:@('ADSync', '-StartSync')
   $Deadline = (Get-Date).AddSeconds($SyncTimeoutSeconds)
+  $Completed = $False
   While ((Get-Date) -lt $Deadline) {
     $Now = ([System.String](Invoke-NativeCommand -Operation:'Reading the last sync time' -FilePath:$SQLITE_PATH -Argument:@($DATABASE_PATH, $LastSyncQuery)).Output).Trim()
-    If ($Now -ne $Before) { Break }
+    If ($Now -ne $Before) { $Completed = $True; Break }
     Start-Sleep -Seconds 2
+  }
+  # A verdict is only the product's if the sync was seen to finish. Waiting and not seeing it is
+  # a failure named as such; asked not to wait at all, the result says the sync was started and
+  # nothing more, and the error read below is whatever the PREVIOUS sync left.
+  If ($SyncTimeoutSeconds -gt 0 -and -not $Completed) {
+    Throw ('The directory sync was started but did not finish within {0} second(s); the product''s verdict is unknown.' -f $SyncTimeoutSeconds)
   }
   $Failed = (Invoke-NativeCommand -Operation:'Reading the sync result' -FilePath:$SQLITE_PATH `
       -Argument:@($DATABASE_PATH, "SELECT DistinguishedName FROM ADSyncContainers WHERE COALESCE(Error, '') <> '';")).Output
   If (@($Failed).Count -gt 0 -and ([System.String]$Failed).Trim().Length -gt 0) {
     Throw ('The product could not read these containers: {0}' -f (@($Failed) -join ', '))
   }
-  $Synced = $True
+  $Synced = $Completed
 }
 
 #endregion --- [ Main ] --------------------------------------------------------------------- #

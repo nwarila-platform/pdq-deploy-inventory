@@ -34,6 +34,11 @@
       # and its password cannot be empty, because the role sets it on every converge.
       - pdq_inventory_running.service_account.username | default('') is match('^\.\\\\[^\\\\]+$')
       - pdq_inventory_running.service_account.password | default('') | length > 0
+      # The previous contract spelled these differently, and the merge keeps an old key beside
+      # the new default rather than replacing it -- so a declaration in the old shape would pass
+      # and be silently ignored. Refused by name instead.
+      - pdq_inventory_running.service_account.name is not defined
+      - pdq_inventory_running.credential is not defined
       - pdq_inventory_running.database.drive | default('') is match('^[A-Za-z]$')
     fail_msg: >-
       Refusing to deploy: a required input is missing or malformed. The playbook must supply the
@@ -98,18 +103,30 @@
       # one row, where the second silently wins.
       - __credentials__ | rejectattr('username', 'defined') | list | length == 0
       - __usernames__ | reject('match', '.+') | list | length == 0
-      - __usernames__ | length == __usernames__ | unique | list | length
-      # At most one entry may claim the default. Two would take the flag from each other on every
-      # converge and never settle, reporting a change the pipeline could not stop making.
-      - __credentials__ | selectattr('is_default', 'defined') | selectattr('is_default')
-        | list | length <= 1
+      # Compared exactly: the product has held 'TCN\\x' and 'tcn\\x' as two rows, and the default
+      # comparison would fold them into one and refuse a declaration the product accepts.
+      - __usernames__ | length == __usernames__ | unique(case_sensitive=true) | list | length
+      # Each entry carries the secret that opens its account -- the product would store an empty
+      # one -- and says whether it is the default as a boolean, because the script reads a
+      # string 'false' as true.
+      - __credentials__ | map(attribute='password', default='') | reject('match', '.+') | list
+        | length == 0
+      - __credentials__ | selectattr('is_default', 'defined') | map(attribute='is_default')
+        | reject('boolean') | list | length == 0
+      # EXACTLY one entry claims the default when any are declared. Two would take the flag from
+      # each other on every converge and never settle; none would leave whichever the product
+      # wrote last holding it, which is the write order deciding rather than the declaration.
+      - __credentials__ | length == 0 or
+        (__credentials__ | selectattr('is_default', 'defined') | selectattr('is_default')
+         | list | length == 1)
     fail_msg: >-
       Refusing to deploy: the declared credentials are not something the product can settle on.
-      Each entry must name a username, and no two may name the same account -- the product keys a
-      credential on its username and holds no separate name, so a repeat is a second write to the
-      same row. At most one entry may claim is_default, because the product marks whichever
-      credential was written last as its default: two claimants would take the flag from each other
-      on every converge and report a change forever.
+      Each entry must name a username and carry a non-empty password, and no two may name the same
+      account -- the product keys a credential on its username and holds no separate name, so a
+      repeat is a second write to the same row. is_default, where stated, is a boolean, and when
+      any credential is declared exactly one claims it: the product marks whichever credential was
+      written last as its default, so two claimants would take the flag from each other on every
+      converge and none would leave write order deciding.
     quiet: true
 
 - name: 'VALIDATE | Require A Directory Sync Delete Mode The Product Recognises'
@@ -147,12 +164,10 @@
       - __containers__ | length == 0 or
         (__sync__.realm | default('') | length > 0 and
          __sync__.bind_username | default('') | length > 0)
-      # The bind account must be AMONG the declared credentials, or the product would bind through
-      # a row this run never wrote and the sync would run as somebody else. Declaring none at all
-      # is left alone deliberately -- the defaults say that keeps whatever the product holds, and
-      # the sync script fails clearly and by name if what it holds cannot bind.
+      # The bind account must be AMONG the declared credentials: the role hands the script that
+      # list and nothing else holds the secret it reads the directory with, so a bind the product
+      # already holds but this declaration does not is still one the script cannot perform.
       - __containers__ | length == 0 or
-        __usernames__ | length == 0 or
         (__sync__.bind_username | default('', true)) in __usernames__
       # And that entry must be ORDINARY. The role reads the directory with the password from this
       # entry, and a LAPS credential resolves to some target's local administrator -- an account no
@@ -174,22 +189,44 @@
       # second copy of a secret that already lives in the credential it names.
       - __sync__.bind_password is not defined
       - __containers__ | selectattr('bind_password', 'defined') | list | length == 0
-      # Every container is a distinguished name plus the two flags the product stores.
+      # Every container is a distinguished name plus the two flags the product stores. The flags
+      # are booleans, because the script reads a string 'false' as true; so is insecure.
       - __containers__ | rejectattr('distinguished_name', 'defined') | list | length == 0
-      - __containers__ | selectattr('distinguished_name', 'eq', '') | list | length == 0
+      - __containers__ | map(attribute='distinguished_name') | map('trim') | reject('match', '.+')
+        | list | length == 0
+      - __containers__ | rejectattr('include', 'defined') | list | length == 0
+      - __containers__ | rejectattr('subtree', 'defined') | list | length == 0
+      - __containers__ | map(attribute='include') | reject('boolean') | list | length == 0
+      - __containers__ | map(attribute='subtree') | reject('boolean') | list | length == 0
+      - __sync__.insecure is not defined or __sync__.insecure is boolean
+      # One row per distinguished name. Two entries naming the same one would each write the
+      # row on alternate runs and never settle.
+      - __containers__ | map(attribute='distinguished_name') | list | length ==
+        __containers__ | map(attribute='distinguished_name') | unique(case_sensitive=true) | list
+        | length
       # A container may sync from a directory other than the one the declaration names, and then
       # its realm must actually name one.
-      - __containers__ | selectattr('realm', 'defined') | map(attribute='realm')
+      - __containers__ | selectattr('realm', 'defined') | map(attribute='realm') | map('trim')
         | reject('match', '.+') | list | length == 0
-      # FullSync deletes every computer outside an Include container. A declaration that names
-      # containers but includes none of them empties the database on the first sync.
+      # The script frames its read-back with '|' and lines; a name carrying either could never
+      # read back equal and would report a change forever.
+      - (__containers__ | map(attribute='distinguished_name') | list
+         + [__sync__.realm | default('', true)]
+         + (__containers__ | selectattr('realm', 'defined') | map(attribute='realm') | list))
+        | select('search', '[|\r\n]') | list | length == 0
+      # FullSync deletes every computer outside an Include container (vendor documentation). A
+      # declaration that names containers but includes none of them empties the database on the
+      # first sync. An EMPTY declaration is not caught here because it cannot be told from a
+      # deployment that has never had containers; the script never starts a sync for it, and
+      # withdrawing the last container is documented as a change of delete_mode first.
       - __containers__ | length == 0 or
         (pdq_inventory_running.preferences.active_directory.delete_mode | default('') != 'FullSync') or
         (__containers__ | selectattr('include', 'defined') | selectattr('include') | list | length > 0)
     fail_msg: >-
       Refusing to deploy: the directory sync declaration is one the product cannot act on.
-      Containers require a realm and a bind username, and each container requires a
-      distinguished_name; a container naming its own realm must name a non-empty one. Every bind
+      Containers require a realm and a bind username; each container requires a distinguished_name
+      no other container repeats and boolean include and subtree flags, and a container naming its
+      own realm must name a non-empty one; no name may carry a pipe or a line break. Every bind
       account -- the declaration's and any container's own -- is NAMED, never restated: it must be
       one of the declared credentials and must not be a LAPS one, because the script is handed that
       list and resolves the secret by name, and a LAPS credential resolves to a target's local

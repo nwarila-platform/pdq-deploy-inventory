@@ -765,7 +765,7 @@
             __secrets__: >-
               {{ pdq_inventory_running.credentials | default([], true)
                  | map(attribute='password') | select('defined') | list
-                 | reject('equalto', '') | list | unique }}
+                 | reject('equalto', '') | list | unique(case_sensitive=true) }}
 
           ansible.builtin.fail:
             msg: >-
@@ -820,8 +820,8 @@
               DirectorySync: "{{ pdq_inventory_running.directory_sync }}"
             script: "{{ lookup('ansible.builtin.file', 'Set-PdqSyncContainer.ps1') }}"
 
-      # The declaration carries a bind password, so the task above is no_log and its failure
-      # reaches the recap as "censored". The script's own message survives on the module's error
+      # The credential store goes with the declaration, so the task above is no_log and its
+      # failure reaches the recap as "censored". The script's own message survives on the module's error
       # stream -- it names the container and what the directory said, never the password -- so
       # this says that out loud and fails again, stopping the run here.
       rescue:
@@ -840,7 +840,7 @@
             __secrets__: >-
               {{ pdq_inventory_running.credentials | default([], true)
                  | map(attribute='password') | select('defined') | list
-                 | reject('equalto', '') | list | unique }}
+                 | reject('equalto', '') | list | unique(case_sensitive=true) }}
 
           ansible.builtin.fail:
             msg: >-

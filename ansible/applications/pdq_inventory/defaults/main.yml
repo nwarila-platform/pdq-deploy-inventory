@@ -136,12 +136,14 @@ pdq_inventory_defaults:
   # offers no command line for either, so the declaration is written to its own store and read
   # back from it; a sync it refuses is a failed run, not a warning.
   #
-  # EMPTY IS A DECLARATION, not an omission: with no containers the product syncs nothing, which
-  # is what a deployment with no directory should do. It is also the ONE state in which
-  # preferences.active_directory.delete_mode = FullSync is harmless, because FullSync deletes
-  # every computer that is not inside an Include container. Declaring containers and leaving that
-  # mode alone are the same decision made twice; the validate task refuses the pair that would
-  # empty the database.
+  # EMPTY IS A DECLARATION, not an omission: with no containers the role removes what the product
+  # holds and starts no sync, which is what a deployment with no directory should do. It is NOT a
+  # safe way to withdraw the last container from a populated product: FullSync deletes every
+  # computer outside an Include container (vendor documentation), and with none declared that is
+  # every computer, on the product's next scheduled sync. Withdraw by changing
+  # preferences.active_directory.delete_mode first. Declaring containers and leaving that mode
+  # alone are the same decision made twice; the validate task refuses the pair that would empty
+  # the database on the first sync.
   #
   # The bind account is NAMED, not restated: bind_username must be one of the credentials declared
   # above, and the role takes that entry's password from there. The product itself stores only a

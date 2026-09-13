@@ -103,7 +103,8 @@ Describe 'Set-PdqSyncContainer' {
     $script:SqlitePath = Join-Path (Split-Path $script:CliPath -Parent) 'sqlite3.exe'
 
     # The product's tables, as the stub models them.
-    $global:FakeRows = @{}          # dn -> @{ Realm; UserId; IncludeSubtree; IsInclude }
+    $global:FakeRows = @{}          # dn -> @{ Realm; Guid; UserId; IncludeSubtree; IsInclude }
+    $global:FakeSyncStalls = $False  # a sync the product never finishes
     # The product ships ONE domain row: no name, no credential, bind as the console user.
     $global:FakeDomainRows = [System.Collections.Generic.List[System.Collections.Hashtable]]::new()
     $global:FakeDomainRows.Add(@{ Id = '1'; Name = ''; CredentialsId = ''; IsCurrentUser = '1' })
@@ -129,7 +130,7 @@ Describe 'Set-PdqSyncContainer' {
       If ($sql -like 'SELECT DistinguishedName ||*') {
         ForEach ($k In @($global:FakeRows.Keys)) {
           $r = $global:FakeRows[$k]
-          '{0}|{1}|{2}|{3}' -f $k, $r.UserId, $r.IncludeSubtree, $r.IsInclude
+          '{0}|{1}|{2}|{3}|{4}|{5}' -f $k, $r.UserId, $r.IncludeSubtree, $r.IsInclude, $r.Realm, $r.Guid
         }
         $global:LASTEXITCODE = 0; Return
       }
@@ -153,8 +154,8 @@ Describe 'Set-PdqSyncContainer' {
       If ($sql -match "DELETE FROM ADSyncContainers WHERE DistinguishedName = '(?<d>[^']*)'") {
         $global:FakeRows.Remove($Matches['d'])
       }
-      If ($sql -match "INSERT INTO ADSyncContainers .*VALUES \('(?<r>[^']*)', '[^']*', '[^']*', (?<c>\d+), (?<s>\d+), (?<i>\d+), '(?<d>[^']*)'\)") {
-        $global:FakeRows[$Matches['d']] = @{ Realm = $Matches['r']; UserId = $Matches['c']; IncludeSubtree = $Matches['s']; IsInclude = $Matches['i'] }
+      If ($sql -match "INSERT INTO ADSyncContainers .*VALUES \('(?<r>[^']*)', '[^']*', '(?<g>[^']*)', (?<c>\d+), (?<s>\d+), (?<i>\d+), '(?<d>[^']*)'\)") {
+        $global:FakeRows[$Matches['d']] = @{ Realm = $Matches['r']; Guid = $Matches['g']; UserId = $Matches['c']; IncludeSubtree = $Matches['s']; IsInclude = $Matches['i'] }
       }
       If ($sql -like 'SELECT ActiveDirectoryDomainId ||*') {
         ForEach ($r In $global:FakeDomainRows) { '{0}|{1}|{2}|{3}' -f $r.Id, $r.Name, $r.CredentialsId, $r.IsCurrentUser }
@@ -177,8 +178,9 @@ Describe 'Set-PdqSyncContainer' {
     New-Item -Force -Path ('function:global:' + $script:CliPath) -Value {
       $global:FakeCliCalls.Add($args -join ' ')
       # A real sync stamps LastSync when it finishes; the stub does the same so the script's
-      # wait ends the way it would in the product rather than on its timeout.
-      $global:FakeLastSync = [System.Guid]::NewGuid().ToString()
+      # wait ends the way it would in the product rather than on its timeout -- unless told to
+      # model a sync that never does.
+      If (-not $global:FakeSyncStalls) { $global:FakeLastSync = [System.Guid]::NewGuid().ToString() }
       $global:LASTEXITCODE = 0
     } | Out-Null
 
@@ -318,6 +320,34 @@ Describe 'Set-PdqSyncContainer' {
       $global:FakeDomainRows.Name | Should -Not -Contain 'stale.example.com'
     }
 
+    It 'keeps exactly one row per realm, removing spare unnamed rows and a second row naming the same realm' {
+      $global:FakeDomainRows.Add(@{ Id = '2'; Name = ''; CredentialsId = ''; IsCurrentUser = '1' })
+      $global:FakeDomainRows.Add(@{ Id = '3'; Name = $script:Realm; CredentialsId = '5'; IsCurrentUser = '0' })
+      $global:FakeDomainRows.Add(@{ Id = '4'; Name = $script:Realm; CredentialsId = '5'; IsCurrentUser = '0' })
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @((New-Container $script:WksDn)) -Insecure)
+      $global:FakeDomainRows | Should -HaveCount 1
+      # The first row already naming the realm is the one kept; the shipped row and its twin go.
+      $global:FakeDomainRows[0].Id | Should -Be '3'
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @((New-Container $script:WksDn)) -Insecure)
+      $Ctx.Changed | Should -BeFalse
+    }
+
+    It 'rewrites a container whose realm changed, and leaves no row for the realm it left' {
+      $global:FakeCredentials['OTHER\svc-pdq'] = @{ Id = 9; Auth = 'None' }
+      $script:Ctx['CredentialDeclarations'] += (New-Credential 'OTHER\svc-pdq')
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @((New-Container $script:WksDn)) -Insecure)
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @(
+          (New-Container $script:WksDn 'OTHER\svc-pdq' 'other.example.com')) -Insecure)
+      $Ctx.Changed | Should -BeTrue
+      $global:FakeRows[$script:WksDn].Realm | Should -Be 'other.example.com'
+      $global:FakeDomainRows.Name | Should -Not -Contain $script:Realm
+      $global:FakeDomainRows.Name | Should -Contain 'other.example.com'
+    }
+
     It 'reports no change when the domain rows already match, and writes nothing in check mode' {
       $decl = New-Declaration -Container @((New-Container $script:WksDn)) -Insecure
       $Ctx = New-AnsibleContext
@@ -415,6 +445,32 @@ Describe 'Set-PdqSyncContainer' {
       $Ctx.Result.check_mode | Should -BeTrue
       $global:FakeRows.Keys | Should -HaveCount 0
       $global:FakeCliCalls | Should -HaveCount 0
+    }
+
+    It 'starts no sync when the declaration is empty, because under Full Sync that empties the inventory' {
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @((New-Container $script:WksDn)) -Insecure)
+      $global:FakeCliCalls.Clear()
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @() -Insecure)
+      $Ctx.Changed | Should -BeTrue
+      $global:FakeRows.Keys | Should -HaveCount 0
+      $global:FakeCliCalls | Should -HaveCount 0
+      $Ctx.Result.synced | Should -BeFalse
+    }
+
+    It 'fails when a sync it waited for was never seen to finish, rather than reporting it done' {
+      $global:FakeSyncStalls = $True
+      $Ctx = New-AnsibleContext
+      { & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 1 -DirectorySync (New-Declaration -Container @((New-Container $script:WksDn)) -Insecure) } |
+        Should -Throw '*did not finish within 1 second*'
+    }
+
+    It 'refuses a value carrying a pipe or a line break, which the read-back could never match' {
+      $Ctx = New-AnsibleContext
+      { & $script:ScriptPath @script:Ctx -SyncTimeoutSeconds 0 -DirectorySync (New-Declaration -Container @(
+            (New-Container 'OU=Servers | Production,DC=tcn,DC=trinitytechnicalservices,DC=com')) -Insecure) } |
+        Should -Throw '*contains a pipe*'
     }
 
     It 'starts a sync only when something changed' {

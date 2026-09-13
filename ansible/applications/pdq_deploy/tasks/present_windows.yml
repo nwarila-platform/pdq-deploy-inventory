@@ -927,7 +927,7 @@
             __secrets__: >-
               {{ pdq_deploy_running.credentials | default([], true)
                  | map(attribute='password') | select('defined') | list
-                 | reject('equalto', '') | list | unique }}
+                 | reject('equalto', '') | list | unique(case_sensitive=true) }}
 
           ansible.builtin.fail:
             msg: >-

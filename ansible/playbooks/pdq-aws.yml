@@ -347,7 +347,7 @@
             sha256: '856dbe3dd4544d4b9ae1f382ee51f2a5f25f41714c462fa4afcff9743cc85eb9'
 
           # The Windows account the background service runs as, declared the way every account
-          # here is: keyed by the account, carrying the password that opens it. '.\' is how Windows
+          # here is: the account, and the password that opens it. '.\' is how Windows
           # spells "local to this machine". Both products share this ONE account, and it reaches
           # neither product's credential store -- it runs a service, it does not authenticate to a
           # target.
@@ -365,9 +365,9 @@
 
           # What Deploy authenticates to a TARGET as. Each product keeps its OWN store, so each
           # declares one here: a credential Inventory holds is not one Deploy can deploy with, and
-          # the two sets are not required to match. An entry is keyed by the account it opens,
-          # because that is how the product itself keys a credential, and carries the password that
-          # opens it. Any number of accounts may be declared; EXACTLY ONE may say is_default.
+          # the two sets are not required to match. An entry names the account it opens and carries
+          # the password that opens it. Any number may be declared; no two may name the same
+          # account, and EXACTLY ONE says is_default.
           #
           # The directory account alone TODAY, which is a choice and not a limit: the per-class
           # identities live in Inventory, and Deploy asks Inventory for a target's credential at
@@ -418,7 +418,7 @@
 
           # WHERE the product syncs computers from. The realm and the containers are this
           # deployment's directory, not a product default, so they are named here; the bind
-          # password is resolved by the loader exactly as the licence and the service account are.
+          # account is a name into the credentials above, and the role resolves its secret there.
           #
           # All three top-level OUs, subtrees included: every computer the directory holds. It
           # matters because preferences.active_directory.delete_mode is FullSync, which deletes
@@ -481,7 +481,7 @@
             sha256: '48a486f3682cc01218993e72a8006163616166dd5f0fdcd1fab36724710fdbbf'
 
           # The ONE Background Service User both products share, declared exactly as Deploy
-          # declares it: keyed by the account, carrying the password that opens it.
+          # declares it: the account, and the password that opens it.
           service_account:
             password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-password.txt') }}"
 

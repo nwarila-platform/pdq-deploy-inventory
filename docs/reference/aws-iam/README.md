@@ -1,14 +1,13 @@
 # AWS IAM reference
 
-The IAM this deployment runs with, **exported from the live account** by
-[`scripts/export-iam-reference.py`](../../../scripts/export-iam-reference.py). The account id is
-the only substitution, written as `<account-id>`. [`manifest.json`](manifest.json) records the date
-of the export and the default version of every policy exported.
+The IAM this deployment runs with, **exported from the live account** on 2026-09-14. The account
+id is the only substitution, written as `<account-id>`. [`manifest.json`](manifest.json) records the
+default version of every policy exported.
 
-Terraform does not manage any of this; an operator applies it. After changing IAM, re-export rather
-than editing these files: two hand-maintained copies drifted, one scoped to a repository id that no
-longer exists and the other holding amendments that were never applied. The export is
-deterministic, so a re-export of an unchanged account changes nothing.
+Terraform does not manage any of this; an operator applies it. After changing IAM, export the
+changed documents from the account rather than editing these by hand: two hand-maintained copies
+drifted, one scoped to a repository id that no longer exists and the other holding amendments that
+were never applied.
 
 ## Roles
 
@@ -88,4 +87,4 @@ which IAM Identity Center owns. See AWS on
 
 Change every repository-specific value together: the account id, the repository id and name in
 the trusts and tag conditions, the region, and the role, policy and state-key names that carry this
-repository's name. Then point `ROLES` and `INSTANCE_PROFILES` in the export script at the new names.
+repository's name.

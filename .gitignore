@@ -211,7 +211,6 @@
 !/scripts/Set-RepositoryContent.pester.ps1
 !/scripts/compose-and-run.sh
 !/scripts/converge-held-bed.sh
-!/scripts/export-iam-reference.py
 !/scripts/materialize-role-scripts.sh
 
 # --- [ allowed: terraform (data-only; resources live in the pinned framework) ] -------------- #

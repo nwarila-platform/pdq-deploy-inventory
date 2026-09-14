@@ -11,14 +11,15 @@
 # were universally safe, so the playbook states them where a reader can see what is installed.
 #
 #   pdq_deploy.installer.bucket  S3 bucket holding the installer (the application repository).
-#   pdq_deploy.installer.path    Object key of the PDQ Deploy installer.
 #   pdq_deploy.installer.version Four-part product version the installer delivers; the role
 #                                compares it against the installed console to stay idempotent.
 #   pdq_deploy.installer.sha256  Lowercase 64-character digest of that object. Verified on the
 #                                GUEST immediately before execution — the copy that actually runs.
 #   pdq_deploy.license_key       Decoded licence value, verified by its controller-side lookup.
 #   pdq_deploy.license_email       Address the licence was issued to, resolved by the same lookup.
-#   pdq_deploy.service_account.password  Shared service-account password value resolved by lookup.
+#   pdq_deploy.service_account.password  Password for the local account the background service
+#                                logs on as. The account itself is service_account.username,
+#                                spelled '.\name' the way Windows spells a local account.
 # The playbook resolves secret values on the CONTROLLER. The guest is never given cloud credentials.
 # =========================================================================================== #
 ---

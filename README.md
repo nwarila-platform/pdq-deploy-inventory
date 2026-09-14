@@ -2,21 +2,39 @@
 
 This repository automates the full Windows host and **PDQ Deploy and Inventory Central Server**
 configuration lifecycle in an ephemeral AWS environment. Terraform separates the replaceable
-Windows OS disk from three encrypted data volumes that persist across OS replacement. Ansible
-installs and licences both products, runs their services under one account, places their databases,
-publishes the Deploy repository, and converges preferences, variables, registration, and console
-users. GitHub Actions provisions the host, can replace it while reattaching the same data volumes,
-reconverges the applications, proves the bounded idempotency result, and destroys the environment.
+Windows OS disk from three encrypted data volumes that persist across OS replacement. Ansible joins
+the host to the directory, installs and licences both products, runs their services under one
+local account, places their databases, publishes the Deploy repository, declares the domain
+credentials each product authenticates to targets with, points Inventory's computer sync at the
+directory's containers, and converges preferences, variables, registration, and console users.
+GitHub Actions provisions the host and a test target beside it, can replace the host while
+reattaching the same data volumes, reconverges the applications, proves the bounded idempotency
+result, and destroys the environment.
 
 At execution time the two application roles overlay onto a version-pinned
 [`ansible-framework`](https://github.com/nwarila-platform/ansible-framework) checkout, whose
 `windows_disk_manager` provisions the disks.
 
-## Scope: domainless lab profile
+## Domain integration
 
-The current defaults target a standalone, non-domain Windows host. They create a local service
-account and authorise local console users. Domain integration — a domain service account,
-group-based console authorisation, and RBAC hardening — is future work once a directory exists.
+Both hosts join the directory: the PDQ server is filed under `OU=PDQ,OU=Domain Servers` and the
+test target under `OU=Domain Workstations`, each publishing its VPC address as its name. The
+products' background services stay under one **local** account (`.\svc-pdq`); what reaches a
+target is a **domain** account, declared to each product as a credential.
+
+The accounts are created once, by the separate elevated `pdq_ad_config` role against a domain
+controller: a read-only directory account (`svc-pdq`) that Inventory's computer sync binds as and
+that either product falls back to, plus one account per machine class (`svc-pdq-ws`, `-ms`, `-dc`).
+Each class account is added to its targets' local Administrators by that OU's own policy — not by
+anything here — so a scan or a deployment reaches a workstation, a member server or a domain
+controller as an account that machine admits and no other. Inventory holds all four; Deploy holds
+the directory account alone and takes a target's credential from Inventory at deployment time.
+
+Every account is written the same way, where the product that uses it is configured: the account,
+the password that opens it, and — for exactly one per store — `is_default`. A bind anywhere in the
+directory sync is a *name* into that list, never a password. Nothing under `ansible/applications/`
+names this directory, these accounts, or this cloud account; every such fact lives in the playbook
+or `ansible/inventory/group_vars/`, stated once.
 
 ## What it deploys
 
@@ -59,10 +77,14 @@ the rebuilt host with the data preserved.
 
 | Path | Purpose |
 |---|---|
-| `ansible/applications/pdq_inventory/` | PDQ Inventory application role |
+| `ansible/applications/pdq_inventory/` | PDQ Inventory application role: credentials, directory sync, collections |
 | `ansible/applications/pdq_deploy/` | PDQ Deploy application role and repository/share owner |
-| `ansible/playbooks/pdq-aws.yml` | Composed play: inventory contract, host readiness, framework disk manager, then both products |
-| `ansible/inventory/aws_ec2.yml` | Dynamic AWS inventory (filters this run's instance by tag) |
+| `ansible/applications/pdq_ad_config/` | Elevated role run by hand against a domain controller: the PDQ OU and service accounts |
+| `ansible/playbooks/pdq-aws.yml` | Composed play: inventory contract, host readiness, disks, domain join, then both products |
+| `ansible/playbooks/ad-config.yml` | The directory objects PDQ depends on, declared once and run by an operator |
+| `ansible/inventory/aws_ec2.yml` | Dynamic AWS inventory (filters this run's instances by tag) |
+| `ansible/inventory/directory.yml` | The domain controller `ad-config.yml` runs against |
+| `ansible/inventory/group_vars/all.yml` | What every play must agree on: the directory's base DN |
 | `terraform/aws.tfvars` | Data-only input to the pinned aws-terraform-framework (no `.tf` files here) |
 | `scripts/` | Composition, script materialization, and the products' PowerShell utilities |
 | `docs/ansible-style-guide.md` | Ansible design and authoring rules |
@@ -74,7 +96,12 @@ repository declares neither.
 ## Status
 
 Both application roles are built, independently reviewed, and proven on ephemeral AWS: a full
-converge (install, licence, Central Server mode, ports, firewall, database on its dedicated drive,
-preferences, console users, registration) followed by a green idempotency gate. The AWS pipeline is
-live end to end — provision, converge, prove, destroy — and OS-drive replacement with reattached
-data volumes is a proven capability. Pinned product version: 20.1.8.0.
+converge (domain join, install, licence, Central Server mode, ports, firewall, database on its
+dedicated drive, credentials, directory sync, preferences, collections and packages, console users,
+registration) followed by a green idempotency gate, then OS-drive replacement with the same data
+volumes reattached and the products resuming on their existing databases. The AWS pipeline is live
+end to end — provision, converge, prove, destroy. Pinned product version: 20.1.8.0.
+
+Proven on a live bed against one directory. Syncing from more than one directory is supported by
+the declaration and the script and is proven against a stub only, exactly as the LDAPS bind is,
+because no bed has had a second directory to prove it against.

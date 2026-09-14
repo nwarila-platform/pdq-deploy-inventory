@@ -30,7 +30,15 @@
       - pdq_deploy_running.installer.bucket | default('') | length > 0
       - pdq_deploy_running.installer.path | default('') | length > 0
       - pdq_deploy_running.installer.sha256 | default('') is match('^[0-9a-f]{64}$')
-      - pdq_deploy_running.service_account.name | default('') | length > 0
+      # The service account logs on as '.\name' -- Windows' own spelling for a local account --
+      # and its password cannot be empty, because the role sets it on every converge.
+      - pdq_deploy_running.service_account.username | default('') is match('^\.\\\\[^\\\\]+$')
+      - pdq_deploy_running.service_account.password | default('') | length > 0
+      # The previous contract spelled these differently, and the merge keeps an old key beside
+      # the new default rather than replacing it -- so a declaration in the old shape would pass
+      # and be silently ignored. Refused by name instead.
+      - pdq_deploy_running.service_account.name is not defined
+      - pdq_deploy_running.credential is not defined
       - pdq_deploy_running.database.drive | default('') is match('^[A-Za-z]$')
       - pdq_deploy_running.repository.drive | default('') is match('^[A-Za-z]$')
       - pdq_deploy_running.repository.bucket | default('') | length > 0
@@ -89,4 +97,44 @@
       repository path; its booleans and the service-manager mode must hold the shapes the role
       writes; the pinned variables must be a map of string values; and console_users must be a list
       of names. See meta/main.yml.
+    quiet: true
+
+- name: 'VALIDATE | Require Credentials The Product Can Settle On'
+  when: (state | default('present') | string | lower | trim) == 'present'
+  vars:
+    __credentials__: "{{ pdq_deploy_running.credentials | default([], true) }}"
+    __usernames__: "{{ __credentials__ | map(attribute='username') | select('defined') | list }}"
+  ansible.builtin.assert:
+    that:
+      - __credentials__ is sequence
+      - __credentials__ is not string
+      # The product keys a credential on its username and holds no separate name, so an entry
+      # without one names no account -- and two entries naming the SAME account are two writes to
+      # one row, where the second silently wins.
+      - __credentials__ | rejectattr('username', 'defined') | list | length == 0
+      - __usernames__ | reject('match', '.+') | list | length == 0
+      # Compared exactly: the product has held 'TCN\\x' and 'tcn\\x' as two rows, and the default
+      # comparison would fold them into one and refuse a declaration the product accepts.
+      - __usernames__ | length == __usernames__ | unique(case_sensitive=true) | list | length
+      # Each entry carries the secret that opens its account -- the product would store an empty
+      # one -- and says whether it is the default as a boolean, because the script reads a
+      # string 'false' as true.
+      - __credentials__ | map(attribute='password', default='') | reject('match', '.+') | list
+        | length == 0
+      - __credentials__ | selectattr('is_default', 'defined') | map(attribute='is_default')
+        | reject('boolean') | list | length == 0
+      # EXACTLY one entry claims the default when any are declared. Two would take the flag from
+      # each other on every converge and never settle; none would leave whichever the product
+      # wrote last holding it, which is the write order deciding rather than the declaration.
+      - __credentials__ | length == 0 or
+        (__credentials__ | selectattr('is_default', 'defined') | selectattr('is_default')
+         | list | length == 1)
+    fail_msg: >-
+      Refusing to deploy: the declared credentials are not something the product can settle on.
+      Each entry must name a username and carry a non-empty password, and no two may name the same
+      account -- the product keys a credential on its username and holds no separate name, so a
+      repeat is a second write to the same row. is_default, where stated, is a boolean, and when
+      any credential is declared exactly one claims it: the product marks whichever credential was
+      written last as its default, so two claimants would take the flag from each other on every
+      converge and none would leave write order deciding.
     quiet: true

@@ -2,12 +2,12 @@
 
 Installs PDQ Inventory at a pinned version and brings it up as an all-in-one **Central Server** on
 Windows. In one converge it installs the product, applies the licence, runs the background service
-under the shared PDQ service account, places the database on its dedicated drive, sets Central
-Server mode and the console port, applies the product's preferences, reconciles the pinned
-variables and the owned collections, seeds the per-user console defaults, authorises the console
-users, chooses the event-log severities, and records the registration that would otherwise stop
-the first console with a popup. PDQ Inventory is a scanner, so — unlike `pdq_deploy` — it
-publishes **no package repository and no network share**.
+under the shared PDQ service account, records the credentials the product authenticates with,
+places the database on its dedicated drive, sets Central Server mode and the console port, applies
+the product's preferences, reconciles the pinned variables and the owned collections, seeds the
+per-user console defaults, authorises the console users, chooses the event-log severities, and
+records the registration that would otherwise stop the first console with a popup. PDQ Inventory is
+a scanner, so — unlike `pdq_deploy` — it publishes **no package repository and no network share**.
 
 Both declarations are complete. The variable map is the whole set: a converge adds what is
 missing, corrects what differs, removes what the map does not name, and proves each removal from
@@ -21,9 +21,38 @@ to the target, so the guest never receives cloud credentials. The installer is v
 its pinned SHA-256 on the guest before execution, the licence is verified against its pinned
 SHA-256 before use, and the in-memory service-account password is rejected if it is empty.
 
-> **Scope: domainless lab profile.** The defaults target a standalone Windows host with a local
-> service account and local console users; a domain service account, group-based console
-> authorisation, and RBAC hardening await a directory service.
+## Domain, credentials and directory sync
+
+The host is domain-joined, but the background service stays under a **local** account — the one
+`service_account` names, `.\svc-pdq` by default, shared with `pdq_deploy`. What the product
+authenticates to a *target* as is a **domain** account, and those are `credentials`: a list of
+records, each naming the account, carrying the password that opens it, and — for exactly one —
+claiming `is_default`. The flag is stated because the product marks whichever row was written last
+as its default; a list that said nothing would never settle. Inventory holds every account a scan
+may need, because a scan opens a target's admin share exactly as a deployment does and a
+workstation, a member server and a domain controller each admit a different one: one account per
+machine class, each made a local administrator on its class by that OU's own policy, plus the
+read-only directory account the sync binds as. Deploy takes a target's credential from this store.
+
+`directory_sync` is the computer sync: the realm, the account the sync binds as, and the
+containers — each a distinguished name plus the two flags the product stores. The product offers no
+command line for any of it, so `Set-PdqSyncContainer.ps1` writes the declaration to the product's
+own store, resolves each container's GUID from the directory, starts a sync, and reads the
+product's own verdict back; a container the product could not read fails the run by name. The
+declaration is complete: a container it does not name is removed. Under `delete_mode: FullSync`
+that also means a declaration that names containers but includes none would empty the database on
+the first sync, which `tasks/validate.yml` refuses.
+
+The bind account is a **name** into `credentials`, never a password, at every level: the role hands
+the script the credential list and the script resolves each secret by the same username the
+product resolves its credential row by. A container may name its own bind account and its own
+realm, so a second directory is one more container rather than a second declaration; the role owns
+the product's domain rows — one per realm the containers name, pointing at the account its
+containers bind as, never at the console user. `insecure` opts the directory read down to plain
+LDAP on 389 and is stated in the open when a directory cannot serve LDAPS.
+
+The accounts themselves are created by the separate elevated `pdq_ad_config` role. Nothing in this
+role names a directory, an account or a cloud account; those facts are the caller's.
 
 ## Composition and prerequisites
 
@@ -46,8 +75,10 @@ role uses. The controller's Ansible environment needs the `amazon.aws` collectio
 Required deployment-specific inputs carry an account id or change with every version and every
 site, so the playbook states them where a reader can see them: the installer (bucket, four-part
 version, digest), the licence (bucket, object, digest, and the email it was issued to), the
-service-account password (bucket and object), and the database drive letter. The caller may also
-replace the default all-addresses listener with explicit addresses. `tasks/validate.yml` enforces
+service-account password (bucket and object), each credential the product authenticates with
+(account, password, and which one is the default), the directory sync (realm, the bind account's
+name, and the containers), and the database drive letter. The caller may also replace the default
+all-addresses listener with explicit addresses. `tasks/validate.yml` enforces
 these inputs on the controller before anything touches the guest.
 
 ## Configuration
@@ -71,6 +102,9 @@ reported change rather than silent drift.
 - **All-in-one Central Server only.** PDQ Deploy and Inventory integrate only co-located, in the
   same operating mode, under one service account; the mode is written literally, never offered.
 - **No package repository.** Inventory scans; it does not deploy, so it publishes no share.
+- **A local service, domain credentials.** The service logs on as a local account; every account
+  the product authenticates with is a directory account, declared as a credential, and every bind
+  is a name into that list.
 - The console port defaults to the product's own **7337**.
 
 ## First-class PowerShell
@@ -79,8 +113,9 @@ Guest-side logic that a task cannot express cleanly is a first-class PowerShell 
 and Pester-tested once under `scripts/` and materialized into the role by
 `scripts/materialize-role-scripts.sh` (the role tracks only the `.ps1.stub` markers). The role uses
 `Get-InstalledSoftware.ps1`, `Set-PdqSetting.ps1`, `Set-PdqVariable.ps1`,
-`Remove-PdqVariable.ps1`, and `Set-PdqRegistration.ps1`, all shared with `pdq_deploy`, plus
-Inventory's own `Set-PdqCollection.ps1` / `Remove-PdqCollection.ps1` for the collections.
+`Remove-PdqVariable.ps1`, `Set-PdqCredential.ps1`, and `Set-PdqRegistration.ps1`, all shared with
+`pdq_deploy`, plus Inventory's own `Set-PdqCollection.ps1` / `Remove-PdqCollection.ps1` for the
+collections and `Set-PdqSyncContainer.ps1` for the directory sync.
 
 ## Verification
 

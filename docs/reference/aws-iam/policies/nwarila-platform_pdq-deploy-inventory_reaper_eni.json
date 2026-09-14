@@ -11,38 +11,9 @@
       "Sid": "DescribeNetworkInterfacesAndAddresses"
     },
     {
-      "Action": "ec2:CreateNetworkInterface",
-      "Condition": {
-        "Null": {
-          "aws:RequestTag/CommitSha": "false",
-          "aws:RequestTag/Environment": "false",
-          "aws:RequestTag/RunId": "false"
-        },
-        "StringEquals": {
-          "aws:RequestTag/ManagedBy": "Terraform",
-          "aws:RequestTag/Repository": "nwarila-platform/pdq-deploy-inventory",
-          "aws:RequestTag/RepositoryId": "1347369220"
-        }
-      },
-      "Effect": "Allow",
-      "Resource": "arn:aws:ec2:us-east-1:<account-id>:network-interface/*",
-      "Sid": "CreateTaggedNetworkInterface"
-    },
-    {
-      "Action": "ec2:CreateNetworkInterface",
-      "Effect": "Allow",
-      "Resource": [
-        "arn:aws:ec2:us-east-1:<account-id>:subnet/*",
-        "arn:aws:ec2:us-east-1:<account-id>:security-group/*"
-      ],
-      "Sid": "CreateNetworkInterfaceReferencedResources"
-    },
-    {
       "Action": [
-        "ec2:DeleteNetworkInterface",
-        "ec2:ModifyNetworkInterfaceAttribute",
-        "ec2:AttachNetworkInterface",
-        "ec2:DetachNetworkInterface"
+        "ec2:DetachNetworkInterface",
+        "ec2:DeleteNetworkInterface"
       ],
       "Condition": {
         "Null": {
@@ -58,13 +29,10 @@
       },
       "Effect": "Allow",
       "Resource": "arn:aws:ec2:us-east-1:<account-id>:network-interface/*",
-      "Sid": "ManageOwnedNetworkInterface"
+      "Sid": "DetachAndDeleteOwnedNetworkInterface"
     },
     {
-      "Action": [
-        "ec2:AttachNetworkInterface",
-        "ec2:DetachNetworkInterface"
-      ],
+      "Action": "ec2:DetachNetworkInterface",
       "Condition": {
         "Null": {
           "ec2:ResourceTag/CommitSha": "false",
@@ -79,7 +47,7 @@
       },
       "Effect": "Allow",
       "Resource": "arn:aws:ec2:us-east-1:<account-id>:instance/*",
-      "Sid": "AttachNetworkInterfaceToOwnedInstance"
+      "Sid": "DetachNetworkInterfaceFromOwnedInstance"
     }
   ],
   "Version": "2012-10-17"

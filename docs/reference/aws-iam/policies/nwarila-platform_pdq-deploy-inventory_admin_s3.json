@@ -1,37 +1,77 @@
 {
-  "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "ListPdqAppRepoPrefix",
-      "Effect": "Allow",
-      "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::<account-id>-apprepo",
-      "Condition": {
-        "StringEquals": { "aws:ResourceAccount": "<account-id>" },
-        "StringLike": { "s3:prefix": [ "PDQ.com/*", "PDQ.com/" ] }
-      }
-    },
-    {
-      "Sid": "PublishPdqInstallersAndLicences",
-      "Effect": "Allow",
-      "Action": "s3:PutObject",
-      "Resource": [
-        "arn:aws:s3:::<account-id>-apprepo/PDQ.com/*/*.exe",
-        "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-deploy-license.lic",
-        "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-inventory-license.lic"
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:AbortMultipartUpload"
       ],
       "Condition": {
-        "StringEquals": { "aws:ResourceAccount": "<account-id>" }
-      }
+        "StringEquals": {
+          "aws:ResourceAccount": "<account-id>"
+        }
+      },
+      "Effect": "Allow",
+      "Resource": "arn:aws:s3:::<account-id>-ansible/applications/pdq/*",
+      "Sid": "ManageOwnAnsibleApplicationObjects"
     },
     {
-      "Sid": "AbortAStalledMultipartUpload",
-      "Effect": "Allow",
-      "Action": "s3:AbortMultipartUpload",
-      "Resource": "arn:aws:s3:::<account-id>-apprepo/PDQ.com/*",
+      "Action": "s3:ListBucket",
       "Condition": {
-        "StringEquals": { "aws:ResourceAccount": "<account-id>" }
-      }
+        "StringEquals": {
+          "aws:ResourceAccount": "<account-id>"
+        },
+        "StringLike": {
+          "s3:prefix": [
+            "applications/pdq/",
+            "applications/pdq/*"
+          ]
+        }
+      },
+      "Effect": "Allow",
+      "Resource": "arn:aws:s3:::<account-id>-ansible",
+      "Sid": "ListOwnAnsibleApplicationPrefix"
+    },
+    {
+      "Action": "s3:ListBucket",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "<account-id>"
+        },
+        "StringLike": {
+          "s3:prefix": [
+            "PDQ.com/*",
+            "PDQ.com/"
+          ]
+        }
+      },
+      "Effect": "Allow",
+      "Resource": "arn:aws:s3:::<account-id>-apprepo",
+      "Sid": "ListPdqAppRepoPrefix"
+    },
+    {
+      "Action": "s3:PutObject",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "<account-id>"
+        }
+      },
+      "Effect": "Allow",
+      "Resource": "arn:aws:s3:::<account-id>-apprepo/PDQ.com/*/*.exe",
+      "Sid": "PublishPdqInstallers"
+    },
+    {
+      "Action": "s3:AbortMultipartUpload",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "<account-id>"
+        }
+      },
+      "Effect": "Allow",
+      "Resource": "arn:aws:s3:::<account-id>-apprepo/PDQ.com/*",
+      "Sid": "AbortAStalledMultipartUpload"
     }
-  ]
+  ],
+  "Version": "2012-10-17"
 }

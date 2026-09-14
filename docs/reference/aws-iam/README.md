@@ -1,119 +1,91 @@
 # AWS IAM reference
 
-**Type**: Reference (Diátaxis). These documents record the IAM used by this repository's
-ephemeral AWS deployment. An operator provisions the roles and policies; Terraform does not manage
-them.
+The IAM this deployment runs with, **exported from the live account** by
+[`scripts/export-iam-reference.py`](../../../scripts/export-iam-reference.py). The account id is
+the only substitution, written as `<account-id>`. [`manifest.json`](manifest.json) records the date
+of the export and the default version of every policy exported.
 
-## Materializing and adapting the documents
+Terraform does not manage any of this; an operator applies it. After changing IAM, re-export rather
+than editing these files: two hand-maintained copies drifted, one scoped to a repository id that no
+longer exists and the other holding amendments that were never applied. The export is
+deterministic, so a re-export of an unchanged account changes nothing.
 
-The policy files use only `<account-id>` as a placeholder. The trust files use `<account-id>`, and
-the CI trust also uses `<owner-id>` and `<repository-id>`. Other repository, region, resource and tag
-values are literals or wildcards. In particular, `RepositoryId` is the literal `1316209027` in five
-runner policies, the region is `us-east-1`, and the VPC, subnet, key-pair and KMS resources are not
-repository-specific placeholders.
+## Roles
 
-Before applying a downstream clone, review every document together and change:
-
-- the account ID;
-- the owner ID, repository ID, owner and repository name;
-- the region; and
-- the VPC, subnet, key-pair and EBS KMS references if the downstream policy narrows their current
-  wildcards.
-
-Also rename role, policy, state-key and file-name literals that contain this repository's name.
-
-## Roles and policy attachments
-
-| Role | Trust document | Attached permissions | Purpose |
+| Role | Trusted by | Attached policies | Does |
 |---|---|---|---|
-| `nwarila-platform_pdq-deploy-inventory_runner` | `roles/github_nwarila-platform_pdq-deploy-inventory.trust.json` | All eight `runner_*.json` policies below | Workflow deploy, converge, prove and destroy |
-| `github_nwarila-platform_pdq-deploy-inventory-admin` | `roles/github_nwarila-platform_pdq-deploy-inventory-admin.trust.json` | The eight runner policies plus `nwarila-platform_pdq-deploy-inventory_admin_s3.json` | Operator deploy and artifact publishing |
-| `nwarila-ec2-role` | `roles/nwarila-ec2-role.trust.json` | `AmazonSSMManagedInstanceCore` only | EC2 instance profile `nwarila-ec2-profile` |
+| `nwarila-platform_pdq-deploy-inventory_runner` | GitHub OIDC: `aws-deploy.yml` on `main` | the eight `…_runner_*` | Provision, converge, prove, destroy |
+| `nwarila-platform_pdq-deploy-inventory_reaper` | GitHub OIDC: `aws-reaper.yml` on `main` | the six `…_reaper_*` | Destroy what a killed run left behind |
+| `nwarila-platform_pdq-deploy-inventory_admin` | The `github_nwarila-platform` IAM Identity Center permission set | the runner's eight, plus `…_admin_s3` | Operator deploys and artifact publishing |
+| `nwarila-ec2-apprepo-role` | EC2, through `nwarila-ec2-apprepo-profile` | `AmazonSSMManagedInstanceCore`, `nwarila-apprepo-read` | What both deployed hosts run as |
 
-The workflow assumes `nwarila-platform_pdq-deploy-inventory_runner` through `DEPLOY_ROLE`.
+None of the roles carries an inline policy.
 
-| Policy document | Grant |
-|---|---|
-| `nwarila-platform_pdq-deploy-inventory_runner_iam.json` | Read `nwarila-ec2-profile`; pass only `nwarila-ec2-role` and only to EC2 |
-| `nwarila-platform_pdq-deploy-inventory_runner_eni.json` | Describe ENIs and addresses; create tagged ENIs; manage owned ENIs and attach them to owned instances |
-| `nwarila-platform_pdq-deploy-inventory_runner_sg.json` | Describe security groups; create tagged groups; manage owned groups and their rule resources |
-| `nwarila-platform_pdq-deploy-inventory_runner_ec2.json` | Read deployment metadata; launch tagged instances and volumes; manage and tag owned instances and volumes |
-| `nwarila-platform_pdq-deploy-inventory_runner_ssm.json` | Read the AMI parameter hierarchy; start SSH sessions and PowerShell commands on repository-tagged instances; read results and tear down the runner's sessions |
-| `nwarila-platform_pdq-deploy-inventory_runner_kms.json` | Resolve KMS aliases and keys; use KMS cryptographic and grant operations through EC2 in `us-east-1` |
-| `nwarila-platform_pdq-deploy-inventory_runner_s3.json` | Manage the two Terraform state objects; read the two licences, the versioned PDQ and OpenVPN installers, the VPN profile, and the two service-account secrets |
-| `nwarila-platform_pdq-deploy-inventory_runner_ebs.json` | Describe volumes; create tagged volumes; attach, detach and delete owned volumes |
-| `nwarila-platform_pdq-deploy-inventory_admin_s3.json` | List `PDQ.com/`; publish PDQ installers and the two licences; abort multipart uploads under `PDQ.com/` |
-
-## Boundaries present in the documents
+## Boundaries in the documents
 
 - Every statement is `Allow`; none is `Deny`.
-- EC2, ENI, security-group and EBS creation requires the repository, repository ID and `ManagedBy`
-  request-tag values, plus the presence of commit, run and environment tags. Lifecycle operations
-  on instances, ENIs, security groups and volumes require the corresponding ownership tags.
-- The CI trust requires the audience and repository ID, accepts the two recorded `sub` forms, and
-  limits `job_workflow_ref` to this repository's `aws-deploy.yml`. The workflow reference is one
-  string value, not an array.
-- The operator trust accepts only the `github_nwarila-platform` IAM Identity Center role name with
-  a 16-character generated suffix: each `?` in its `ArnLike` pattern matches one character.
-- The runner can pass only `nwarila-ec2-role` to EC2. KMS use is conditioned on the EC2 service in
-  `us-east-1`.
+- **The OIDC trusts** require the `sts.amazonaws.com` audience, this repository's id
+  (`1347369220`), the `refs/heads/main` ref, one of the two `sub` forms GitHub issues for it, and a
+  `job_workflow_ref` naming the one workflow that role belongs to. A branch, a fork or another
+  workflow in this repository cannot assume either role.
+- **The operator trust** names this account and limits `aws:PrincipalArn` to the role IAM Identity
+  Center generates for the `github_nwarila-platform` permission set; each `?` in its `ArnLike`
+  pattern matches one character of the generated suffix.
+- **Launching an instance** requires the `Repository`, `RepositoryId`, `ManagedBy`, `CommitSha`,
+  `RunId` and `Environment` request tags. Operations on existing instances, network interfaces,
+  security groups and volumes are conditioned on the `RepositoryId` resource tag.
+- **Passing a role** is limited to `nwarila-ec2-role` and `nwarila-ec2-apprepo-role`, and only to
+  `ec2.amazonaws.com`.
+- **KMS** cryptographic use is conditioned on `kms:ViaService` for EC2 in `us-east-1`.
 
-## Artifact access and the instance profile
+## What the runner reads from S3
 
-The runner reads exactly the two licence objects and the PDQ service-account secret under
-`applications/pdq/`, and the VPN profile and directory-join secret under `host_roles/` — reaching a
-private network and belonging to a directory are states the host is IN, not applications it
-carries, so each is filed beside the role that establishes it.
+From `…_runner_s3`:
 
-Installer access is NOT key-scoped, whatever the statement's name suggests. Read live 2026-09-09,
-policy version v16: the statement `ReadAppRepoByExactPathOnlyNoListing` grants `s3:GetObject` on
-`arn:aws:s3:::<account>-apprepo/*` — the whole bucket, no listing. Per-installer grants bounded by
-a literal filename were the intent and are not what is deployed; the name records the intent and
-the resource records the reality. Narrowing it is a real change, not a documentation fix, and it
-would now have to admit the version inside the filename: the repository was restandardised to
-`<Publisher>_<Application>_<Version>_<arch>.<ext>`, so a filename no longer bounds a version
-wildcard.
-The roles fetch those objects on the controller and copy only the installers to the guest. The operator role has the same
-reads and additionally publishes installers and licences through `admin_s3`.
+- **Terraform state:** read and write the one state object and its lock, with listing limited to
+  those two keys.
+- **Installers:** `s3:GetObject` on the **whole** application repository bucket, with no listing.
+  The statement is named `ReadAppRepoByExactPathOnlyNoListing`; per-installer grants were the
+  intent, and the resource is what is deployed.
+- **Licences:** the Deploy and Inventory licence keys and registration emails, plus the two licence
+  objects under their earlier names.
+- **Service-account secrets:** the local service account, the directory account, and the three
+  per-class target accounts.
+- **Host credentials:** the domain-join password and the OpenVPN profile.
 
-The instance profile carries `AmazonSSMManagedInstanceCore` only and has no S3 policy. No credential
-on the target can fetch these S3 objects.
+The roles fetch these on the controller. Only installers are copied to a guest; no credential on a
+deployed host can read these objects.
 
-## Broker permission set
+## The instance profile
 
-The operator trust names the account principal and then limits `aws:PrincipalArn` to the generated
-IAM Identity Center role. The `github_nwarila-platform` permission set must therefore also allow
-`sts:AssumeRole` on this repository's operator role. That permission is managed outside this
-repository.
+Both hosts run as `nwarila-ec2-apprepo-profile`. Its role reads the **whole** application repository
+(`s3:ListBucket` and `s3:GetObject`) and carries `AmazonSSMManagedInstanceCore`. The PDQ console
+needs the whole bucket, because `Sync-Repository.cmd` mirrors it; the scan target needs only the one
+Feature-on-Demand cab it fetches at boot. Narrowing that is tracked in
+[issue #56](https://github.com/nwarila-platform/pdq-deploy-inventory/issues/56).
 
-Add the operator-role ARN to the permission set's inline policy, then provision the updated
-permission set to the account. Do not edit the generated `AWSReservedSSO_*` role directly; IAM
-Identity Center manages that role. See AWS's documentation for
-[account-principal role delegation](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html)
-and [permission-set inline policies](https://docs.aws.amazon.com/singlesignon/latest/userguide/permissionsetcustom.html).
+## Operator access
 
-## Deployment values outside IAM
+Because the operator trust names the account and then narrows to the generated role, the
+`github_nwarila-platform` permission set must itself allow `sts:AssumeRole` on the operator role.
+That is managed outside this repository: add the role's ARN to the permission set's inline policy
+and provision the permission set to the account. Do not edit the generated `AWSReservedSSO_*` role,
+which IAM Identity Center owns. See AWS on
+[role delegation](https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html) and
+[permission-set inline policies](https://docs.aws.amazon.com/singlesignon/latest/userguide/permissionsetcustom.html).
 
-Terraform and the composed play currently declare one `t3.large` host and these `gp3` disks:
+## Accepted residuals
 
-| Drive | Label | Size | Purpose |
-|---|---|---:|---|
-| `C:` | AMI root | 30 GiB | Operating system |
-| `D:` | `PDQINVENTORY` | 30 GiB | PDQ Inventory database |
-| `E:` | `PDQDEPLOY` | 30 GiB | PDQ Deploy database |
-| `F:` | `PDQREPO` | 60 GiB | Package repository |
+- Launch references allow any image, subnet, security group, key pair and placement group in
+  `us-east-1`; no condition narrows them.
+- No condition requires EBS encryption, or bounds instance type, volume size, IOPS or throughput.
+- No condition restricts security-group rule ports.
+- The runner has no Elastic IP, internet-gateway or route-table actions, but nothing prevents a
+  public IPv4 address at launch.
+- KMS cryptographic access is `Resource: "*"`, bounded only by the `kms:ViaService` condition.
 
-`terraform/aws.tfvars` also sets the IMDS hop limit to `1` and declares ingress for SSH, the PDQ
-Deploy console and the PDQ Inventory console. Those are Terraform settings, not IAM controls.
+## Adapting for another repository
 
-## Accepted IAM residuals
-
-- Launch references allow any image, subnet, security group, key pair and placement group matching
-  the regional ARN patterns. There is no subnet or image-owner condition.
-- IAM does not require EBS encryption or cap instance type, volume size, IOPS, throughput, instance
-  count or spend.
-- IAM does not restrict the security-group rule ports. The rule-resource grants are regional
-  wildcards; the corresponding group grants require the repository ownership tags.
-- IAM does not prevent a public IPv4 at launch. The runner has no Elastic IP, internet-gateway or
-  route-table actions.
-- KMS cryptographic access uses `Resource: "*"`, bounded by `kms:ViaService` for EC2 in `us-east-1`.
+Change every repository-specific value together: the account id, the repository id and name in
+the trusts and tag conditions, the region, and the role, policy and state-key names that carry this
+repository's name. Then point `ROLES` and `INSTANCE_PROFILES` in the export script at the new names.

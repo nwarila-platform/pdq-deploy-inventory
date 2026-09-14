@@ -1,0 +1,6 @@
+{
+  "InstanceProfileName": "nwarila-ec2-apprepo-profile",
+  "Roles": [
+    "nwarila-ec2-apprepo-role"
+  ]
+}

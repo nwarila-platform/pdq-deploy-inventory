@@ -126,6 +126,7 @@ the rebuilt host with the data preserved.
 | `scripts/` | Composition, script materialization, and the products' PowerShell utilities |
 | `docs/ansible-style-guide.md` | Ansible design and authoring rules |
 | `docs/TECH-DEBT.md` | Current engineering debt |
+| `docs/reference/` | What the deployment depends on but does not create: IAM exported from the live account, Group Policy, WMI filters |
 
 `windows_disk_manager` and all terraform resources are supplied by the pinned frameworks; this
 repository declares neither.

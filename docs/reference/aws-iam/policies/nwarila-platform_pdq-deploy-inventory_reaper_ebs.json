@@ -10,28 +10,7 @@
       "Sid": "DescribeVolumes"
     },
     {
-      "Action": "ec2:CreateVolume",
-      "Condition": {
-        "Null": {
-          "aws:RequestTag/CommitSha": "false",
-          "aws:RequestTag/Environment": "false",
-          "aws:RequestTag/RunId": "false"
-        },
-        "StringEquals": {
-          "aws:RequestTag/ManagedBy": "Terraform",
-          "aws:RequestTag/Repository": "nwarila-platform/pdq-deploy-inventory",
-          "aws:RequestTag/RepositoryId": "1347369220"
-        }
-      },
-      "Effect": "Allow",
-      "Resource": "*",
-      "Sid": "CreateTaggedVolume"
-    },
-    {
-      "Action": [
-        "ec2:AttachVolume",
-        "ec2:DetachVolume"
-      ],
+      "Action": "ec2:DetachVolume",
       "Condition": {
         "Null": {
           "ec2:ResourceTag/CommitSha": "false",
@@ -49,7 +28,7 @@
         "arn:aws:ec2:us-east-1:<account-id>:volume/*",
         "arn:aws:ec2:us-east-1:<account-id>:instance/*"
       ],
-      "Sid": "AttachDetachOwnedVolumeAndInstance"
+      "Sid": "DetachOwnedVolumeAndInstance"
     },
     {
       "Action": "ec2:DeleteVolume",

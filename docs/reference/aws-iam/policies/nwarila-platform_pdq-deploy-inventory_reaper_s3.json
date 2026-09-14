@@ -1,24 +1,20 @@
 {
-  "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "ReadWriteOnlyTheStateFileAndItsLock",
-      "Effect": "Allow",
       "Action": [
         "s3:GetObject",
         "s3:PutObject",
         "s3:DeleteObject"
       ],
+      "Effect": "Allow",
       "Resource": [
         "arn:aws:s3:::<account-id>-terraform/nwarila-platform/pdq-deploy-inventory/aws-poc.tfstate",
         "arn:aws:s3:::<account-id>-terraform/nwarila-platform/pdq-deploy-inventory/aws-poc.tfstate.tflock"
-      ]
+      ],
+      "Sid": "ReadWriteOnlyTheStateFileAndItsLock"
     },
     {
-      "Sid": "ListOnlyThoseTwoKeys",
-      "Effect": "Allow",
       "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::<account-id>-terraform",
       "Condition": {
         "StringEquals": {
           "s3:prefix": [
@@ -26,7 +22,11 @@
             "nwarila-platform/pdq-deploy-inventory/aws-poc.tfstate.tflock"
           ]
         }
-      }
+      },
+      "Effect": "Allow",
+      "Resource": "arn:aws:s3:::<account-id>-terraform",
+      "Sid": "ListOnlyThoseTwoKeys"
     }
-  ]
+  ],
+  "Version": "2012-10-17"
 }

@@ -33,7 +33,7 @@ all_systems = [
   {
     region   = "us_east_1"
     hostname = "tcnaw-pdq01"
-    # The ratified availability-zone spec lock, and a subnet in this account's only VPC.
+    # The availability-zone spec lock, and a subnet in this account's only VPC.
     availability_zone = "us-east-1c"
     subnet_id         = "subnet-03a855e712be7b399"
     # The framework CONSUMES key pairs and never creates them, so this names the standing

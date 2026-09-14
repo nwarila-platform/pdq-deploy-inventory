@@ -2,11 +2,11 @@
   // Schema for editor validation. Update only when intentionally adopting a new schema.
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
 
-  // Renovate config for nwarila-platform/pdq-deploy-inventory — the Golden Repo and the
-  // canonical baseline for every repo in the platform fleet. Consumers extend it via
+  // Renovate config for nwarila-platform/pdq-deploy-inventory — the reference repository and
+  // the canonical baseline for every repo in the platform fleet. Consumers extend it via
   //   `extends: ["github>nwarila-platform/pdq-deploy-inventory//.github/renovate.json5"]`
   // per org ADR-0004's per-template-baseline model: this fleet's type-template tier IS the
-  // Golden Repo, so its baseline lives here rather than in an NWarila/* template.
+  // reference repository, so its baseline lives here rather than in an NWarila/* template.
   //
   // Rules in this file:
   //   - Pin third-party GitHub Actions to commit SHAs and keep the trailing tag comments

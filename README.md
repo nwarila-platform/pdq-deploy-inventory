@@ -1,12 +1,16 @@
 # pdq-deploy-inventory
 
+[![quality](https://github.com/nwarila-platform/pdq-deploy-inventory/actions/workflows/quality.yml/badge.svg?branch=main)](https://github.com/nwarila-platform/pdq-deploy-inventory/actions/workflows/quality.yml)
+[![PowerShell](https://github.com/nwarila-platform/pdq-deploy-inventory/actions/workflows/powershell.yml/badge.svg?branch=main)](https://github.com/nwarila-platform/pdq-deploy-inventory/actions/workflows/powershell.yml)
+[![AWS Deploy](https://github.com/nwarila-platform/pdq-deploy-inventory/actions/workflows/aws-deploy.yml/badge.svg?branch=main)](https://github.com/nwarila-platform/pdq-deploy-inventory/actions/workflows/aws-deploy.yml)
+
 This repository automates the full Windows host and **PDQ Deploy and Inventory Central Server**
 configuration lifecycle in an ephemeral AWS environment. Terraform separates the replaceable
 Windows OS disk from three encrypted data volumes that persist across OS replacement. Ansible joins
 the host to the directory, installs and licences both products, runs their services under one
 local account, places their databases, publishes the Deploy repository, declares the domain
 credentials each product authenticates to targets with, points Inventory's computer sync at the
-directory's containers, and converges preferences, variables, registration, and console users.
+directory's containers, and converges preferences, packages, registration, and console users.
 GitHub Actions provisions the host and a test target beside it, can replace the host while
 reattaching the same data volumes, reconverges the applications, proves the bounded idempotency
 result, and destroys the environment.
@@ -14,6 +18,39 @@ result, and destroys the environment.
 At execution time the two application roles overlay onto a version-pinned
 [`ansible-framework`](https://github.com/nwarila-platform/ansible-framework) checkout, whose
 `windows_disk_manager` provisions the disks.
+
+This is the production automation for **Trinity Technical Services**, the author's company. The
+directory, accounts and hostnames it names are that company's own.
+
+## What it demonstrates
+
+- **A destroy-by-default lifecycle that proves itself.** Every run provisions, converges, converges
+  again and must report only the changes it expects, then destroys — see
+  [`aws-deploy.yml`](.github/workflows/aws-deploy.yml).
+- **Data that outlives the OS.** The OS disk is replaceable; three data volumes detach and reattach,
+  and PDQ resumes on its existing databases.
+- **No stored cloud keys.** GitHub OIDC only, gated to protected `main`, with a separate tag-scoped
+  cleanup identity in [`aws-reaper.yml`](.github/workflows/aws-reaper.yml).
+- **A pinned supply chain.** Actions and frameworks are pinned by commit; each installer is checked
+  against its SHA-256 on the guest immediately before it runs.
+- **Verification against the machine, not exit codes.** Each role ends by asserting the state it
+  claims, and the scripts re-read the product and fail on a write it silently dropped.
+- **Windows automation tested on Linux.** The Pester specs under [`scripts/`](scripts/) stand in for
+  the PDQ command line, so the whole read-compare-write-verify path runs in CI with no PDQ
+  installed.
+
+```mermaid
+flowchart LR
+  gha[GitHub Actions] -- OIDC --> aws[AWS]
+  gha --> tf[Terraform<br/>pinned framework]
+  tf --> host[PDQ server<br/>OS disk + 3 data volumes]
+  tf --> target[Test target]
+  gha --> play[Ansible<br/>composed play]
+  s3[(S3: installers,<br/>licences, secrets)] --> play
+  play --> host
+  host -- joins --> ad[(Active Directory)]
+  host -- scans and deploys --> target
+```
 
 ## Domain integration
 
@@ -89,6 +126,7 @@ the rebuilt host with the data preserved.
 | `scripts/` | Composition, script materialization, and the products' PowerShell utilities |
 | `docs/ansible-style-guide.md` | Ansible design and authoring rules |
 | `docs/TECH-DEBT.md` | Current engineering debt |
+| `docs/reference/` | What the deployment depends on but does not create: IAM exported from the live account, Group Policy, WMI filters |
 
 `windows_disk_manager` and all terraform resources are supplied by the pinned frameworks; this
 repository declares neither.
@@ -97,11 +135,17 @@ repository declares neither.
 
 Both application roles are built, independently reviewed, and proven on ephemeral AWS: a full
 converge (domain join, install, licence, Central Server mode, ports, firewall, database on its
-dedicated drive, credentials, directory sync, preferences, collections and packages, console users,
-registration) followed by a green idempotency gate, then OS-drive replacement with the same data
+dedicated drive, credentials, directory sync, preferences, packages, console users, registration)
+followed by a green idempotency gate, then OS-drive replacement with the same data
 volumes reattached and the products resuming on their existing databases. The AWS pipeline is live
 end to end — provision, converge, prove, destroy. Pinned product version: 20.1.8.0.
 
 Proven on a live bed against one directory. Syncing from more than one directory is supported by
 the declaration and the script and is proven against a stub only, exactly as the LDAPS bind is,
 because no bed has had a second directory to prove it against.
+
+Importing the pinned **variables** and Inventory's **collections** is implemented and was proven
+deterministic in CI, but is held out of the converge for now: it drives the product's command line
+once per object, at 7–18 seconds a launch, and cost 30.8 minutes of a single deploy. The import and
+its prune are held together, because a prune without its import would empty the product. See
+TD-007 in [`docs/TECH-DEBT.md`](docs/TECH-DEBT.md).

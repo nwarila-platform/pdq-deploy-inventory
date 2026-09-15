@@ -10,7 +10,7 @@
 #   * IDENTITY: assumes the repository's REAPER role — describes, tag-scoped terminate/
 #     detach/revoke/delete, and state-file access only. It cannot create, run, tag, read
 #     artifacts, or touch credentials.
-#   * THE RATIFIED REFRESH DECISION: the reaper role deliberately has NO kms or ssm grants,
+#   * THE REFRESH DECISION: the reaper role deliberately has NO kms or ssm grants,
 #     so `terraform destroy` here MUST run with -refresh=false — a refresh would resolve
 #     data sources (kms alias, ami parameters) the role cannot read. Destroy-from-state
 #     needs neither. Widening the role instead of passing the flag is the wrong fix.

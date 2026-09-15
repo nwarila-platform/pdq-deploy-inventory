@@ -21,8 +21,8 @@
 #     exhaust the job budget before destroy and strand paid resources. That risk is accepted for
 #     this temporary proof bed.
 #   * One fixed state key; this workflow's concurrency group prevents overlapping applies and
-#     never cancels a live lifecycle. A later lifecycle can clean predecessor state before apply;
-#     no age-gated reaper exists for a run killed before destroy.
+#     never cancels a live lifecycle. A later lifecycle can clean predecessor state before apply,
+#     and aws-reaper.yml destroys what a run killed before destroy leaves behind.
 #   * Protected-main pushes that touch the deploy inputs — terraform, ansible, the framework
 #     pins, this workflow — prove immediately; an off-minute weekly schedule proves recurrence.
 #     One durable incident is updated on failure and closed after the next successful lifecycle.

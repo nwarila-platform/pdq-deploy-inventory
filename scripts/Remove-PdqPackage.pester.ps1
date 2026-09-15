@@ -27,7 +27,7 @@ BeforeAll {
   $script:CliPath = 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
 
   # Inline $Ansible stand-in (org contract: pairs are self-contained). Faithful to win_powershell:
-  # Changed defaults to $True, and only the ratified surface is modeled.
+  # Changed defaults to $True, and only the documented surface is modeled.
   Function New-AnsibleContext {
     Param ([Switch]$CheckMode)
     $global:Ansible = [PSCustomObject]@{

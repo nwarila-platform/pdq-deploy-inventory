@@ -36,7 +36,7 @@ BeforeAll {
 
   # Inline $Ansible stand-in (org contract: pairs are self-contained, no
   # imports). Faithful to win_powershell: Changed defaults to $True, and only
-  # the ratified surface (Changed, CheckMode, Failed, Result) is modeled.
+  # the documented surface (Changed, CheckMode, Failed, Result) is modeled.
   Function New-AnsibleContext {
     Param ([Switch]$CheckMode)
     $global:Ansible = [PSCustomObject]@{

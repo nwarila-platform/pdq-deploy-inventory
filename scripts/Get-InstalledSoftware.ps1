@@ -208,7 +208,7 @@ Trap {
     }
 
     # Write the error text. The original template uses Write-Host red here;
-    # PSAvoidUsingWriteHost is ratified, so the warning stream carries it.
+    # PSAvoidUsingWriteHost is enforced, so the warning stream carries it.
     Write-Warning -Message:(
       '[{0:0000}] {1} [{2}]' -f @(
         [System.Int64]$PSItem.InvocationInfo.ScriptLineNumber

@@ -1,24 +1,20 @@
 {
-  "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "ReadWriteOnlyTheStateFileAndItsLock",
-      "Effect": "Allow",
       "Action": [
         "s3:GetObject",
         "s3:PutObject",
         "s3:DeleteObject"
       ],
+      "Effect": "Allow",
       "Resource": [
         "arn:aws:s3:::<account-id>-terraform/nwarila-platform/pdq-deploy-inventory/aws-poc.tfstate",
         "arn:aws:s3:::<account-id>-terraform/nwarila-platform/pdq-deploy-inventory/aws-poc.tfstate.tflock"
-      ]
+      ],
+      "Sid": "ReadWriteOnlyTheStateFileAndItsLock"
     },
     {
-      "Sid": "ListOnlyThoseTwoKeys",
-      "Effect": "Allow",
       "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::<account-id>-terraform",
       "Condition": {
         "StringEquals": {
           "s3:prefix": [
@@ -26,23 +22,30 @@
             "nwarila-platform/pdq-deploy-inventory/aws-poc.tfstate.tflock"
           ]
         }
-      }
+      },
+      "Effect": "Allow",
+      "Resource": "arn:aws:s3:::<account-id>-terraform",
+      "Sid": "ListOnlyThoseTwoKeys"
     },
     {
-      "Sid": "ReadAppRepoByExactPathOnlyNoListing",
-      "Effect": "Allow",
       "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::<account-id>-apprepo/*",
       "Condition": {
         "StringEquals": {
           "aws:ResourceAccount": "<account-id>"
         }
-      }
+      },
+      "Effect": "Allow",
+      "Resource": "arn:aws:s3:::<account-id>-apprepo/*",
+      "Sid": "ReadAppRepoByExactPathOnlyNoListing"
     },
     {
-      "Sid": "ReadOnlyThePDQLicences",
-      "Effect": "Allow",
       "Action": "s3:GetObject",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "<account-id>"
+        }
+      },
+      "Effect": "Allow",
       "Resource": [
         "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-deploy-license.lic",
         "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-inventory-license.lic",
@@ -51,16 +54,16 @@
         "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-deploy-license-email.txt",
         "arn:aws:s3:::<account-id>-ansible/applications/pdq/pdq-inventory-license-email.txt"
       ],
+      "Sid": "ReadOnlyThePDQLicences"
+    },
+    {
+      "Action": "s3:GetObject",
       "Condition": {
         "StringEquals": {
           "aws:ResourceAccount": "<account-id>"
         }
-      }
-    },
-    {
-      "Sid": "ReadOnlyTheServiceAccountSecret",
+      },
       "Effect": "Allow",
-      "Action": "s3:GetObject",
       "Resource": [
         "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-password.txt",
         "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-domain-password.txt",
@@ -68,25 +71,22 @@
         "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-ms-password.txt",
         "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-dc-password.txt"
       ],
+      "Sid": "ReadOnlyTheServiceAccountSecret"
+    },
+    {
+      "Action": "s3:GetObject",
       "Condition": {
         "StringEquals": {
           "aws:ResourceAccount": "<account-id>"
         }
-      }
-    },
-    {
-      "Sid": "ReadOnlyTheDomainJoinAndOpenVpnCredentials",
+      },
       "Effect": "Allow",
-      "Action": "s3:GetObject",
       "Resource": [
         "arn:aws:s3:::<account-id>-ansible/host_roles/domain_member/svc-domainjoin-password.txt",
         "arn:aws:s3:::<account-id>-ansible/host_roles/remote_client/aws-ec2-test.ovpn"
       ],
-      "Condition": {
-        "StringEquals": {
-          "aws:ResourceAccount": "<account-id>"
-        }
-      }
+      "Sid": "ReadOnlyTheDomainJoinAndOpenVpnCredentials"
     }
-  ]
+  ],
+  "Version": "2012-10-17"
 }

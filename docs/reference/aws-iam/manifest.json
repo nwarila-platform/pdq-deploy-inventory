@@ -1,0 +1,130 @@
+{
+  "exported": "2026-09-14",
+  "instance_profiles": {
+    "nwarila-ec2-apprepo-profile": [
+      "nwarila-ec2-apprepo-role"
+    ]
+  },
+  "roles": {
+    "nwarila-ec2-apprepo-role": {
+      "attached": [
+        {
+          "managed_by": "aws",
+          "name": "AmazonSSMManagedInstanceCore"
+        },
+        {
+          "name": "nwarila-apprepo-read",
+          "version": "v1"
+        }
+      ],
+      "inline": []
+    },
+    "nwarila-platform_pdq-deploy-inventory_admin": {
+      "attached": [
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_admin_s3",
+          "version": "v10"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_ebs",
+          "version": "v5"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_ec2",
+          "version": "v9"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_eni",
+          "version": "v5"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_iam",
+          "version": "v4"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_kms",
+          "version": "v1"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_s3",
+          "version": "v17"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_sg",
+          "version": "v7"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_ssm",
+          "version": "v4"
+        }
+      ],
+      "inline": []
+    },
+    "nwarila-platform_pdq-deploy-inventory_reaper": {
+      "attached": [
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_reaper_ebs",
+          "version": "v1"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_reaper_ec2",
+          "version": "v1"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_reaper_eni",
+          "version": "v1"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_reaper_iam",
+          "version": "v1"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_reaper_s3",
+          "version": "v1"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_reaper_sg",
+          "version": "v1"
+        }
+      ],
+      "inline": []
+    },
+    "nwarila-platform_pdq-deploy-inventory_runner": {
+      "attached": [
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_ebs",
+          "version": "v5"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_ec2",
+          "version": "v9"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_eni",
+          "version": "v5"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_iam",
+          "version": "v4"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_kms",
+          "version": "v1"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_s3",
+          "version": "v17"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_sg",
+          "version": "v7"
+        },
+        {
+          "name": "nwarila-platform_pdq-deploy-inventory_runner_ssm",
+          "version": "v4"
+        }
+      ],
+      "inline": []
+    }
+  }
+}

@@ -333,8 +333,13 @@ If ($Username.Contains("'") -or $LapsUser.Contains("'") -or $Description.Contain
   Throw 'A declared credential value contains a single quote, which cannot be expressed safely in this statement.'
 }
 
+# An ordinary credential has two spellings, and the product uses the other one. This script writes
+# NULL for both LAPS fields; the product writes AuthenticationType 'None' with an empty LAPSUser,
+# and whenever its command line writes ANY credential it re-saves the default one that way too --
+# measured on a live bed. Compared as stored, the default reads as drifted after every other entry
+# in a list is written, and the list never settles. So the read folds the spellings together.
 $Existing = (Invoke-NativeCommand -Operation:'Reading the credential store' -FilePath:$SQLITE_PATH `
-    -Argument:@($DATABASE_PATH, ("SELECT IsDefault, AuthenticationType, LAPSUser, Description FROM Credentials WHERE UserName = '{0}';" -f $Username))).Output
+    -Argument:@($DATABASE_PATH, ("SELECT IsDefault, CASE WHEN COALESCE(AuthenticationType, '') IN ('', 'None') THEN '' ELSE AuthenticationType END, COALESCE(LAPSUser, ''), Description FROM Credentials WHERE UserName = '{0}';" -f $Username))).Output
 # Only a declaration that CLAIMS the default cares what else claims it. One that does not is
 # content beside whatever is default, so counting rivals would report drift it will never fix.
 $Strays = If ($IsDefault) {

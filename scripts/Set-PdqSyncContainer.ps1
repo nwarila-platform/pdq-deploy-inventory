@@ -418,7 +418,15 @@ ForEach ($Container In $Declared) {
     $Authentication)
   Try {
     $Null = $Entry.RefreshCache(@('objectGUID'))
-    $Guid = [System.String]$Entry.Guid
+    # ADSI's Guid is the object's sixteen bytes as hex, in the order the directory stores them --
+    # measured on a live bed. The product keeps the canonical form and rewrites any other spelling
+    # at its next sync, so a GUID compared as ADSI spells it never matches and every converge
+    # rewrites every container. Converted here, once, into the form the product keeps.
+    $Native = [System.String]$Entry.Guid
+    If ($Native -notmatch '^[0-9A-Fa-f]{32}$') {
+      Throw ('{0} returned a GUID that is not sixteen bytes of hex: {1}' -f $Container.dn, $Native)
+    }
+    $Guid = [System.Guid]::new([System.Byte[]]@(0..15 | ForEach-Object { [System.Convert]::ToByte($Native.Substring($PSItem * 2, 2), 16) })).ToString()
   } Catch {
     $Protocol = If ($Insecure) { 'LDAP' } Else { 'LDAPS' }
     $Hint = If ($Insecure) { '' } Else {

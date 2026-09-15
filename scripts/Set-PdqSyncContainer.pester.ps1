@@ -181,6 +181,18 @@ Describe 'Set-PdqSyncContainer' {
       # wait ends the way it would in the product rather than on its timeout -- unless told to
       # model a sync that never does.
       If (-not $global:FakeSyncStalls) { $global:FakeLastSync = [System.Guid]::NewGuid().ToString() }
+      # A real sync also rewrites each container's GUID into the canonical form, whatever spelling
+      # it was written in -- measured on a live bed. Without this, a script that stores another
+      # spelling reads back its own value, looks settled here, and rewrites every container on
+      # every converge against the real product.
+      If ($args -contains '-StartSync') {
+        ForEach ($Row In @($global:FakeRows.Values)) {
+          If ([System.String]$Row.Guid -match '^[0-9A-Fa-f]{32}$') {
+            $Bytes = [System.Byte[]]@(0..15 | ForEach-Object { [System.Convert]::ToByte($Row.Guid.Substring($PSItem * 2, 2), 16) })
+            $Row.Guid = [System.Guid]::new($Bytes).ToString()
+          }
+        }
+      }
       $global:LASTEXITCODE = 0
     } | Out-Null
 
@@ -196,7 +208,10 @@ Describe 'Set-PdqSyncContainer' {
       $global:FakeBindAuth.Add([System.String]$ArgumentList[3])
       # A real DirectoryEntry is lazy: construction touches nothing and the bind happens on the
       # first access, so a refused bind must surface from RefreshCache, not from the constructor.
-      [PSCustomObject]@{ Guid = '9cfbf891-c5ca-4a9a-8e36-ec13d911d250' } |
+      # ADSI spells the GUID as the object's bytes in stored order, not the canonical form -- this is
+      # what a live directory returned for the object the product stores as
+      # 9cfbf891-c5ca-4a9a-8e36-ec13d911d250.
+      [PSCustomObject]@{ Guid = '91f8fb9ccac59a4a8e36ec13d911d250' } |
         Add-Member -MemberType ScriptMethod -Name 'RefreshCache' -Value {
           Param($p)
           If ($global:FakeBindFails) { Throw 'The server is not operational.' }

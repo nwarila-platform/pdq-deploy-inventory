@@ -132,6 +132,16 @@ Describe 'Set-PdqCredential' {
             # make it a LAPS one have no command-line spelling, which is why the script follows up.
             $global:FakeCredentials[$Name] = @{ IsDefault = '0'; AuthenticationType = 'None'; LAPSUser = ''; Description = '' }
           }
+          # As the product does, measured: writing any credential saves that row and the default one
+          # in the product's own spelling of an ordinary credential -- 'None' and an empty LAPS user.
+          # A LAPS default keeps its type. A fake that leaves other rows alone hides exactly the
+          # difference that kept a real list from settling.
+          ForEach ($K In @($global:FakeCredentials.Keys)) {
+            $R = $global:FakeCredentials[$K]
+            If (($K -eq $Name -or $R.IsDefault -eq '1') -and $R.AuthenticationType -ne 'LAPS') {
+              $R.AuthenticationType = 'None'; $R.LAPSUser = ''
+            }
+          }
           $global:LASTEXITCODE = 0
         }
         Default { $global:LASTEXITCODE = 1 }
@@ -142,11 +152,13 @@ Describe 'Set-PdqCredential' {
       $global:FakeSqliteCalls.Add($args -join ' ')
       $Sql = $args[-1]
 
-      If ($Sql -match "SELECT IsDefault, AuthenticationType, LAPSUser, Description FROM Credentials WHERE UserName = '(?<u>[^']*)'") {
+      If ($Sql -match "SELECT IsDefault, (?<fold>CASE WHEN COALESCE\(AuthenticationType, ''\) IN \('', 'None'\) THEN '' ELSE AuthenticationType END, COALESCE\(LAPSUser, ''\)|AuthenticationType, LAPSUser), Description FROM Credentials WHERE UserName = '(?<u>[^']*)'") {
         $U = $Matches['u']
+        $Fold = $Matches['fold'].StartsWith('CASE')
         If ($global:FakeCredentials.ContainsKey($U)) {
           $R = $global:FakeCredentials[$U]
-          ('{0}|{1}|{2}|{3}' -f $R.IsDefault, $R.AuthenticationType, $R.LAPSUser, $R.Description)
+          $Type = If ($Fold -and $R.AuthenticationType -in @('', 'None')) { '' } Else { $R.AuthenticationType }
+          ('{0}|{1}|{2}|{3}' -f $R.IsDefault, $Type, $R.LAPSUser, $R.Description)
         }
         $global:LASTEXITCODE = 0
         Return
@@ -358,6 +370,26 @@ Describe 'Set-PdqCredential' {
 
     # The settling test: a list of these runs on every converge, so a second pass over a row that
     # already reads back as declared must report nothing at all.
+    It 'settles a list: every entry reports nothing on the second pass, as the idempotency gate requires' {
+      $List = @(
+        @{ username = 'tcn\svc-pdq-ws'; password = 'a'; description = 'Workstation class' }
+        @{ username = 'tcn\svc-pdq-ms'; password = 'b'; description = 'Member server class' }
+        @{ username = 'tcn\svc-pdq'; password = 'c'; description = 'Directory bind'; is_default = $True }
+      )
+      ForEach ($Entry In $List) {
+        $Ctx = New-AnsibleContext
+        & $script:ScriptPath @script:Ctx -CredentialDeclaration $Entry
+        Remove-AnsibleContext
+      }
+      $Second = ForEach ($Entry In $List) {
+        $Ctx = New-AnsibleContext
+        & $script:ScriptPath @script:Ctx -CredentialDeclaration $Entry
+        $Ctx.Changed
+        Remove-AnsibleContext
+      }
+      @($Second | Where-Object { $PSItem }).Count | Should -Be 0
+    }
+
     It 'reports no change on a second declaration of the same row' {
       $Ctx = New-AnsibleContext
       & $script:ScriptPath @script:Ctx -CredentialDeclaration $script:SecondaryDeclaration

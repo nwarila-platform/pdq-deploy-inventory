@@ -111,7 +111,9 @@
       when: (state | default('present') | string | lower | trim) != 'absent'
       vars:
         domain_member:
-          password: { bucket: "{{ aws_account_id }}-ansible" }
+          realm: "{{ domain_realm }}"
+          user: "{{ domain_join_user }}"
+          password: "{{ domain_join_password }}"
           computer_ou: "OU=PDQ,OU=Domain Servers,{{ domain_base_dn }}"
           registration_address: "{{ aws_private_ip_address }}"
 
@@ -190,7 +192,9 @@
       when: (state | default('present') | string | lower | trim) != 'absent'
       vars:
         domain_member:
-          password: { bucket: "{{ aws_account_id }}-ansible" }
+          realm: "{{ domain_realm }}"
+          user: "{{ domain_join_user }}"
+          password: "{{ domain_join_password }}"
           computer_ou: "OU=Domain Workstations,{{ domain_base_dn }}"
           registration_address: "{{ aws_private_ip_address }}"
 
@@ -446,7 +450,7 @@
               is_default: true
 
           directory_sync:
-            realm: 'tcn.trinitytechnicalservices.com'
+            realm: "{{ domain_realm }}"
             bind_username: 'tcn\svc-pdq'
             insecure: true
             containers:

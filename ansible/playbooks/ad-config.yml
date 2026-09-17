@@ -27,13 +27,9 @@
     - role: 'pdq_ad_config'
       vars:
         pdq_ad_config:
-          # Four accounts, each with one job. svc-pdq READS the directory -- it is the computer
-          # sync's bind account, and it is deliberately nothing else: no account here declares
-          # laps_read_ous, because nothing in this deployment reads another machine's local
-          # administrator password. A class account authenticates to a target as itself, and the
-          # rights it needs there come from that machine's OU policy.
-          # The three class accounts are the identities PDQ presents to a machine when it deploys
-          # to it, one per class, so a compromise of the workstation account reaches no server.
+          # Three class accounts, one per machine class. Each is the identity Inventory uses to
+          # bind and sync its OU and to scan the machines added from it; Deploy asks Inventory for
+          # that target credential. A compromise of the workstation account reaches no server.
           #
           # None of them is granted administrative rights here. A class account can do nothing on
           # a machine until that machine's OU policy adds it to the local Administrators, which is
@@ -41,19 +37,17 @@
           # to create before the policy exists.
           service_accounts:
 
-            - name: 'svc-pdq'
-              ou: 'OU=Domain Service Accounts,DC=tcn,DC=trinitytechnicalservices,DC=com'
-              password: >-
-                {{ lookup('secret',
-                          's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-domain-password.txt') }}
-
             - name: 'svc-pdq-ws'
+              groups:
+                - 'TCN_GS-LAPS_Domain-Workstations-Decrypt-Password'
               ou: 'OU=Domain Service Accounts,DC=tcn,DC=trinitytechnicalservices,DC=com'
               password: >-
                 {{ lookup('secret',
                           's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-ws-password.txt') }}
 
             - name: 'svc-pdq-ms'
+              groups:
+                - 'TCN_GS-LAPS_Domain-Servers-Decrypt-Password'
               ou: 'OU=Domain Service Accounts,DC=tcn,DC=trinitytechnicalservices,DC=com'
               password: >-
                 {{ lookup('secret',

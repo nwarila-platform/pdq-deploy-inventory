@@ -58,7 +58,9 @@ COMPOSE_PLAYBOOK=ad-config.yml COMPOSE_INVENTORY=ansible/inventory/directory.yml
 default: every value this role needs names one particular directory, so a working default here
 would be one site's directory wearing a default's clothes.
 
-`service_accounts` is a list. Each entry carries:
+`service_accounts` is a list of the accounts this invocation converges. Removing an entry does not
+delete that account in `present` state; retiring an existing account remains an explicit operator
+action. Each entry carries:
 
 | Key | Required | Meaning |
 |---|---|---|
@@ -71,9 +73,10 @@ Every account appears in the one list; only those needing a privilege name the g
 it. Declaring `groups` with an empty list is refused — that says what omitting the key already
 says, and a reader cannot tell an empty declaration from an unfinished one.
 
-No account in this deployment declares `groups` today: `svc-pdq` reads the directory for the
-computer sync, and the class accounts authenticate to a target as themselves, taking their rights
-there from that machine's OU policy.
+The workstation and member-server class accounts declare the LAPS password-decryption group named
+by their class policy. The domain-controller class account declares no group because no DC-class
+grant is in scope. Each class account still authenticates to its targets as itself, taking local
+administrative rights there from that machine's OU policy.
 
 An account is set to exactly what its entry says, group membership included, so an account that
 gained a group elsewhere loses it on the next converge. A duplicated `name` is refused: two

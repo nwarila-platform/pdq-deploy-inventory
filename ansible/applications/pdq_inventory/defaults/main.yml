@@ -120,16 +120,18 @@ pdq_inventory_defaults:
   # name the same account -- validate.yml refuses a repeat, because the second would silently
   # overwrite the first.
   #
-  # EXACTLY ONE entry may claim `is_default: true`, and here that must be the account the directory
-  # sync binds as -- validate.yml refuses a bind account that is not among these. It is stated
-  # rather than implied by position: the product marks whichever credential was written LAST as the
-  # default, so a declaration that says nothing would have each entry take the flag from the one
-  # before it and never settle.
+  # EXACTLY ONE entry may claim `is_default: true` when credentials are declared. It may be a local
+  # fallback; it need not be the account any directory sync binds as. Every bind at either level
+  # must still name an ORDINARY credential declared here. The default is stated rather than implied
+  # by position: the product marks whichever credential was written LAST as the default, so a
+  # declaration that says nothing would have each entry take the flag from the one before it and
+  # never settle.
   #
-  # EMPTY IS A DECLARATION, not an omission: an empty list leaves whatever the product already
-  # holds, which is what a deployment that manages no credential should do. Each password is
-  # deployment-specific and secret, so the playbook resolves it and hands over the value, exactly
-  # as it does for the licence and the service account.
+  # This list is the COMPLETE credential store: after every declared row is settled, any row whose
+  # username is absent here is removed. EMPTY IS A DECLARATION, not an omission: on a populated
+  # console an empty list removes EVERY credential it scans with. Each password is deployment-
+  # specific and secret, so the playbook resolves it and hands over the value, exactly as it does
+  # for the licence and the service account.
   credentials: []
 
   # The directory PDQ Inventory syncs computers from, and the containers it syncs. The product
@@ -336,8 +338,9 @@ pdq_inventory_defaults:
   # the credentials above are keyed because a key is what stops two entries naming one account, and
   # a single account has nothing to be unique against.
   #
-  # It is NOT one of those credentials and never reaches the product's credential store: this
-  # account runs a service, it does not authenticate to a target.
+  # This record does not implicitly enter the product's credential store. A caller that also wants
+  # this account there declares it separately in credentials; service logon and scan
+  # authentication are two independent jobs.
   #
   # '.\' is how Windows spells a local account, and the role takes the bare name from it for the
   # places Windows wants a name alone. Deploy and Inventory are co-located and share ONE of these,

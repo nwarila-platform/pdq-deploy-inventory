@@ -2,7 +2,7 @@
 
 Installs PDQ Deploy at a pinned version and brings it up as an all-in-one **Central Server** on
 Windows. In one converge it installs the product, applies the licence, ensures the shared PDQ
-service account and records the credentials the product authenticates to targets with, places the
+service account and reconciles the complete credential store, places the
 database on its dedicated drive, creates the package repository on a second drive and enforces its
 directory permissions, publishes it as an encrypted read-only network share, writes the script that
 fills it, sets Central Server mode and the console port, applies the product preferences, reconciles
@@ -18,18 +18,18 @@ SHA-256 before use, and the in-memory service-account password is rejected if it
 ## Domain and credentials
 
 The host is domain-joined, but the background service stays under a **local** account — the one
-`service_account` names, `.\svc-pdq` by default, shared with `pdq_inventory`. What the product
-presents to a *target* is a **domain** account, and those are `credentials`: a list of records,
-each naming the account, carrying the password that opens it, and — for exactly one — claiming
-`is_default`. The flag is stated because the product marks whichever row was written last as its
-default; a list that said nothing would never settle. Each product keeps its own credential store,
-so an account is declared to the product that uses it: Deploy holds the read-only directory
-account alone, because the per-class identities live in Inventory and Deploy takes a target's
-credential from there at deployment time. Every declared account is also admitted to the
-repository share, since a deployment fetches its installer over UNC as that account.
+`service_account` names, `.\svc-pdq` by default, shared with `pdq_inventory`. `credentials` is the
+complete list of rows Deploy itself holds, each naming the account, carrying the password that
+opens it, and — when any are declared — exactly one claiming `is_default`. The flag is stated
+because the product marks whichever row was written last as its default; a list that said nothing
+would never settle. Each product keeps its own credential store, but Deploy may hold none and take
+a target's scan credential from Inventory at deployment time. Every credential declared here is
+also admitted to the repository share, since a deployment fetches its installer over UNC as that
+account.
 
-An empty list is a declaration: it leaves whatever credentials the product holds. Nothing in this
-role names a directory, an account or a cloud account; those facts are the caller's.
+The list is authoritative: a row it does not name is removed. An empty list on a populated console
+removes every Deploy credential. Nothing in this role names a directory, an account or a cloud
+account; those facts are the caller's.
 
 ## Composition and prerequisites
 
@@ -131,8 +131,8 @@ name), and name it in `packages:`.
   same operating mode, under one service account; the mode is written literally, never offered.
 - **One package repository and network share.** Deploy owns their directory, ACL, and share state
   on the caller-supplied repository drive.
-- **A local service, domain credentials.** The service logs on as a local account; every account
-  the product authenticates to a target with is a directory account, declared as a credential.
+- **A local service, authoritative credentials.** The service logs on as a local account; Deploy's
+  own credential list may be empty when deployments use Inventory scan credentials.
 - The console port defaults to the product's own **6336**.
 
 ## First-class PowerShell

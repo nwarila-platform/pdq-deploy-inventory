@@ -8,9 +8,9 @@ This repository automates the full Windows host and **PDQ Deploy and Inventory C
 configuration lifecycle in an ephemeral AWS environment. Terraform separates the replaceable
 Windows OS disk from three encrypted data volumes that persist across OS replacement. Ansible joins
 the host to the directory, installs and licences both products, runs their services under one
-local account, places their databases, publishes the Deploy repository, declares the domain
-credentials each product authenticates to targets with, points Inventory's computer sync at the
-directory's containers, and converges preferences, packages, registration, and console users.
+local account, places their databases, publishes the Deploy repository, makes each credential
+declaration authoritative, points every Inventory sync container at its class account, and
+converges preferences, packages, registration, and console users.
 GitHub Actions provisions the host and a test target beside it, can replace the host while
 reattaching the same data volumes, reconverges the applications, proves the bounded idempotency
 result, and destroys the environment.
@@ -56,22 +56,25 @@ flowchart LR
 
 Both hosts join the directory: the PDQ server is filed under `OU=PDQ,OU=Domain Servers` and the
 test target under `OU=Domain Workstations`, each publishing its VPC address as its name. The
-products' background services stay under one **local** account (`.\svc-pdq`); what reaches a
-target is a **domain** account, declared to each product as a credential.
+products' background services stay under one **local** account (`.\svc-pdq`). Inventory also holds
+that account as its default fallback; what reaches a target in one of the managed OUs is that OU's
+**domain** class account.
 
-The accounts are created once, by the separate elevated `pdq_ad_config` role against a domain
-controller: a read-only directory account (`svc-pdq`) that Inventory's computer sync binds as and
-that either product falls back to, plus one account per machine class (`svc-pdq-ws`, `-ms`, `-dc`).
-Each class account is added to its targets' local Administrators by that OU's own policy — not by
-anything here — so a scan or a deployment reaches a workstation, a member server or a domain
-controller as an account that machine admits and no other. Inventory holds all four; Deploy holds
-the directory account alone and takes a target's credential from Inventory at deployment time.
+The three domain accounts are created once, by the separate elevated `pdq_ad_config` role against
+a domain controller: one per machine class (`svc-pdq-ws`, `-ms`, `-dc`). Each Inventory sync
+container binds as its matching class account and assigns that credential as the scan user when a
+computer is added from the OU. Each class account is added to its targets' local Administrators by
+that OU's own policy — not by anything here — so a scan or a deployment reaches a workstation, a
+member server or a domain controller as an account that machine admits and no other. Inventory
+holds the three class accounts plus local `.\svc-pdq` as its default fallback. Deploy holds no
+credential and takes a target's scan credential from Inventory at deployment time.
 
-Every account is written the same way, where the product that uses it is configured: the account,
-the password that opens it, and — for exactly one per store — `is_default`. A bind anywhere in the
-directory sync is a *name* into that list, never a password. Nothing under `ansible/applications/`
-names this directory, these accounts, or this cloud account; every such fact lives in the playbook
-or `ansible/inventory/group_vars/`, stated once.
+Every Inventory credential is written the same way: the account, the password that opens it, and —
+for its local fallback — `is_default`. A bind anywhere in the directory sync is a *name* into that
+list, never a password. The declaration is complete, so an undeclared row is removed and an empty
+list empties the product's credential store. Nothing under `ansible/applications/` names this
+directory, these accounts, or this cloud account; every such fact lives in the playbook or
+`ansible/inventory/group_vars/`, stated once.
 
 ## What it deploys
 

@@ -867,33 +867,26 @@
 
     #endregion --- [ Process: Import The Pinned Variables ] ----------------------------------- #
 
-    #region ------ [ Process: Declare The Credential PDQ Authenticates With ] ----------------- #
-    # Deploying reaches a target over its admin share, so the product needs an identity to present
-    # there -- and its credential store is its own: the one Inventory holds is not one Deploy can
-    # deploy with. Declared before the packages so the library and the identity that installs from
-    # it are both in place after a single converge.
-    #
-    # ORDINARY, not LAPS. This deployment names one account for everything, and the target admits
-    # it to its local Administrators where the target is built.
+    #region ------ [ Process: Declare The Credentials ] --------------------------------------- #
+    # The list is the whole credential store: one invocation writes every declared row, removes
+    # every other row, settles its one default, and proves the complete read-back. It runs for an
+    # empty list because empty means Deploy holds no credential and takes each target's scan
+    # credential from Inventory.
     #
     # Runs AS the background service user for the same reason the settings do -- the product
-    # answers its own command line only for the account its service runs as. The password reaches
-    # the script as a value and no further: no_log keeps it out of the recap, and the command line
-    # takes it on stdin rather than as an argument. The .ps1 is MATERIALIZED from scripts/ by
+    # answers its own command line only for the account its service runs as. Passwords reach the
+    # script as values and no further: no_log keeps them out of the recap, and the command line
+    # takes each on stdin rather than as an argument. The .ps1 is MATERIALIZED from scripts/ by
     # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqCredential.ps1.stub).
 
-    - name: 'PROCESS | Declare The Credential PDQ Authenticates With'
-      when: pdq_deploy_running.credentials | default([], true) | length > 0
+    - name: 'PROCESS | Declare The Credentials'
 
       block:
 
-        - name: 'PROCESS | Give The Product The Credential It Authenticates With'
+        - name: 'PROCESS | Make The Declared Credentials The Complete Set'
           become: true
           become_method: 'ansible.builtin.runas'
           become_user: "{{ pdq_deploy_running.service_account.name }}"
-          loop: "{{ pdq_deploy_running.credentials | default([], true) }}"
-          loop_control:
-            label: '(censored)'
           no_log: true
           register: '__pdq_deploy_credential__'
           vars:
@@ -905,37 +898,33 @@
             error_action: 'stop'
             parameters:
               CliPath: "{{ pdq_deploy_running.cli_path }}"
+              CredentialDeclarations: "{{ pdq_deploy_running.credentials | default([], true) }}"
               DatabaseDrive: "{{ pdq_deploy_running.database.drive }}"
               DatabaseDirectory: "{{ pdq_deploy_running.database.directory }}"
-              CredentialDeclaration: "{{ item }}"
               Product: 'Deploy'
             script: "{{ lookup('ansible.builtin.file', 'Set-PdqCredential.ps1') }}"
 
-      # The task above carries a password, so it is no_log and its failure reaches the recap as
-      # "censored", naming nothing. The script's own message survives on the module's error
-      # stream -- it names the operation and the product's exit code, never a value the script was
-      # handed -- so this says that out loud and fails again, stopping the run here.
       rescue:
 
-        - name: 'PROCESS | Stop And Name Why The Credential Could Not Be Declared'
+        - name: 'PROCESS | Stop And Name Why The Credential Set Could Not Be Declared'
           vars:
             __raw__: >-
-              {{ ((((__pdq_deploy_credential__.results | default([], true) | selectattr('failed', 'defined')
-                    | selectattr('failed') | first | default({}, true)).error | default([]) | first | default({})).exception
+              {{ (((__pdq_deploy_credential__.error | default([]) | first | default({})).exception
                    | default({})).message | default('', true))
                  | default(ansible_failed_result.msg | default('the credential task failed', true), true) }}
             __secrets__: >-
-              {{ pdq_deploy_running.credentials | default([], true)
-                 | map(attribute='password') | select('defined') | list
+              {{ ([pdq_deploy_running.service_account.password]
+                  + (pdq_deploy_running.credentials | default([], true)
+                     | map(attribute='password') | select('defined') | list))
                  | reject('equalto', '') | list | unique(case_sensitive=true) }}
 
           ansible.builtin.fail:
             msg: >-
-              PDQ Deploy could not be given the credential it authenticates with:
+              PDQ Deploy could not make the declared credentials authoritative:
               {{ __raw__ | regex_replace('(' ~ (__secrets__ | map('regex_escape') | join('|')) ~ ')', '<redacted>')
                  if __secrets__ | length > 0 else __raw__ }}
 
-    #endregion --- [ Process: Declare The Credential PDQ Authenticates With ] ----------------- #
+    #endregion --- [ Process: Declare The Credentials ] --------------------------------------- #
 
     #region ------ [ Process: Import The Declared Packages ] ---------------------------------- #
     # Each XML file under files/packages/ is a package the product must hold, exported from the

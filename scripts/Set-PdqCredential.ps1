@@ -4,51 +4,41 @@
 
 <#
     .SYNOPSIS
-        Declares a credential PDQ authenticates with.
+        Makes one PDQ product's credential store equal its declaration.
 
     .DESCRIPTION
-        A credential PDQ holds is either ORDINARY -- it authenticates as the account it names --
-        or LAPS, where the product resolves each target's own local administrator password out of
-        Active Directory at connect time using a domain account authorised to read it. The
-        declaration says which by carrying laps_user, or not.
+        The declaration is the complete credential set. Every declared credential is written,
+        every credential whose exact username is absent is removed, and a non-empty declaration
+        settles exactly one default. An empty declaration empties the store.
 
-        Both kinds are needed and they are not interchangeable. Reaching a target over its admin
-        share requires an identity that is a local administrator ON THAT MACHINE. Binding to the
-        directory requires the opposite: an account the directory knows, which a LAPS credential
-        never is, because it resolves to some target's local administrator.
+        A credential is either ORDINARY -- it authenticates as the account it names -- or LAPS,
+        where the product resolves each target's local administrator password from Active
+        Directory at connect time using a domain account authorised to read it. The declaration
+        chooses LAPS by carrying laps_user.
 
-        The product keys a credential on its username and holds no separate name, so one account
-        is one credential and cannot be both kinds at once.
-
-        The command line expresses neither kind fully. UpdateScanCredential and UpdateDeployCredential
-        take a username and a password and nothing else, so the two LAPS fields are written to the
-        product's own database. The secret is NOT written that way: the command line stores it,
-        because the Password column holds ciphertext behind an '(encrypted)' marker and reproducing
-        that outside the product would be guessing at someone else's cryptography. So the command
-        line owns the secret and the database owns the fields the command line has no words for.
-
-    .PARAMETER CredentialDeclaration
-        The declaration. Keys:
-          username     the account the credential names, DOMAIN\name
-          password     its password
-          laps_user    OPTIONAL. The managed local administrator on each target, e.g.
-                       Administrator. Present makes this a LAPS credential, and makes
-                       username the account that READS those passwords rather than the
-                       one that authenticates; absent makes it an ordinary credential
-                       authenticating as username itself.
-          description  optional, shown in the console
-
-    .PARAMETER Product
-        'Deploy' or 'Inventory'. Each keeps its own credential store.
+        UpdateScanCredential and UpdateDeployCredential own the secret because the Password
+        column holds product ciphertext that must not be reproduced outside the product. Each
+        password is passed to that command on stdin, never as an argument. The command line has no
+        words for the LAPS fields, description, default, or removal, so after it has stored every
+        secret this script makes the complete non-secret state authoritative in one immediate
+        database transaction. A fresh read after commit must equal the declaration.
 
     .PARAMETER CliPath
-        Full path to the product's command line. sqlite3.exe is taken from beside it.
+        Full path to the product command line. sqlite3.exe is taken from beside it.
 
-    .PARAMETER DatabaseDrive
-        Drive letter the product's database lives on.
+    .PARAMETER CredentialDeclarations
+        The complete credential list. Each entry carries:
+          username     the account the credential names
+          password     its password
+          laps_user    optional managed local administrator; present makes this LAPS
+          description  optional console description
+          is_default   true for exactly one entry in a non-empty declaration
 
     .PARAMETER DatabaseDirectory
-        Directory on that drive holding Database.db.
+        Directory on DatabaseDrive holding Database.db.
+
+    .PARAMETER DatabaseDrive
+        Drive letter the product database lives on.
 
     .PARAMETER DebugLevel
         Three digits: ErrorActionPreference, Set-PSDebug, Set-StrictMode.
@@ -56,14 +46,11 @@
     .PARAMETER LogLevel
         Six digits, one per preference in Verbose, Debug, Information, Warning, Error, Fatal order.
 
-    .EXAMPLE
-        .\Set-PdqCredential.ps1 -Product 'Inventory' -CredentialDeclaration @{
-            username = 'TCN\svc-pdq'; password = '...'; laps_user = 'Administrator'
-        } -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe' `
-          -DatabaseDrive 'D' -DatabaseDirectory 'PDQ Inventory'
+    .PARAMETER Product
+        Deploy or Inventory. Each keeps its own credential store.
 
     .OUTPUTS
-        System.Void
+        One object carrying changed, check_mode, credentials, declared, removed, msg and product.
 #>
 
 [CmdletBinding(
@@ -83,6 +70,7 @@ Param (
     ValueFromPipeline = $False,
     ValueFromPipelineByPropertyName = $False
   )]
+  [ValidateNotNullOrEmpty()]
   [System.String]
   $CliPath,
 
@@ -93,6 +81,18 @@ Param (
     ValueFromPipeline = $False,
     ValueFromPipelineByPropertyName = $False
   )]
+  [AllowEmptyCollection()]
+  [System.Collections.IDictionary[]]
+  $CredentialDeclarations,
+
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [ValidateNotNullOrEmpty()]
   [System.String]
   $DatabaseDirectory,
 
@@ -120,16 +120,6 @@ Param (
 
   [Parameter(
     DontShow = $False,
-    Mandatory = $True,
-    ParameterSetName = 'default',
-    ValueFromPipeline = $False,
-    ValueFromPipelineByPropertyName = $False
-  )]
-  [System.Collections.IDictionary]
-  $CredentialDeclaration,
-
-  [Parameter(
-    DontShow = $False,
     Mandatory = $False,
     ParameterSetName = 'default',
     ValueFromPipeline = $False,
@@ -150,50 +140,45 @@ Param (
   [System.String]
   $Product
 )
+
 #region ------ [ Script ] ------------------------------------------------------------------- #
 
 #region ------ [ Initialization ] ----------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Initialization'
 
-# The module runs this script in check mode because it declares SupportsShouldProcess, and injects
-# -WhatIf when it does. This script decides check mode from $Ansible.CheckMode, so -WhatIf is
-# neutralised here; left on, it would suppress the New-Variable setup below.
+# The module injects -WhatIf in check mode. This script takes check mode from $Ansible, so leave
+# setup and reads active and explicitly withhold the writes below.
 $WhatIfPreference = $false
 
-# Log level names, by LogLevel digit position.
 New-Variable -Force -Name:'LOG_LEVELS' -Option:('Private', 'ReadOnly') -Value:(
   [System.String[]]@('Verbose', 'Debug', 'Information', 'Warning', 'Error', 'Fatal')
 )
-
-# The product's tools. sqlite3.exe ships beside the command line, so the caller names one path.
-New-Variable -Force -Name:'CLI_PATH' -Option:('Private', 'ReadOnly') -Value:(
+New-Variable -Force -Name:'CLI_PATH' -Option:'ReadOnly' -Value:(
   [System.String]$CliPath
 )
-
-New-Variable -Force -Name:'SQLITE_PATH' -Option:('Private', 'ReadOnly') -Value:(
+New-Variable -Force -Name:'SQLITE_PATH' -Option:'ReadOnly' -Value:(
   [System.String](Join-Path (Split-Path $CliPath -Parent) 'sqlite3.exe')
 )
-
-# Deploy and Inventory keep separate credential tables, so a caller declaring one credential for
-# both calls this once per product.
-New-Variable -Force -Name:'DATABASE_PATH' -Option:('Private', 'ReadOnly') -Value:(
+New-Variable -Force -Name:'DATABASE_PATH' -Option:'ReadOnly' -Value:(
   [System.String]('{0}:\{1}\Database.db' -f $DatabaseDrive, $DatabaseDirectory)
 )
-
-# What the product records for a credential that resolves its password from LAPS at connect
-# time rather than carrying one of its own.
-New-Variable -Force -Name:'LAPS_AUTHENTICATION_TYPE' -Option:('Private', 'ReadOnly') -Value:(
+New-Variable -Force -Name:'LAPS_AUTHENTICATION_TYPE' -Option:'ReadOnly' -Value:(
   [System.String]'LAPS'
 )
 
-# Configure log levels based on the LogLevel parameter.
+New-Variable -Verbose:$False -Force -Name:'ErrorPreference' -Value:(
+  [System.Management.Automation.ActionPreference]::Stop
+)
+New-Variable -Verbose:$False -Force -Name:'FatalPreference' -Value:(
+  [System.Management.Automation.ActionPreference]::Stop
+)
+
 For ($L = 0; $L -lt 6; $L++) {
   Set-Variable -Verbose:$False -Force -Name:('{0}Preference' -f $LOG_LEVELS[$L]) -Value:(
     [System.Int32]::Parse([System.String]$LogLevel[$L]) -as [System.Management.Automation.ActionPreference]
   )
 }
 
-# Debug digits: ErrorActionPreference, Set-PSDebug, Set-StrictMode.
 $ErrorActionPreference = [System.Management.Automation.ActionPreference][System.Int32]::Parse($DebugLevel.Substring(0, 1))
 Switch ($DebugLevel.Substring(1, 1)) {
   '0' { Set-PSDebug -Off }
@@ -205,12 +190,8 @@ Switch ($DebugLevel.Substring(1, 1)) {
 If ($DebugLevel.Substring(2, 1) -eq '0') {
   Set-StrictMode -Off
 } Else {
-  Set-StrictMode -Version:([System.String]$DebugLevel.Substring(2, 1))
+  Set-StrictMode -Version:([System.Int32]::Parse($DebugLevel.Substring(2, 1)))
 }
-
-# Universal trap: log diagnostics, rethrow so the task fails honestly. Wrapped so a partial
-# error record can never replace the original failure with a StrictMode property error.
-
 
 Trap {
   Try {
@@ -229,11 +210,8 @@ Trap {
   } Catch {
     Write-Debug -Message:'Trap diagnostics unavailable for this error record.'
   }
-
   Break
 }
-
-# Standalone (a dev shell or spec) has no transport-provided $Ansible; stub it faithfully.
 
 $StandaloneRun = $Null -eq (Get-Variable -Name:'Ansible' -ValueOnly -ErrorAction:'SilentlyContinue')
 If ($StandaloneRun) {
@@ -301,126 +279,307 @@ Function Invoke-NativeCommand {
   Return [PSCustomObject]@{ Exit = [System.Int32]$Exit; Output = $Written.ToArray() }
 }
 
-# The declaration, normalised once so Main compares like with like.
-$Username = [System.String]$CredentialDeclaration['username']
-$Password = [System.String]$CredentialDeclaration['password']
-# A declaration carrying laps_user asks for a LAPS credential: the product resolves the target's
-# own local administrator password at connect time. Without it the credential is an ordinary one,
-# authenticating as the account it names. The directory bind needs an ordinary one, because a LAPS
-# credential resolves to a target's local administrator -- an account no directory knows.
-$LapsUser = [System.String]$(If ($CredentialDeclaration.Contains('laps_user')) { $CredentialDeclaration['laps_user'] } Else { '' })
-$IsLaps = $LapsUser.Length -gt 0
-$Description = [System.String]$(If ($CredentialDeclaration.Contains('description')) { $CredentialDeclaration['description'] } Else { '' })
-# Exactly one credential can be the product's default, and a deployment holding several -- one per
-# machine class -- must say WHICH. Absent means not the default: a declaration silent on the point
-# should not take the flag from whatever holds it, and a caller declaring a list would otherwise
-# have each entry strip it from the one before and never settle.
-$IsDefault = [System.Boolean]$(If ($CredentialDeclaration.Contains('is_default')) { $CredentialDeclaration['is_default'] } Else { $False })
-
-# The role only calls this with a username declared, so an empty one means the declaration did not
-# survive the trip rather than that the caller meant nothing by it. Naming the keys that did arrive
-# turns a command line that fails with no subject into a statement about the contract.
-If ($Username.Length -eq 0) {
-  Throw ('The credential declaration carried no username. Keys received: {0}' -f (
-      $(If ($Null -eq $CredentialDeclaration) { '(no declaration at all)' } Else { (@($CredentialDeclaration.Keys) | Sort-Object) -join ', ' })
-    ))
+If (-not (Test-Path -LiteralPath:$CLI_PATH -PathType:'Leaf')) {
+  Throw ('The PDQ {0} command line is not at ''{1}''' -f $Product, $CLI_PATH)
+}
+If (-not (Test-Path -LiteralPath:$SQLITE_PATH -PathType:'Leaf')) {
+  Throw ('The product database tool is not at ''{0}''' -f $SQLITE_PATH)
+}
+If (-not (Test-Path -LiteralPath:$DATABASE_PATH -PathType:'Leaf')) {
+  Throw ('The database is not at ''{0}''' -f $DATABASE_PATH)
 }
 
-# What the product holds now. A quoted literal is safe here because the value is a username the
-# caller declared, but sqlite has no parameter binding on this command line, so a single quote in
-# it would end the string -- refuse rather than build a statement that means something else.
-If ($Username.Contains("'") -or $LapsUser.Contains("'") -or $Description.Contains("'")) {
-  Throw 'A declared credential value contains a single quote, which cannot be expressed safely in this statement.'
+$Utf8 = [System.Text.UTF8Encoding]::new($False, $True)
+
+Function ConvertTo-TextHex {
+  Param ([System.String]$Value)
+  Return -join ($Utf8.GetBytes($Value) | ForEach-Object { $PSItem.ToString('X2') })
 }
 
-# An ordinary credential has two spellings, and the product uses the other one. This script writes
-# NULL for both LAPS fields; the product writes AuthenticationType 'None' with an empty LAPSUser,
-# and whenever its command line writes ANY credential it re-saves the default one that way too --
-# measured on a live bed. Compared as stored, the default reads as drifted after every other entry
-# in a list is written, and the list never settles. So the read folds the spellings together.
-$Existing = (Invoke-NativeCommand -Operation:'Reading the credential store' -FilePath:$SQLITE_PATH `
-    -Argument:@($DATABASE_PATH, ("SELECT IsDefault, CASE WHEN COALESCE(AuthenticationType, '') IN ('', 'None') THEN '' ELSE AuthenticationType END, COALESCE(LAPSUser, ''), Description FROM Credentials WHERE UserName = '{0}';" -f $Username))).Output
-# Only a declaration that CLAIMS the default cares what else claims it. One that does not is
-# content beside whatever is default, so counting rivals would report drift it will never fix.
-$Strays = If ($IsDefault) {
-  (Invoke-NativeCommand -Operation:'Counting the credentials that also claim the default' -FilePath:$SQLITE_PATH `
-    -Argument:@($DATABASE_PATH, ("SELECT COUNT(*) FROM Credentials WHERE IsDefault = 1 AND UserName <> '{0}';" -f $Username))).Output
-} Else { '0' }
+Function ConvertFrom-TextHex {
+  Param ([System.String]$Value, [System.String]$Field)
+  If ($Value -notmatch '^(?:[0-9A-Fa-f]{2})*$') {
+    Throw ('A credential {0} did not read back as even hex: {1}' -f $Field, $Value)
+  }
+  $Bytes = [System.Byte[]]::new($Value.Length / 2)
+  For ($B = 0; $B -lt $Bytes.Length; $B++) {
+    $Bytes[$B] = [System.Convert]::ToByte($Value.Substring($B * 2, 2), 16)
+  }
+  Try {
+    Return $Utf8.GetString($Bytes)
+  } Catch {
+    Throw ('A credential {0} is not UTF-8' -f $Field)
+  }
+}
 
-# The secret is deliberately absent from this comparison: it is stored as ciphertext behind an
-# '(encrypted)' marker and cannot be read back, so these fields are the whole of what 'changed'
-# can honestly report on. A missing row reads as an empty string and so counts as changed.
-$Declared = '{0}|{1}|{2}|{3}' -f $(If ($IsDefault) { '1' } Else { '0' }), $(If ($IsLaps) { $LAPS_AUTHENTICATION_TYPE } Else { '' }), $LapsUser, $Description
-$Changed = ([System.String]$Existing -ne $Declared) -or ([System.String]$Strays -ne '0')
+Function Read-CredentialRow {
+  $Query = @'
+SELECT CredentialsId,
+       hex(UserName),
+       COALESCE(IsDefault, 0),
+       hex(CASE WHEN COALESCE(AuthenticationType, '') IN ('', 'None') THEN '' ELSE AuthenticationType END),
+       hex(COALESCE(LAPSUser, '')),
+       hex(COALESCE(Description, ''))
+FROM Credentials
+ORDER BY CredentialsId;
+'@.Trim()
+  $Answer = Invoke-NativeCommand -Operation:'Reading the credential store' -FilePath:$SQLITE_PATH `
+    -Argument:@($DATABASE_PATH, $Query)
+  $Rows = [System.Collections.Generic.List[System.Object]]::new()
+  $Names = [System.Collections.Generic.HashSet[System.String]]::new([System.StringComparer]::Ordinal)
+  ForEach ($Line In $Answer.Output) {
+    $Parts = ([System.String]$Line).Split('|')
+    If ($Parts.Count -ne 6 -or $Parts[0] -notmatch '^[0-9]+$' -or $Parts[2] -notmatch '^[01]$') {
+      Throw ('The credential store did not read back in the expected six-field shape: {0}' -f $Line)
+    }
+    $Name = ConvertFrom-TextHex -Value:$Parts[1] -Field:'username'
+    If (-not $Names.Add($Name)) {
+      Throw ('The product holds more than one credential with the exact username {0}; resolve the duplicate first' -f $Name)
+    }
+    $Rows.Add([PSCustomObject]@{
+        Id                 = $Parts[0]
+        Hex                = $Parts[1].ToUpperInvariant()
+        Name               = $Name
+        IsDefault          = $Parts[2]
+        AuthenticationType = ConvertFrom-TextHex -Value:$Parts[3] -Field:'authentication type'
+        LapsUser           = ConvertFrom-TextHex -Value:$Parts[4] -Field:'LAPS user'
+        Description        = ConvertFrom-TextHex -Value:$Parts[5] -Field:'description'
+      })
+  }
+  Return $Rows.ToArray()
+}
+
+Function Assert-NoCredentialTrigger {
+  $Trigger = (Invoke-NativeCommand -Operation:'Reading the credential triggers' -FilePath:$SQLITE_PATH `
+      -Argument:@($DATABASE_PATH, "SELECT name FROM sqlite_master WHERE type = 'trigger' AND lower(tbl_name) = lower('Credentials');")).Output
+  If (@($Trigger).Count -gt 0) {
+    Throw 'The Credentials table has a trigger; its side effects are not declared and reconciliation is refused.'
+  }
+}
+
+Function Test-CredentialState {
+  Param (
+    [System.Object[]]$Row,
+    [System.Collections.IDictionary[]]$Declaration
+  )
+  If ($Row.Count -ne $Declaration.Count) { Return $False }
+  $ByName = [System.Collections.Generic.Dictionary[System.String, System.Object]]::new([System.StringComparer]::Ordinal)
+  ForEach ($Present In $Row) { $ByName.Add($Present.Name, $Present) }
+  ForEach ($Wanted In $Declaration) {
+    If (-not $ByName.ContainsKey($Wanted.username)) { Return $False }
+    $Present = $ByName[$Wanted.username]
+    If ($Present.IsDefault -ne [System.String]$Wanted.is_default -or
+      $Present.AuthenticationType -cne $Wanted.authentication_type -or
+      $Present.LapsUser -cne $Wanted.laps_user -or
+      $Present.Description -cne $Wanted.description) {
+      Return $False
+    }
+  }
+  Return $True
+}
+
+$Declared = [System.Collections.Generic.List[System.Collections.IDictionary]]::new()
+$DeclaredNames = [System.Collections.Generic.HashSet[System.String]]::new([System.StringComparer]::Ordinal)
+$DefaultCount = 0
+ForEach ($Credential In @($CredentialDeclarations)) {
+  If ($Null -eq $Credential -or -not $Credential.Contains('username') -or
+    [System.String]::IsNullOrWhiteSpace([System.String]$Credential['username'])) {
+    Throw 'A credential declaration carried no username.'
+  }
+  $Username = [System.String]$Credential['username']
+  If (-not $DeclaredNames.Add($Username)) {
+    Throw ('{0} is declared more than once; two declarations cannot own one credential' -f $Username)
+  }
+  $IsDefault = [System.Boolean]$(If ($Credential.Contains('is_default')) { $Credential['is_default'] } Else { $False })
+  If ($IsDefault) { $DefaultCount++ }
+  $LapsUser = [System.String]$(If ($Credential.Contains('laps_user')) { $Credential['laps_user'] } Else { '' })
+  $Declared.Add(@{
+      username            = $Username
+      username_hex        = ConvertTo-TextHex -Value:$Username
+      password            = [System.String]$(If ($Credential.Contains('password')) { $Credential['password'] } Else { '' })
+      laps_user           = $LapsUser
+      laps_user_hex       = ConvertTo-TextHex -Value:$LapsUser
+      authentication_type = [System.String]$(If ($LapsUser.Length -gt 0) { $LAPS_AUTHENTICATION_TYPE } Else { '' })
+      description         = [System.String]$(If ($Credential.Contains('description')) { $Credential['description'] } Else { '' })
+      is_default          = [System.String][System.Int32]$IsDefault
+    })
+  $Declared[$Declared.Count - 1]['description_hex'] = ConvertTo-TextHex -Value:$Declared[$Declared.Count - 1].description
+}
+If (($Declared.Count -eq 0 -and $DefaultCount -ne 0) -or
+  ($Declared.Count -gt 0 -and $DefaultCount -ne 1)) {
+  Throw ('A non-empty credential declaration must name exactly one default; {0} of {1} did.' -f $DefaultCount, $Declared.Count)
+}
+
+$Before = @(Read-CredentialRow)
+Assert-NoCredentialTrigger
+$Changed = -not (Test-CredentialState -Row:$Before -Declaration:$Declared.ToArray())
+$Removed = [System.String[]]@($Before | Where-Object { -not $DeclaredNames.Contains($PSItem.Name) } | ForEach-Object Name)
 
 If (-not $Ansible.CheckMode) {
-  # The password is written on every run, precisely because it cannot be read back: writing it is
-  # the only way for a rotation upstream to reach the product. The command line owns the secret --
-  # reproducing that ciphertext outside the product would be guessing at someone else's
-  # cryptography -- and takes it on stdin rather than as an argument, because this image audits
-  # process creation with command lines.
-  # Invoke-NativeCommand cannot express stdin, so this one call carries the same contract by
-  # hand: the preference is lowered across it because a native command that writes to stderr
-  # fails the STATEMENT at Stop, which is what this script runs at.
   $Verb = If ($Product -eq 'Deploy') { 'UpdateDeployCredential' } Else { 'UpdateScanCredential' }
-  $Previous = $ErrorActionPreference
-  Try {
-    $ErrorActionPreference = 'Continue'
-    $Null = $Password | & $CLI_PATH $Verb -Username $Username -CreateIfNotExists 2>&1
-    $Exit = $LASTEXITCODE
-  } Finally {
-    $ErrorActionPreference = $Previous
-  }
-  If ($Exit -ne 0) {
-    Throw ('{0} exited {1} storing the credential for {2}.' -f $Verb, $Exit, $Username)
+  ForEach ($Credential In $Declared) {
+    # The secret is written on every run because its ciphertext cannot be read back. Rewriting is
+    # the only way an upstream rotation reaches the product, and does not by itself make the
+    # non-secret comparison report a change.
+    $Previous = $ErrorActionPreference
+    Try {
+      $ErrorActionPreference = 'Continue'
+      $Null = $Credential.password | & $CLI_PATH $Verb -Username $Credential.username -CreateIfNotExists 2>&1
+      $Exit = $LASTEXITCODE
+    } Finally {
+      $ErrorActionPreference = $Previous
+    }
+    If ($Exit -ne 0) {
+      Throw ('{0} exited {1} storing the credential for {2}.' -f $Verb, $Exit, $Credential.username)
+    }
   }
 
-  # The command line writes an ordinary credential and has no words for the two LAPS fields, so
-  # they are stated here every run rather than only when something differs -- set for a LAPS
-  # declaration, cleared for an ordinary one, so a credential that stops being LAPS stops being
-  # treated as one. One transaction: a row carrying a LAPS user without the matching
-  # authentication type is a credential the product would use as an ordinary one, with a password
-  # that is not its own.
+  # The command line may have created rows and may have normalised an ordinary row while writing
+  # another. Snapshot after every secret is stored, then bind every direct database mutation to
+  # that exact identity inside one transaction.
+  $Ready = @(Read-CredentialRow)
+  $ReadyByName = [System.Collections.Generic.Dictionary[System.String, System.Object]]::new([System.StringComparer]::Ordinal)
+  ForEach ($Row In $Ready) { $ReadyByName.Add($Row.Name, $Row) }
+  ForEach ($Credential In $Declared) {
+    If (-not $ReadyByName.ContainsKey($Credential.username)) {
+      Throw ('{0} reported success but the credential for {1} is absent.' -f $Verb, $Credential.username)
+    }
+  }
+
   $Statements = [System.Collections.Generic.List[System.String]]::new()
-  $Statements.Add('PRAGMA busy_timeout = 5000;')
+  $Statements.Add('PRAGMA foreign_keys=OFF;')
+  $Statements.Add('PRAGMA busy_timeout=5000;')
   $Statements.Add('BEGIN IMMEDIATE;')
-  $Kind = If ($IsLaps) {
-    "LAPSUser = '{0}', AuthenticationType = '{1}'" -f $LapsUser, $LAPS_AUTHENTICATION_TYPE
-  } Else {
-    'LAPSUser = NULL, AuthenticationType = NULL'
+  $Statements.Add('CREATE TEMP TABLE ExpectedCredential (CredentialsId INTEGER NOT NULL PRIMARY KEY, UserNameHex TEXT NOT NULL);')
+  $Statements.Add(@'
+CREATE TEMP TABLE DeclaredCredential (
+  UserNameHex TEXT NOT NULL PRIMARY KEY,
+  IsDefault INTEGER NOT NULL,
+  AuthenticationTypeHex TEXT NOT NULL,
+  LAPSUserHex TEXT NOT NULL,
+  DescriptionHex TEXT NOT NULL
+);
+'@.Trim())
+  $Statements.Add(@'
+CREATE TEMP TABLE CredentialGuard (
+  SnapshotOk INTEGER CONSTRAINT credential_snapshot_changed CHECK (SnapshotOk = 1),
+  TriggerOk INTEGER CONSTRAINT credential_trigger_present CHECK (TriggerOk = 1),
+  EffectOk INTEGER CONSTRAINT credential_write_effect CHECK (EffectOk = 1),
+  FinalOk INTEGER CONSTRAINT credential_final_mismatch CHECK (FinalOk = 1)
+);
+'@.Trim())
+  ForEach ($Row In $Ready) {
+    $Statements.Add(("INSERT INTO ExpectedCredential (CredentialsId, UserNameHex) VALUES ({0}, '{1}');" -f $Row.Id, $Row.Hex))
   }
-  $Statements.Add(("UPDATE Credentials SET {0}, Description = '{1}', IsDefault = {2} WHERE UserName = '{3}';" -f `
-        $Kind, $Description, $(If ($IsDefault) { '1' } Else { '0' }), $Username))
-  # Exactly one default: a second would leave which credential a scan picks to insertion order.
-  # Only the declaration that claims it clears the others -- one that does not must leave the flag
-  # where it is, or a list would strip it entry by entry and end with no default at all.
-  If ($IsDefault) {
-    $Statements.Add(("UPDATE Credentials SET IsDefault = 0 WHERE UserName <> '{0}';" -f $Username))
+  ForEach ($Credential In $Declared) {
+    $Statements.Add(("INSERT INTO DeclaredCredential (UserNameHex, IsDefault, AuthenticationTypeHex, LAPSUserHex, DescriptionHex) VALUES ('{0}', {1}, '{2}', '{3}', '{4}');" -f @(
+          $Credential.username_hex
+          $Credential.is_default
+          (ConvertTo-TextHex -Value:$Credential.authentication_type)
+          $Credential.laps_user_hex
+          $Credential.description_hex
+        )))
   }
+  $Statements.Add(@'
+INSERT INTO CredentialGuard (SnapshotOk)
+VALUES (CASE WHEN
+  (SELECT COUNT(*) FROM Credentials) = (SELECT COUNT(*) FROM ExpectedCredential)
+  AND NOT EXISTS (
+    SELECT 1 FROM Credentials AS C
+    LEFT JOIN ExpectedCredential AS E
+      ON E.CredentialsId = C.CredentialsId AND E.UserNameHex = hex(C.UserName)
+    WHERE E.CredentialsId IS NULL
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM ExpectedCredential AS E
+    LEFT JOIN Credentials AS C
+      ON C.CredentialsId = E.CredentialsId AND hex(C.UserName) = E.UserNameHex
+    WHERE C.CredentialsId IS NULL
+  )
+THEN 1 ELSE 0 END);
+'@.Trim())
+  $Statements.Add(@'
+INSERT INTO CredentialGuard (TriggerOk)
+VALUES (CASE WHEN NOT EXISTS (
+  SELECT 1 FROM sqlite_master
+  WHERE type = 'trigger' AND lower(tbl_name) = lower('Credentials')
+) THEN 1 ELSE 0 END);
+'@.Trim())
+  ForEach ($Credential In $Declared) {
+    $Row = $ReadyByName[$Credential.username]
+    $Kind = If ($Credential.authentication_type -eq $LAPS_AUTHENTICATION_TYPE) {
+      "LAPSUser = CAST(X'{0}' AS TEXT), AuthenticationType = 'LAPS'" -f $Credential.laps_user_hex
+    } Else {
+      'LAPSUser = NULL, AuthenticationType = NULL'
+    }
+    $Statements.Add(("UPDATE Credentials SET {0}, Description = CAST(X'{1}' AS TEXT), IsDefault = {2} WHERE CredentialsId = {3} AND hex(UserName) = '{4}';" -f @(
+          $Kind
+          $Credential.description_hex
+          $Credential.is_default
+          $Row.Id
+          $Row.Hex
+        )))
+    $Statements.Add('INSERT INTO CredentialGuard (EffectOk) VALUES (changes());')
+  }
+  ForEach ($Row In $Ready) {
+    If ($DeclaredNames.Contains($Row.Name)) { Continue }
+    $Statements.Add(("DELETE FROM Credentials WHERE CredentialsId = {0} AND hex(UserName) = '{1}';" -f $Row.Id, $Row.Hex))
+    $Statements.Add('INSERT INTO CredentialGuard (EffectOk) VALUES (changes());')
+  }
+  $Statements.Add(@'
+INSERT INTO CredentialGuard (FinalOk)
+VALUES (CASE WHEN
+  (SELECT COUNT(*) FROM Credentials) = (SELECT COUNT(*) FROM DeclaredCredential)
+  AND NOT EXISTS (
+    SELECT 1 FROM Credentials AS C
+    LEFT JOIN DeclaredCredential AS D ON D.UserNameHex = hex(C.UserName)
+    WHERE D.UserNameHex IS NULL
+       OR COALESCE(C.IsDefault, 0) <> D.IsDefault
+       OR hex(CASE WHEN COALESCE(C.AuthenticationType, '') IN ('', 'None') THEN '' ELSE C.AuthenticationType END) <> D.AuthenticationTypeHex
+       OR hex(COALESCE(C.LAPSUser, '')) <> D.LAPSUserHex
+       OR hex(COALESCE(C.Description, '')) <> D.DescriptionHex
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM DeclaredCredential AS D
+    WHERE NOT EXISTS (SELECT 1 FROM Credentials AS C WHERE hex(C.UserName) = D.UserNameHex)
+  )
+THEN 1 ELSE 0 END);
+'@.Trim())
   $Statements.Add('COMMIT;')
-  $Null = Invoke-NativeCommand -Operation:'Declaring the credential' -FilePath:$SQLITE_PATH `
-    -Argument:@($DATABASE_PATH, ($Statements -join ' '))
+
+  $Null = Invoke-NativeCommand -Operation:'Making the credential declaration authoritative' `
+    -FilePath:$SQLITE_PATH -Argument:@('-bail', $DATABASE_PATH, ($Statements -join ' '))
+
+  $After = @(Read-CredentialRow)
+  If (-not (Test-CredentialState -Row:$After -Declaration:$Declared.ToArray())) {
+    Throw 'The credential store does not read back as declared after the transaction committed.'
+  }
+}
+
+$Message = If ($Changed) {
+  If ($Ansible.CheckMode) {
+    'Would declare {0} credential(s) as the complete PDQ {1} set' -f $Declared.Count, $Product
+  } Else {
+    'Declared {0} credential(s) as the complete PDQ {1} set' -f $Declared.Count, $Product
+  }
+} Else {
+  '{0} PDQ {1} credential(s) already read back as declared' -f $Declared.Count, $Product
+}
+
+$Result = [PSCustomObject]@{
+  changed     = [System.Boolean]$Changed
+  check_mode  = [System.Boolean]$Ansible.CheckMode
+  credentials = [System.String[]]@($Declared | ForEach-Object username)
+  declared    = [System.Int32]$Declared.Count
+  removed     = $Removed
+  msg         = [System.String]$Message
+  product     = [System.String]$Product
 }
 
 #endregion --- [ Main ] --------------------------------------------------------------------- #
 
 #region ------ [ Output ] ------------------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Output'
-
-$Result = [PSCustomObject]@{
-  changed    = [System.Boolean]$Changed
-  check_mode = [System.Boolean]$Ansible.CheckMode
-  credential = [System.String]$Username
-  laps_user  = [System.String]$LapsUser
-  msg        = '{0} {1} {2}{3} credential for PDQ {4}' -f @(
-    $Username
-    $(If ($Changed) { 'was declared' } Else { 'already reads back as' })
-    $(If ($IsDefault) { 'the default ' } Else { 'a ' })
-    $(If ($IsLaps) { 'LAPS' } Else { 'ordinary' })
-    $Product
-  )
-  product    = [System.String]$Product
-}
 
 $Ansible.Changed = $Result.changed
 $Ansible.Result = $Result

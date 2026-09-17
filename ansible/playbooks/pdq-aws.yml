@@ -185,8 +185,8 @@
     #endregion --- [ Roles: Remote Client ] --------------------------------------------------- #
 
     #region ------ [ Roles: Domain Member ] --------------------------------------------------- #
-    # 'OU=Domain Workstations' is not a preference: it is one of the two OUs where svc-pdq holds
-    # the LAPS read grant, so a target filed anywhere else has a LAPS password PDQ cannot read.
+    # 'OU=Domain Workstations' matches the Inventory sync container that assigns a newly added
+    # workstation its workstation-class scan account.
 
     - role: 'domain_member'
       when: (state | default('present') | string | lower | trim) != 'absent'
@@ -352,9 +352,9 @@
 
           # The Windows account the background service runs as, declared the way every account
           # here is: the account, and the password that opens it. '.\' is how Windows
-          # spells "local to this machine". Both products share this ONE account, and it reaches
-          # neither product's credential store -- it runs a service, it does not authenticate to a
-          # target.
+          # spells "local to this machine". Both products share this ONE service identity. This
+          # declaration configures service logon only; Inventory separately declares the same
+          # local account as its fallback credential, while Deploy's credential store is empty.
           service_account:
             password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-password.txt') }}"
 
@@ -367,20 +367,9 @@
           license_email: >-
             {{ lookup('secret', pdq_secret_prefix ~ '/pdq-deploy-license-email.txt') }}
 
-          # What Deploy authenticates to a TARGET as. Each product keeps its OWN store, so each
-          # declares one here: a credential Inventory holds is not one Deploy can deploy with, and
-          # the two sets are not required to match. An entry names the account it opens and carries
-          # the password that opens it. Any number may be declared; no two may name the same
-          # account, and EXACTLY ONE says is_default.
-          #
-          # The directory account alone TODAY, which is a choice and not a limit: the per-class
-          # identities live in Inventory, and Deploy asks Inventory for a target's credential at
-          # deployment time.
-          credentials:
-            - username: 'tcn\svc-pdq'
-              password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-domain-password.txt') }}"
-              description: 'Directory bind for computer sync'
-              is_default: true
+          # Deploy holds no target credential of its own. A deployment asks Inventory for the
+          # target's scan credential, which Inventory assigns from the target's OU sync container.
+          credentials: []
 
           # The database grows without bound, so it goes on the volume provisioned for it rather
           # than the system disk. Only the letter belongs here: which disk this host dedicates to
@@ -421,8 +410,9 @@
           variables: "{{ pdq_variables }}"
 
           # WHERE the product syncs computers from. The realm and the containers are this
-          # deployment's directory, not a product default, so they are named here; the bind
-          # account is a name into the credentials above, and the role resolves its secret there.
+          # deployment's directory, not a product default, so they are named here; each bind
+          # account is a name into the credential list below, and the role resolves its secret
+          # there.
           #
           # All three top-level OUs, subtrees included: every computer the directory holds. It
           # matters because preferences.active_directory.delete_mode is FullSync, which deletes
@@ -432,8 +422,9 @@
           # insecure: the directory answers nothing on 636 and refuses an anonymous bind, both
           # measured, so the read is plain LDAP on 389. Said here, in the open, rather than left
           # to a default that quietly downgrades.
-          # Every account, because scanning a target opens its admin share exactly as a
-          # deployment does, and Deploy takes a target's credential from this store.
+          # Each class account is both the bind and scan identity for its OU. The local service
+          # account is the default fallback for anything outside those OUs and for the console
+          # itself; Deploy asks Inventory for a target's credential at deployment time.
           credentials:
             - username: 'tcn\svc-pdq-ws'
               password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-ws-password.txt') }}"
@@ -444,23 +435,26 @@
             - username: 'tcn\svc-pdq-dc'
               password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-dc-password.txt') }}"
               description: 'Domain controller class target authentication'
-            - username: 'tcn\svc-pdq'
-              password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-domain-password.txt') }}"
-              description: 'Directory bind for computer sync'
+            - username: '.\svc-pdq'
+              password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-password.txt') }}"
+              description: 'Local fallback and console authentication'
               is_default: true
 
           directory_sync:
             realm: "{{ domain_realm }}"
-            bind_username: 'tcn\svc-pdq'
+            bind_username: 'tcn\svc-pdq-ms'
             insecure: true
             containers:
               - distinguished_name: "OU=Domain Servers,{{ domain_base_dn }}"
+                bind_username: 'tcn\svc-pdq-ms'
                 subtree: true
                 include: true
               - distinguished_name: "OU=Domain Workstations,{{ domain_base_dn }}"
+                bind_username: 'tcn\svc-pdq-ws'
                 subtree: true
                 include: true
               - distinguished_name: "OU=Domain Controllers,{{ domain_base_dn }}"
+                bind_username: 'tcn\svc-pdq-dc'
                 subtree: true
                 include: true
 

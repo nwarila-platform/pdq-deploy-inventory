@@ -894,25 +894,15 @@
             ansible_become_password: "{{ pdq_deploy_running.service_account.password }}"
 
           ansible.windows.win_powershell:
-            arguments: []
-            chdir: null
-            creates: null
             depth: 3
             error_action: 'stop'
-            executable: null
             parameters:
               CliPath: "{{ pdq_deploy_running.cli_path }}"
               CredentialDeclarations: "{{ pdq_deploy_running.credentials | default([], true) }}"
               DatabaseDrive: "{{ pdq_deploy_running.database.drive }}"
               DatabaseDirectory: "{{ pdq_deploy_running.database.directory }}"
-              DebugLevel: '103'
-              LogLevel: '002223'
               Product: 'Deploy'
-            path: null
-            remote_src: false
-            removes: null
             script: "{{ lookup('ansible.builtin.file', 'Set-PdqCredential.ps1') }}"
-            sensitive_parameters: []
 
       rescue:
 

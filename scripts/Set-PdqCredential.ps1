@@ -369,9 +369,9 @@ Function Test-CredentialState {
     If (-not $ByName.ContainsKey($Wanted.username)) { Return $False }
     $Present = $ByName[$Wanted.username]
     If ($Present.IsDefault -ne [System.String]$Wanted.is_default -or
-        $Present.AuthenticationType -cne $Wanted.authentication_type -or
-        $Present.LapsUser -cne $Wanted.laps_user -or
-        $Present.Description -cne $Wanted.description) {
+      $Present.AuthenticationType -cne $Wanted.authentication_type -or
+      $Present.LapsUser -cne $Wanted.laps_user -or
+      $Present.Description -cne $Wanted.description) {
       Return $False
     }
   }
@@ -383,7 +383,7 @@ $DeclaredNames = [System.Collections.Generic.HashSet[System.String]]::new([Syste
 $DefaultCount = 0
 ForEach ($Credential In @($CredentialDeclarations)) {
   If ($Null -eq $Credential -or -not $Credential.Contains('username') -or
-      [System.String]::IsNullOrWhiteSpace([System.String]$Credential['username'])) {
+    [System.String]::IsNullOrWhiteSpace([System.String]$Credential['username'])) {
     Throw 'A credential declaration carried no username.'
   }
   $Username = [System.String]$Credential['username']
@@ -406,7 +406,7 @@ ForEach ($Credential In @($CredentialDeclarations)) {
   $Declared[$Declared.Count - 1]['description_hex'] = ConvertTo-TextHex -Value:$Declared[$Declared.Count - 1].description
 }
 If (($Declared.Count -eq 0 -and $DefaultCount -ne 0) -or
-    ($Declared.Count -gt 0 -and $DefaultCount -ne 1)) {
+  ($Declared.Count -gt 0 -and $DefaultCount -ne 1)) {
   Throw ('A non-empty credential declaration must name exactly one default; {0} of {1} did.' -f $DefaultCount, $Declared.Count)
 }
 

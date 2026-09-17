@@ -137,6 +137,7 @@
 !/ansible/applications/pdq_inventory/files/Set-PdqCollection.ps1.stub
 !/ansible/applications/pdq_inventory/files/Remove-PdqCollection.ps1.stub
 !/ansible/applications/pdq_inventory/files/collections/*.xml
+!/ansible/applications/pdq_inventory/files/collections/Required_ Google Chrome.xml
 !/ansible/applications/pdq_inventory/handlers/main.yml
 !/ansible/applications/pdq_inventory/meta/main.yml
 !/ansible/applications/pdq_inventory/tasks/absent_windows.yml
@@ -185,6 +186,8 @@
 # PowerShell ships as a pair: the script and its spec are both tracked here.
 !/scripts/Get-InstalledSoftware.pester.ps1
 !/scripts/Get-InstalledSoftware.ps1
+!/scripts/Stop-Application.pester.ps1
+!/scripts/Stop-Application.ps1
 !/scripts/Set-RepositoryAcl.pester.ps1
 !/scripts/Set-RepositoryAcl.ps1
 !/scripts/Set-PdqSetting.pester.ps1

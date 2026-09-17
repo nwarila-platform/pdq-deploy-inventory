@@ -409,7 +409,6 @@ pdq_inventory_defaults:
     - 'Workstations'
 
   collections:
-    - 'Chrome Below Pinned Version.xml'
     - 'Microsoft Corporation_ Microsoft OpenJDK 11.xml'
     - 'Microsoft Corporation_ Microsoft OpenJDK 17.xml'
     - 'Microsoft Corporation_ Microsoft OpenJDK 21.xml'
@@ -426,5 +425,6 @@ pdq_inventory_defaults:
     - 'Python Software Foundation_ Python 3.12.xml'
     - 'Python Software Foundation_ Python 3.13.xml'
     - 'Python Software Foundation_ Python 3.14.xml'
+    - 'Required_ Google Chrome.xml'
 
   #endregion --- [ Declared collections ] ---------------------------------------------------- #

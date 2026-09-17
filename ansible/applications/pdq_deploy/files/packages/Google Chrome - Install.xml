@@ -29,8 +29,39 @@
       <DownloadApprovalMode>Manual</DownloadApprovalMode>
       <InventoryScanProfileId value="null" />
       <IsDownloadApprovalModeInherited value="true" />
-      <ScanAfterDeployment value="null" />
+      <ScanAfterDeployment value="true" />
       <Steps type="list">
+        <PowerShellStep>
+          <CustomCommandLine></CustomCommandLine>
+          <Files>$(Repository)\~resources\Stop-Application.ps1</Files>
+          <Script>&amp; ".\Stop-Application.ps1" -Directories @("$env:ProgramFiles\Google\Chrome\Application", "${env:ProgramFiles(x86)}\Google\Chrome\Application") -ProcessNames @('chrome.exe')
+Exit $LASTEXITCODE</Script>
+          <SuccessCodes>0</SuccessCodes>
+          <RunAs value="null" />
+          <Conditions type="list">
+            <PackageStepCondition>
+              <Architecture>Both, ArmAware</Architecture>
+              <Version>All</Version>
+              <TypeName>OperatingSystem</TypeName>
+            </PackageStepCondition>
+            <PackageStepCondition>
+              <IsUserLoggedOn>AlwaysRun</IsUserLoggedOn>
+              <TypeName>LoggedOnUser</TypeName>
+            </PackageStepCondition>
+            <PackageStepCondition>
+              <ConditionMode>IsMember</ConditionMode>
+              <InventoryCollectionId value="null" />
+              <InventoryCollectionName>Required: Google Chrome</InventoryCollectionName>
+              <TypeName>Collection</TypeName>
+            </PackageStepCondition>
+          </Conditions>
+          <ErrorMode>StopDeploymentFail</ErrorMode>
+          <Title>Stop Google Chrome</Title>
+          <TypeName>PowerShell</TypeName>
+          <IsEnabled value="true" />
+          <IsPostStep value="false" />
+          <IsPreStep value="false" />
+        </PowerShellStep>
         <InstallStep>
           <CustomCommandLine></CustomCommandLine>
           <FileName>$(Repository)\Google LLC\Google Chrome\@(Google-LLC_Google-Chrome)\Google-LLC_Google-Chrome_@(Google-LLC_Google-Chrome)_x64.msi</FileName>
@@ -54,9 +85,9 @@
               <TypeName>LoggedOnUser</TypeName>
             </PackageStepCondition>
             <PackageStepCondition>
-              <ConditionMode>None</ConditionMode>
+              <ConditionMode>IsMember</ConditionMode>
               <InventoryCollectionId value="null" />
-              <InventoryCollectionName></InventoryCollectionName>
+              <InventoryCollectionName>Required: Google Chrome</InventoryCollectionName>
               <TypeName>Collection</TypeName>
             </PackageStepCondition>
           </Conditions>
@@ -67,6 +98,54 @@
           <IsPostStep value="false" />
           <IsPreStep value="false" />
         </InstallStep>
+        <PowerShellStep>
+          <CustomCommandLine></CustomCommandLine>
+          <Files>$(Repository)\~resources\Get-InstalledSoftware.ps1</Files>
+          <Script>Try {
+  $Result = &amp; ".\Get-InstalledSoftware.ps1" -DisplayName 'Google Chrome' -Version '@(Google-LLC_Google-Chrome)' | ConvertFrom-Json -ErrorAction:'Stop'
+} Catch {
+  Write-Error -Message:('Verification failed: {0}' -f $PSItem.Exception.Message) -ErrorAction:'Continue'
+  Exit 3
+}
+If ($Null -eq $Result) {
+  Write-Error -Message:'Verification failed: Get-InstalledSoftware.ps1 did not return a result.' -ErrorAction:'Continue'
+  Exit 3
+}
+If ($Result.ambiguous) {
+  Write-Error -Message:('Verification failed: {0}' -f $Result.msg) -ErrorAction:'Continue'
+  Exit 2
+}
+If ($Result.action_required) {
+  Write-Error -Message:('Verification failed: Google Chrome is missing or below version @(Google-LLC_Google-Chrome). {0}' -f $Result.msg) -ErrorAction:'Continue'
+  Exit 1
+}
+Exit 0</Script>
+          <SuccessCodes>0</SuccessCodes>
+          <RunAs value="null" />
+          <Conditions type="list">
+            <PackageStepCondition>
+              <Architecture>Both, ArmAware</Architecture>
+              <Version>All</Version>
+              <TypeName>OperatingSystem</TypeName>
+            </PackageStepCondition>
+            <PackageStepCondition>
+              <IsUserLoggedOn>AlwaysRun</IsUserLoggedOn>
+              <TypeName>LoggedOnUser</TypeName>
+            </PackageStepCondition>
+            <PackageStepCondition>
+              <ConditionMode>None</ConditionMode>
+              <InventoryCollectionId value="null" />
+              <InventoryCollectionName></InventoryCollectionName>
+              <TypeName>Collection</TypeName>
+            </PackageStepCondition>
+          </Conditions>
+          <ErrorMode>StopDeploymentFail</ErrorMode>
+          <Title>Verify: Google Chrome</Title>
+          <TypeName>PowerShell</TypeName>
+          <IsEnabled value="true" />
+          <IsPostStep value="false" />
+          <IsPreStep value="false" />
+        </PowerShellStep>
       </Steps>
       <Timeout value="60" />
       <UseCustomTimeout value="false" />

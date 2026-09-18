@@ -896,6 +896,10 @@
     # The XML files are the complete package set. One script reads every declared name in one
     # ExportPackages launch, imports only differing definitions, removes every undeclared package,
     # then reads the set back after mutation. Its result names every applied or removed package.
+    # A definition also carries two ids that belong to the console it was exported from -- the
+    # collection a condition gates on and the profile a scan step runs -- so the script resolves
+    # both from their names on arrival, which is why it is given the scan profile declaration and
+    # the other product's command line.
     # The authoritative variable pass follows because an exported package carries variable
     # snapshots; the variable store must have the last word. The .ps1 is materialized from scripts/
     # by scripts/materialize-role-scripts.sh.
@@ -932,6 +936,8 @@
             {{ query('ansible.builtin.file',
                      *(query('ansible.builtin.fileglob', __package_glob__) | sort)) }}
           CliPath: "{{ pdq_deploy_running.cli_path }}"
+          InventoryCliPath: "{{ pdq_deploy_running.inventory_cli_path }}"
+          ScanProfile: "{{ pdq_deploy_running.scan_profiles }}"
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqPackage.ps1') }}"
 
     #endregion --- [ Process: Make The Declared Packages Authoritative ] --------------------- #

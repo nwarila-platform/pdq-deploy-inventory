@@ -3,9 +3,10 @@
 # SPDX-License-Identifier: MIT
 
 <#
-    Pester spec for Set-PdqPackage.ps1. A path-shaped function models PDQ Deploy's command line,
-    including directory-based batched exports, partial-success stderr, minimal imports, forced
-    deletes and verification after mutation.
+    Pester spec for Set-PdqPackage.ps1. Path-shaped functions model PDQ Deploy's command line,
+    PDQ Inventory's, and the shipped database tool, including directory-based batched exports,
+    partial-success stderr, minimal imports, forced deletes, the console-local ids a definition
+    cannot carry, and verification after mutation.
 #>
 
 Set-StrictMode -Version Latest
@@ -14,6 +15,21 @@ $ErrorActionPreference = 'Stop'
 BeforeAll {
   $script:ScriptPath = Join-Path $PSScriptRoot 'Set-PdqPackage.ps1'
   $script:CliPath = 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
+  $script:InventoryCliPath = 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
+  $script:SqlitePath = 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\sqlite3.exe'
+  $script:DeployDatabase = 'C:\Data\Deploy.db'
+  $script:InventoryDatabase = 'C:\Data\Inventory.db'
+
+  # Both command lines are fixed for every call; only the declaration and what its scan steps run
+  # vary from one example to the next.
+  Function Invoke-Reconcile {
+    Param (
+      [System.String[]] $Definition,
+      [System.Collections.IDictionary] $ScanProfile = @{}
+    )
+    & $script:ScriptPath -CliPath:$script:CliPath -Definition:$Definition `
+      -InventoryCliPath:$script:InventoryCliPath -ScanProfile:$ScanProfile
+  }
 
   Function New-AnsibleContext {
     Param ([Switch] $CheckMode)
@@ -35,7 +51,9 @@ BeforeAll {
     Param (
       [System.String] $Name,
       [System.String] $Detail = 'Silent install',
-      [System.String] $Dependency = ''
+      [System.String] $Dependency = '',
+      [System.String] $Collection = '',
+      [System.String] $ScanProfileId = ''
     )
     $Lines = [System.Collections.Generic.List[System.String]]::new()
     $Lines.Add('<?xml version="1.0" encoding="utf-8"?>')
@@ -50,9 +68,44 @@ BeforeAll {
             [System.Security.SecurityElement]::Escape($Dependency)))
       $Lines.Add('    </PackageStep>')
     }
+    If ($Collection.Length -gt 0 -or $ScanProfileId.Length -gt 0) {
+      $Lines.Add('    <PackageDefinition name="Definition">')
+      $Lines.Add('      <Steps type="list">')
+      If ($Collection.Length -gt 0) {
+        $Lines.Add('        <InstallStep>')
+        $Lines.Add(('          <Title>Install: {0}</Title>' -f `
+              [System.Security.SecurityElement]::Escape($Name)))
+        $Lines.Add('          <TypeName>Install</TypeName>')
+        $Lines.Add('          <Conditions type="list">')
+        $Lines.Add('            <PackageStepCondition>')
+        $Lines.Add('              <ConditionMode>Include</ConditionMode>')
+        $Lines.Add('              <InventoryCollectionId value="null" />')
+        $Lines.Add(('              <InventoryCollectionName>{0}</InventoryCollectionName>' -f `
+              [System.Security.SecurityElement]::Escape($Collection)))
+        $Lines.Add('              <TypeName>Collection</TypeName>')
+        $Lines.Add('            </PackageStepCondition>')
+        $Lines.Add('          </Conditions>')
+        $Lines.Add('        </InstallStep>')
+      }
+      If ($ScanProfileId.Length -gt 0) {
+        $Lines.Add('        <PackageStep>')
+        $Lines.Add(('          <InventoryScanProfileId value="{0}" />' -f $ScanProfileId))
+        $Lines.Add('          <Title>Scan After Deployment</Title>')
+        $Lines.Add('          <TypeName>ScanStep</TypeName>')
+        $Lines.Add('        </PackageStep>')
+      }
+      $Lines.Add('      </Steps>')
+      $Lines.Add('    </PackageDefinition>')
+    }
     $Lines.Add('  </Package>')
     $Lines.Add('</AdminArsenal.Export>')
     Return ([System.String][System.Char]0xFEFF + ($Lines -join "`r`n") + "`r`n")
+  }
+
+  Function global:Get-FakeHex {
+    Param ([System.String] $Text)
+    Return -join ([System.Text.Encoding]::UTF8.GetBytes($Text) |
+        ForEach-Object { $PSItem.ToString('X2') })
   }
 }
 
@@ -78,9 +131,15 @@ Describe 'Set-PdqPackage' {
         Out-Null
       $script:MountedDrive = 'C'
     }
-    New-Item -ItemType:'Directory' -Path:(Split-Path -Parent $script:CliPath) -Force |
-      Out-Null
-    Set-Content -LiteralPath:$script:CliPath -Value:'stub' -WhatIf:$False
+    ForEach ($Path In @($script:CliPath, $script:InventoryCliPath, $script:SqlitePath,
+        $script:DeployDatabase, $script:InventoryDatabase)) {
+      New-Item -ItemType:'Directory' -Path:(Split-Path -Parent $Path) -Force | Out-Null
+      Set-Content -LiteralPath:$Path -Value:'stub' -WhatIf:$False
+    }
+    # The script composes this one from the command line's directory, so the stand-in has to
+    # answer to the composed spelling rather than to the one written above.
+    $script:SqliteCommand = Join-Path -Path:(Split-Path -Path:$script:CliPath -Parent) `
+      -ChildPath:'sqlite3.exe'
 
     $script:Chrome = 'Google Chrome - Install'
     $script:Firefox = 'Mozilla Firefox - Install'
@@ -101,6 +160,14 @@ Describe 'Set-PdqPackage' {
     $global:FakeCliCalls = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeCliArgumentCalls = [System.Collections.Generic.List[System.Object]]::new()
     $global:FakeExportBatches = [System.Collections.Generic.List[System.Object]]::new()
+    $global:FakeDeployDatabase = $script:DeployDatabase
+    $global:FakeInventoryDatabase = $script:InventoryDatabase
+    $global:FakeCollectionIds = @{ 'Servers' = '7'; 'Workstations' = '9' }
+    $global:FakeScanProfileIds = @{ 'Standard' = '1'; 'Applications' = '5' }
+    $global:FakeConditionRows = [System.Collections.Generic.List[System.Object]]::new()
+    $global:FakeNextConditionRow = 1
+    $global:FakeUnwritableCondition = @()
+    $global:FakeSqliteCalls = [System.Collections.Generic.List[System.String]]::new()
     $global:LASTEXITCODE = 0
     Remove-AnsibleContext
 
@@ -109,6 +176,13 @@ Describe 'Set-PdqPackage' {
       $global:FakeCliCalls.Add($Argument -join ' ')
       $global:FakeCliArgumentCalls.Add([PSCustomObject]@{ Argument = $Argument })
       Switch ($Argument[0]) {
+        'SystemInfo' {
+          If ($Argument.Count -ne 1) {
+            Throw ('unexpected SystemInfo arguments: {0}' -f ($Argument -join ' '))
+          }
+          Write-Output ('Database : {0}' -f $global:FakeDeployDatabase)
+          $global:LASTEXITCODE = 0
+        }
         'GetPackageNames' {
           If ($Argument.Count -ne 1) {
             Throw ('unexpected GetPackageNames arguments: {0}' -f ($Argument -join ' '))
@@ -157,8 +231,18 @@ Describe 'Set-PdqPackage' {
           ForEach ($Name In $Held) {
             If ($global:FakeExportOmissions -notcontains $Name) {
               $FileName = 'package-{0}.xml' -f $Index
+              # The export is modelled as carrying whatever collection id the row now holds, which
+              # is the worse of the two possible product behaviours: the declaration can only ever
+              # carry null, so a converge has to agree with the resolved id either way.
+              $Text = $global:FakePackages[$Name]
+              ForEach ($Row In @($global:FakeConditionRows | Where-Object {
+                    $PSItem.Package -ceq $Name -and $PSItem.Id.Length -gt 0
+                  })) {
+                $Text = $Text.Replace('<InventoryCollectionId value="null" />',
+                  ('<InventoryCollectionId value="{0}" />' -f $Row.Id))
+              }
               Set-Content -LiteralPath:(Join-Path $Staged $FileName) `
-                -Value:$global:FakePackages[$Name] -NoNewline -WhatIf:$False
+                -Value:$Text -NoNewline -WhatIf:$False
               $Written.Add($FileName)
               Write-Output ('Exported "{0}" to {1}' -f $Name, (Join-Path $Staged $FileName))
               $Index++
@@ -202,6 +286,24 @@ Describe 'Set-PdqPackage' {
           $Name = $Document.SelectSingleNode('/AdminArsenal.Export/Package/Name').InnerText
           If ($global:FakeImportExit -eq 0 -and $global:FakeIgnored -notcontains $Name) {
             $global:FakePackages[$Name] = $Text
+            # Measured: the import keeps the condition's collection NAME and leaves its id null.
+            ForEach ($Stale In @($global:FakeConditionRows | Where-Object {
+                  $PSItem.Package -ceq $Name
+                })) {
+              $Null = $global:FakeConditionRows.Remove($Stale)
+            }
+            ForEach ($Node In $Document.SelectNodes(
+                "//PackageStepCondition[TypeName='Collection']/InventoryCollectionName")) {
+              If ($Node.InnerText.Length -gt 0) {
+                $global:FakeConditionRows.Add([PSCustomObject]@{
+                    Id      = ''
+                    Name    = $Node.InnerText
+                    Package = $Name
+                    Row     = [System.String]$global:FakeNextConditionRow
+                  })
+                $global:FakeNextConditionRow++
+              }
+            }
           }
           $global:LASTEXITCODE = $global:FakeImportExit
         }
@@ -219,11 +321,67 @@ Describe 'Set-PdqPackage' {
         Default { $global:LASTEXITCODE = 1 }
       }
     } | Out-Null
+
+    New-Item -Force -Path:('function:global:' + $script:InventoryCliPath) -Value {
+      $Argument = [System.String[]]@($args)
+      $global:FakeCliCalls.Add($Argument -join ' ')
+      If ($Argument.Count -ne 1 -or $Argument[0] -cne 'SystemInfo') {
+        Throw ('unexpected PDQInventory arguments: {0}' -f ($Argument -join ' '))
+      }
+      Write-Output ('Database : {0}' -f $global:FakeInventoryDatabase)
+      $global:LASTEXITCODE = 0
+    } | Out-Null
+
+    New-Item -Force -Path:('function:global:' + $script:SqliteCommand) -Value {
+      $Database = [System.String]$args[0]
+      $Sql = [System.String]$args[1]
+      $global:FakeSqliteCalls.Add($Sql)
+      If ($Sql -like 'SELECT CollectionId*') {
+        If ($Database -cne $global:FakeInventoryDatabase) {
+          Throw ('the collections were read from {0}' -f $Database)
+        }
+        ForEach ($Entry In $global:FakeCollectionIds.GetEnumerator()) {
+          Write-Output ('{0}|{1}' -f $Entry.Value, (Get-FakeHex -Text:$Entry.Key))
+        }
+      } ElseIf ($Sql -like 'SELECT InventoryScanProfileId*') {
+        If ($Database -cne $global:FakeDeployDatabase) {
+          Throw ('the scan profiles were read from {0}' -f $Database)
+        }
+        ForEach ($Entry In $global:FakeScanProfileIds.GetEnumerator()) {
+          Write-Output ('{0}|{1}' -f $Entry.Value, (Get-FakeHex -Text:$Entry.Key))
+        }
+      } ElseIf ($Sql -like 'SELECT rowid*') {
+        If ($Database -cne $global:FakeDeployDatabase) {
+          Throw ('the collection conditions were read from {0}' -f $Database)
+        }
+        ForEach ($Row In $global:FakeConditionRows) {
+          Write-Output ('{0}|{1}|{2}' -f $Row.Row, $Row.Id, (Get-FakeHex -Text:$Row.Name))
+        }
+      } ElseIf ($Sql -like '*UPDATE PackageStepConditionCollection*') {
+        ForEach ($Match In [Regex]::Matches($Sql, ('SET InventoryCollectionId = ([0-9]+) ' +
+              "WHERE rowid = ([0-9]+) AND IFNULL\(InventoryCollectionId, ''\) = '([0-9]*)' " +
+              "AND hex\(IFNULL\(InventoryCollectionName, ''\)\) = '([0-9A-F]*)'"))) {
+          $Row = @($global:FakeConditionRows | Where-Object {
+              $PSItem.Row -ceq $Match.Groups[2].Value -and
+              $PSItem.Id -ceq $Match.Groups[3].Value -and
+              (Get-FakeHex -Text:$PSItem.Name) -ceq $Match.Groups[4].Value
+            } | Select-Object -First 1)
+          If ($Row.Count -eq 1 -and $global:FakeUnwritableCondition -notcontains $Row[0].Name) {
+            $Row[0].Id = $Match.Groups[1].Value
+          }
+        }
+      } Else {
+        Throw ('unexpected statement: {0}' -f $Sql)
+      }
+      $global:LASTEXITCODE = 0
+    } | Out-Null
   }
 
   AfterEach {
-    Remove-Item -LiteralPath:('function:global:' + $script:CliPath) -Force `
-      -ErrorAction:'SilentlyContinue'
+    ForEach ($Path In @($script:CliPath, $script:InventoryCliPath, $script:SqliteCommand)) {
+      Remove-Item -LiteralPath:('function:global:' + $Path) -Force `
+        -ErrorAction:'SilentlyContinue'
+    }
     If ($script:MountedDrive) {
       Remove-PSDrive -Name:$script:MountedDrive -Force -ErrorAction:'SilentlyContinue'
     }
@@ -235,29 +393,33 @@ Describe 'Set-PdqPackage' {
     Remove-Variable -Name:'FakePackages', 'FakeIgnored', 'FakeUndeletable', 'FakeImportExit',
       'FakeDeleteExit', 'FakeListExit', 'FakeExportExit', 'FakeExportOmissions',
       'FakeExportExtraError', 'FakeExportSuppressMissingError', 'FakeCliCalls',
-      'FakeCliArgumentCalls', 'FakeExportBatches' -Scope:'Global' -Force `
-      -ErrorAction:'SilentlyContinue'
+      'FakeCliArgumentCalls', 'FakeExportBatches', 'FakeDeployDatabase',
+      'FakeInventoryDatabase', 'FakeCollectionIds', 'FakeScanProfileIds', 'FakeConditionRows',
+      'FakeNextConditionRow', 'FakeUnwritableCondition', 'FakeSqliteCalls' -Scope:'Global' `
+      -Force -ErrorAction:'SilentlyContinue'
   }
 
   Context 'the declaration boundary' {
     It 'refuses a command line that is not there' {
-      { & $script:ScriptPath -Definition:@() -CliPath:'C:\nope\PDQDeploy.exe' } |
-        Should -Throw '*command line is not at*'
+      {
+        & $script:ScriptPath -Definition:@() -CliPath:'C:\nope\PDQDeploy.exe' `
+          -InventoryCliPath:$script:InventoryCliPath -ScanProfile:@{}
+      } | Should -Throw '*command line is not at*'
     }
 
     It 'refuses invalid, nameless and duplicate definitions before reading the product' {
       {
-        & $script:ScriptPath -Definition:@('not xml') -CliPath:$script:CliPath
+        Invoke-Reconcile -Definition:@('not xml')
       } | Should -Throw '*not valid XML*'
       $Nameless = '<?xml version="1.0"?><AdminArsenal.Export><Package /></AdminArsenal.Export>'
       {
-        & $script:ScriptPath -Definition:@($Nameless) -CliPath:$script:CliPath
+        Invoke-Reconcile -Definition:@($Nameless)
       } | Should -Throw '*does not name a package*'
       {
-        & $script:ScriptPath -Definition:@(
+        Invoke-Reconcile -Definition:@(
           New-PackageText -Name:$script:Chrome
           New-PackageText -Name:$script:Chrome -Detail:'second'
-        ) -CliPath:$script:CliPath
+        )
       } | Should -Throw '*declared more than once*'
       $global:FakeCliCalls.Count | Should -Be 0
     }
@@ -265,8 +427,7 @@ Describe 'Set-PdqPackage' {
     It 'refuses names the command line would read as selection syntax' {
       ForEach ($Bad In @('Chrome*', 'Chrome?', 'Chrome,Firefox')) {
         {
-          & $script:ScriptPath -Definition:@(New-PackageText -Name:$Bad) `
-            -CliPath:$script:CliPath
+          Invoke-Reconcile -Definition:@(New-PackageText -Name:$Bad)
         } | Should -Throw '*selection syntax*'
       }
       $global:FakeCliCalls.Count | Should -Be 0
@@ -276,7 +437,7 @@ Describe 'Set-PdqPackage' {
   Context 'the batched read contract' {
     It 'passes separate names once, uses a directory and trusts each file Name rather than its filename' {
       $Context = New-AnsibleContext
-      & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+      Invoke-Reconcile -Definition:@(
         New-PackageText -Name:$script:Chrome
         New-PackageText -Name:$script:Firefox
       ) | Out-Null
@@ -303,7 +464,7 @@ Describe 'Set-PdqPackage' {
     It 'accepts exit 1 when every missing name has its not-found line' {
       $Null = $global:FakePackages.Remove($script:Firefox)
       $Context = New-AnsibleContext
-      & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+      Invoke-Reconcile -Definition:@(
         New-PackageText -Name:$script:Chrome
         New-PackageText -Name:$script:Firefox
       ) | Out-Null
@@ -319,7 +480,7 @@ Describe 'Set-PdqPackage' {
     It 'accepts exit 3 when a fresh product holds none of the declaration' {
       $global:FakePackages.Clear()
       $Context = New-AnsibleContext
-      & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+      Invoke-Reconcile -Definition:@(
         New-PackageText -Name:$script:Chrome
         New-PackageText -Name:$script:Firefox
       ) | Out-Null
@@ -334,7 +495,7 @@ Describe 'Set-PdqPackage' {
       $Null = $global:FakePackages.Remove($script:Firefox)
       $global:FakeExportSuppressMissingError = $True
       {
-        & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+        Invoke-Reconcile -Definition:@(
           New-PackageText -Name:$script:Chrome
           New-PackageText -Name:$script:Firefox
         )
@@ -347,7 +508,7 @@ Describe 'Set-PdqPackage' {
       $Null = $global:FakePackages.Remove($script:Firefox)
       $global:FakeExportExtraError = @('Error: the export store is unavailable.')
       {
-        & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+        Invoke-Reconcile -Definition:@(
           New-PackageText -Name:$script:Chrome
           New-PackageText -Name:$script:Firefox
         )
@@ -362,7 +523,7 @@ Describe 'Set-PdqPackage' {
       Param ($Exit, $Message)
       $global:FakeExportExit = $Exit
       {
-        & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+        Invoke-Reconcile -Definition:@(
           New-PackageText -Name:$script:Chrome
           New-PackageText -Name:$script:Firefox
         )
@@ -373,7 +534,7 @@ Describe 'Set-PdqPackage' {
     It 'rejects status 0 when the batch omits a requested package file' {
       $global:FakeExportOmissions = @($script:Firefox)
       {
-        & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+        Invoke-Reconcile -Definition:@(
           New-PackageText -Name:$script:Chrome
           New-PackageText -Name:$script:Firefox
         )
@@ -388,7 +549,7 @@ Describe 'Set-PdqPackage' {
         New-PackageText -Name:$script:Firefox
       )
       $First = New-AnsibleContext
-      & $script:ScriptPath -CliPath:$script:CliPath -Definition:$Definition | Out-Null
+      Invoke-Reconcile -Definition:$Definition | Out-Null
       $First.Result.applied | Should -Be @($script:Chrome)
       $First.Result.unchanged | Should -Be @($script:Firefox)
       $First.Result.msg | Should -Match ([Regex]::Escape($script:Chrome))
@@ -396,7 +557,7 @@ Describe 'Set-PdqPackage' {
 
       $ExportsAfterFirst = @($global:FakeCliCalls -like 'ExportPackages*').Count
       $Second = New-AnsibleContext
-      & $script:ScriptPath -CliPath:$script:CliPath -Definition:$Definition | Out-Null
+      Invoke-Reconcile -Definition:$Definition | Out-Null
       $Second.Changed | Should -BeFalse
       $Second.Result.applied.Count | Should -Be 0
       @($global:FakeCliCalls -like 'ImportPackages*').Count | Should -Be 1
@@ -414,7 +575,7 @@ Describe 'Set-PdqPackage' {
         )
       $global:FakePackages[$script:Chrome] = $Stored
       $Context = New-AnsibleContext
-      & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+      Invoke-Reconcile -Definition:@(
         New-PackageText -Name:$script:Chrome
         New-PackageText -Name:$script:Firefox
       ) | Out-Null
@@ -426,7 +587,7 @@ Describe 'Set-PdqPackage' {
       $Stray = 'Undeclared By Hand'
       $global:FakePackages.Add($Stray, (New-PackageText -Name:$Stray))
       $Context = New-AnsibleContext
-      & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+      Invoke-Reconcile -Definition:@(
         New-PackageText -Name:$script:Chrome
         New-PackageText -Name:$script:Firefox
       ) | Out-Null
@@ -439,7 +600,7 @@ Describe 'Set-PdqPackage' {
 
     It 'refuses to remove an undeclared package a declaration refers to' {
       {
-        & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+        Invoke-Reconcile -Definition:@(
           New-PackageText -Name:$script:Chrome -Dependency:$script:Firefox
         )
       } | Should -Throw '*a declared package refers to it*'
@@ -450,7 +611,7 @@ Describe 'Set-PdqPackage' {
 
     It 'treats an empty declaration as an instruction to remove every package' {
       $Context = New-AnsibleContext
-      & $script:ScriptPath -CliPath:$script:CliPath -Definition:@() | Out-Null
+      Invoke-Reconcile -Definition:@() | Out-Null
       $Context.Result.declared | Should -Be 0
       $Context.Result.removed | Should -Contain $script:Chrome
       $Context.Result.removed | Should -Contain $script:Firefox
@@ -465,7 +626,7 @@ Describe 'Set-PdqPackage' {
       $global:FakePackages[$script:Chrome] = New-PackageText -Name:$script:Chrome -Detail:'old'
       $global:FakePackages.Add($Stray, (New-PackageText -Name:$Stray))
       $Context = New-AnsibleContext -CheckMode
-      & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+      Invoke-Reconcile -Definition:@(
         New-PackageText -Name:$script:Chrome -Detail:'new'
         New-PackageText -Name:$script:Firefox
       ) | Out-Null
@@ -485,7 +646,7 @@ Describe 'Set-PdqPackage' {
       $global:FakePackages[$script:Chrome] = New-PackageText -Name:$script:Chrome -Detail:'old'
       $global:FakeIgnored = @($script:Chrome)
       $Context = New-AnsibleContext
-      & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+      Invoke-Reconcile -Definition:@(
         New-PackageText -Name:$script:Chrome -Detail:'new'
         New-PackageText -Name:$script:Firefox
       ) | Out-Null
@@ -502,7 +663,7 @@ Describe 'Set-PdqPackage' {
       $global:FakePackages.Add($Stray, (New-PackageText -Name:$Stray))
       $global:FakeUndeletable = @($Stray)
       $Context = New-AnsibleContext
-      & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+      Invoke-Reconcile -Definition:@(
         New-PackageText -Name:$script:Chrome
         New-PackageText -Name:$script:Firefox
       ) | Out-Null
@@ -518,7 +679,7 @@ Describe 'Set-PdqPackage' {
       $global:FakePackages[$script:Chrome] = New-PackageText -Name:$script:Chrome -Detail:'old'
       $global:FakeImportExit = 1
       {
-        & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+        Invoke-Reconcile -Definition:@(
           New-PackageText -Name:$script:Chrome -Detail:'new'
           New-PackageText -Name:$script:Firefox
         )
@@ -530,7 +691,7 @@ Describe 'Set-PdqPackage' {
       $global:FakePackages.Add($Stray, (New-PackageText -Name:$Stray))
       $global:FakeDeleteExit = 4
       {
-        & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+        Invoke-Reconcile -Definition:@(
           New-PackageText -Name:$script:Chrome
           New-PackageText -Name:$script:Firefox
         )
@@ -540,12 +701,111 @@ Describe 'Set-PdqPackage' {
     It 'leaves no staged files or directories behind' {
       $global:FakePackages[$script:Chrome] = New-PackageText -Name:$script:Chrome -Detail:'old'
       New-AnsibleContext | Out-Null
-      & $script:ScriptPath -CliPath:$script:CliPath -Definition:@(
+      Invoke-Reconcile -Definition:@(
         New-PackageText -Name:$script:Chrome -Detail:'new'
         New-PackageText -Name:$script:Firefox
       ) | Out-Null
       Test-Path -LiteralPath:(Join-Path $script:Tmpdir 'pdq-package-export') | Should -BeFalse
       Test-Path -LiteralPath:(Join-Path $script:Tmpdir 'pdq-package-import.xml') | Should -BeFalse
+    }
+  }
+
+  Context 'the ids that belong to this console' {
+    It 'points a collection condition at this console''s own collection' {
+      $Definition = @(
+        New-PackageText -Name:$script:Chrome -Collection:'Servers'
+        New-PackageText -Name:$script:Firefox
+      )
+      $First = New-AnsibleContext
+      Invoke-Reconcile -Definition:$Definition | Out-Null
+
+      $First.Failed | Should -BeFalse
+      $First.Result.applied | Should -Be @($script:Chrome)
+      @($global:FakeConditionRows | ForEach-Object Id) | Should -Be @('7')
+      @($global:FakeSqliteCalls -like '*UPDATE PackageStepConditionCollection*').Count |
+        Should -Be 1
+
+      # The resolved id lives only on this console, so the same declaration must still converge.
+      $Second = New-AnsibleContext
+      Invoke-Reconcile -Definition:$Definition | Out-Null
+      $Second.Changed | Should -BeFalse
+      @($global:FakeSqliteCalls -like '*UPDATE PackageStepConditionCollection*').Count |
+        Should -Be 1
+    }
+
+    It 'stops the run naming the package, the step and the collection it cannot find' {
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -Collection:'No Such Collection'
+          New-PackageText -Name:$script:Firefox
+        )
+      } | Should -Throw ("*$($script:Chrome) gates the step 'Install: $($script:Chrome)' on the " +
+        "collection 'No Such Collection', which PDQ Inventory does not hold*")
+      @($global:FakeCliCalls -like 'ImportPackages*').Count | Should -Be 0
+    }
+
+    It 'rewrites a scan step to this console''s own scan profile' {
+      $Definition = @(
+        New-PackageText -Name:$script:Chrome -ScanProfileId:'2'
+        New-PackageText -Name:$script:Firefox
+      )
+      $Runs = @{ $script:Chrome = 'Applications' }
+      $First = New-AnsibleContext
+      Invoke-Reconcile -Definition:$Definition -ScanProfile:$Runs | Out-Null
+
+      $First.Failed | Should -BeFalse
+      $First.Result.applied | Should -Be @($script:Chrome)
+      $global:FakePackages[$script:Chrome] | Should -Match '<InventoryScanProfileId value="5" />'
+      $global:FakePackages[$script:Chrome] | Should -Not -Match 'value="2"'
+
+      $Second = New-AnsibleContext
+      Invoke-Reconcile -Definition:$Definition -ScanProfile:$Runs | Out-Null
+      $Second.Changed | Should -BeFalse
+    }
+
+    It 'stops the run naming the package, the step and the scan profile it cannot find' {
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -ScanProfileId:'2'
+          New-PackageText -Name:$script:Firefox
+        ) -ScanProfile:@{ $script:Chrome = 'No Such Profile' }
+      } | Should -Throw ("*$($script:Chrome) runs the scan profile 'No Such Profile' at the step " +
+        "'Scan After Deployment', which PDQ Deploy does not hold*")
+      @($global:FakeCliCalls -like 'ImportPackages*').Count | Should -Be 0
+    }
+
+    It 'refuses a scan step that no declaration names a profile for' {
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -ScanProfileId:'2'
+          New-PackageText -Name:$script:Firefox
+        )
+      } | Should -Throw ("*$($script:Chrome) carries the step 'Scan After Deployment', which runs " +
+        'a scan profile no declaration names*')
+      $global:FakeCliCalls.Count | Should -Be 0
+    }
+
+    It 'refuses a declared scan profile that names no definition' {
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome
+          New-PackageText -Name:$script:Firefox
+        ) -ScanProfile:@{ 'Never Declared' = 'Applications' }
+      } | Should -Throw '*A scan profile is declared for Never Declared, which no definition names*'
+      $global:FakeCliCalls.Count | Should -Be 0
+    }
+
+    It 'fails after the write when a condition still does not carry the collection' {
+      $global:FakeUnwritableCondition = @('Servers')
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -Collection:'Servers'
+          New-PackageText -Name:$script:Firefox
+        )
+      } | Should -Throw ("*$($script:Chrome) does not gate the step 'Install: $($script:Chrome)' " +
+        "on the collection 'Servers' after the import*")
+      @($global:FakeSqliteCalls -like '*UPDATE PackageStepConditionCollection*').Count |
+        Should -Be 1
     }
   }
 

@@ -27,6 +27,16 @@
         3 is the successful empty answer when none of the requested packages exists. Presence is
         decided from each file's own Name element; filenames are presentation only.
 
+        Two ids in a definition belong to the console that exported it rather than to the
+        package: the collection a condition gates on, and the scan profile a scan step runs. Both
+        are resolved from a NAME against this console's own tables. The condition's id is written
+        to the product's database, because ImportPackages stores the name and leaves the id null
+        and the deployment runner resolves membership by id alone; the scan step's is written into
+        the document that is imported, because that one does travel. Both are read back afterwards
+        and must name what the declaration asked for. A name that resolves to nothing stops the
+        run: a package gated on a collection this console does not hold imports quietly and then
+        fails every deployment before its first step.
+
         A package that a declared definition refers to by name cannot be pruned accidentally. The
         command line's forced delete bypasses its own nested-step prompt, so an undeclared but
         referenced package stops the run before any mutation.
@@ -53,12 +63,22 @@
         The complete set of package definitions, as the product's own export writes them. Required
         even when empty, so owning no packages is an explicit declaration.
 
+    .PARAMETER ScanProfile
+        The PDQ Inventory scan profile every scan step in a package runs, by package name. A
+        package's export carries only the profile's numeric id, which is local to the console that
+        wrote it, so the name is declared here instead. A package with no scan step has no entry,
+        and a scan step whose package is not named stops the run.
+
     .PARAMETER CliPath
         Full path to PDQDeploy.exe. Packages are a Deploy concept; Inventory has no equivalent, so
         this script serves the one product.
 
+    .PARAMETER InventoryCliPath
+        Full path to PDQInventory.exe, which is asked where the collections are kept. Read only
+        when a declared package gates a step on a collection.
+
     .EXAMPLE
-        .\Set-PdqPackage.ps1 -Definition @((Get-Content -Raw '.\Google Chrome - Install.xml')) -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
+        .\Set-PdqPackage.ps1 -Definition @((Get-Content -Raw '.\Google Chrome - Install.xml')) -ScanProfile @{} -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe' -InventoryCliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
 
     .OUTPUTS
         One object carrying applied, removed, unchanged, ignored, survivors, changed, check_mode
@@ -110,6 +130,17 @@ Param (
 
   [Parameter(
     DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [ValidateNotNullOrEmpty()]
+  [System.String]
+  $InventoryCliPath,
+
+  [Parameter(
+    DontShow = $False,
     Mandatory = $False,
     ParameterSetName = 'default',
     ValueFromPipeline = $False,
@@ -117,7 +148,17 @@ Param (
   )]
   [ValidatePattern('^[0-5]{6}$')]
   [System.String]
-  $LogLevel = '002223'
+  $LogLevel = '002223',
+
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [System.Collections.IDictionary]
+  $ScanProfile
 )
 
 #region ------ [ Script ] -------------------------------------------------------------------- #
@@ -159,6 +200,17 @@ New-Variable -Force -Name:'PLACEMENT_ELEMENTS' -Option:'ReadOnly' -Value:(
     '/AdminArsenal.Export/Package/Path'
     '/AdminArsenal.Export/Package/PackageDisplaySettings/SortOrder'
     '/AdminArsenal.Export/Package/CustomVariables'
+  )
+)
+
+# The two ids a definition carries that belong to the CONSOLE it was exported from rather than to
+# the package. Both are resolved from their names and rewritten on arrival, so comparing them would
+# report a change on every converge -- against the very values this script had just made correct.
+# Not Private: the comparison function below is a child scope and has to read it.
+New-Variable -Force -Name:'LOCAL_ID_ELEMENTS' -Option:'ReadOnly' -Value:(
+  [System.String[]]@(
+    "//PackageStepCondition[TypeName='Collection']/InventoryCollectionId"
+    "//PackageStep[TypeName='ScanStep']/InventoryScanProfileId"
   )
 )
 
@@ -257,7 +309,7 @@ Function ConvertTo-ComparablePackage {
   } Catch {
     Throw ('A package definition is not valid XML ({0})' -f $PSItem.Exception.GetBaseException().Message)
   }
-  ForEach ($Element In $PLACEMENT_ELEMENTS) {
+  ForEach ($Element In ($PLACEMENT_ELEMENTS + $LOCAL_ID_ELEMENTS)) {
     ForEach ($Node In @($Document.SelectNodes($Element))) {
       $Null = $Node.ParentNode.RemoveChild($Node)
     }
@@ -489,6 +541,102 @@ Function Get-HeldPackageName {
   Return , $Names.ToArray()
 }
 
+# Text the product owns, carried as hex both ways: a name is free text, and the command line's own
+# row and column separators, its quoting and anything non-ASCII all survive the round trip.
+Function ConvertFrom-HexText {
+  Param ([System.String] $Hex)
+  $Bytes = [System.Byte[]]::new($Hex.Length / 2)
+  For ($B = 0; $B -lt $Bytes.Length; $B++) {
+    $Bytes[$B] = [System.Convert]::ToByte($Hex.Substring($B * 2, 2), 16)
+  }
+  Return [System.Text.Encoding]::UTF8.GetString($Bytes)
+}
+
+# Which part of a package a reference belongs to, said the way the console says it. A condition
+# sits either under the step it gates or under the package's own condition list.
+Function Get-StepLabel {
+  Param ([System.Xml.XmlNode] $Node)
+  $Ancestor = $Node
+  While ($Null -ne $Ancestor) {
+    $Title = $Ancestor.SelectSingleNode('Title')
+    If ($Null -ne $Title -and -not [System.String]::IsNullOrWhiteSpace($Title.InnerText)) {
+      Return ('the step ''{0}''' -f $Title.InnerText)
+    }
+    $Ancestor = $Ancestor.ParentNode
+  }
+  Return 'the package itself'
+}
+
+# Where a product keeps its database, asked of the product rather than assumed from where it was
+# installed: the two products keep theirs on different volumes here.
+Function Get-DatabasePath {
+  Param ([System.String] $Path, [System.String] $Product)
+  $Info = (Invoke-NativeCommand -FilePath:$Path -Argument:@('SystemInfo') `
+      -Operation:('Reading the {0} system information' -f $Product)).Output
+  $Database = (
+    @($Info | Where-Object -FilterScript { $PSItem -match '^\s*Database\s*:' }) |
+      Select-Object -First 1
+  ) -replace '^\s*Database\s*:\s*', ''
+  If (-not $Database) {
+    Throw ('{0} did not report a database path' -f $Product)
+  }
+  If (-not (Test-Path -LiteralPath:$Database -PathType:'Leaf')) {
+    Throw ('The {0} database is not at ''{1}''' -f $Product, $Database)
+  }
+  Return $Database
+}
+
+# One of the product's own name-to-id tables. A name the table holds twice is recorded rather than
+# rejected here: only a name a declaration actually refers to has to be unambiguous.
+Function Get-NameToId {
+  Param ([System.String] $Database, [System.String] $Operation, [System.String] $Statement)
+  $Id = [System.Collections.Generic.Dictionary[System.String, System.String]]::new(
+    [System.StringComparer]::Ordinal
+  )
+  $Ambiguous = [System.Collections.Generic.HashSet[System.String]]::new(
+    [System.StringComparer]::Ordinal
+  )
+  ForEach ($Line In (Invoke-NativeCommand -FilePath:$Sqlite -Operation:$Operation `
+        -Argument:@($Database, $Statement)).Output) {
+    $Parts = ([System.String]$Line).Split('|')
+    If ($Parts.Count -ne 2 -or $Parts[0] -notmatch '^[0-9]+$' -or
+      $Parts[1] -notmatch '^([0-9A-Fa-f]{2})*$') {
+      Throw ('{0}: the table did not read back as id and hex name: {1}' -f $Operation, $Line)
+    }
+    $Name = ConvertFrom-HexText -Hex:$Parts[1]
+    If ($Id.ContainsKey($Name)) {
+      $Null = $Ambiguous.Add($Name)
+    } Else {
+      $Id.Add($Name, $Parts[0])
+    }
+  }
+  Return [PSCustomObject]@{ Ambiguous = $Ambiguous; Id = $Id }
+}
+
+# Every collection condition the product holds, with the row identity a write has to be bound to.
+# rowid is sqlite's own, so this asks the schema for nothing it has not already been told.
+Function Read-ConditionRow {
+  $Rows = [System.Collections.Generic.List[System.Object]]::new()
+  ForEach ($Line In (Invoke-NativeCommand -FilePath:$Sqlite `
+        -Operation:'Reading the collection conditions' -Argument:@(
+        $Database
+        "SELECT rowid, IFNULL(InventoryCollectionId, ''), hex(IFNULL(InventoryCollectionName, '')) FROM PackageStepConditionCollection;"
+      )).Output) {
+    $Parts = ([System.String]$Line).Split('|')
+    If ($Parts.Count -ne 3 -or $Parts[0] -notmatch '^[0-9]+$' -or $Parts[1] -notmatch '^[0-9]*$' -or
+      $Parts[2] -notmatch '^([0-9A-Fa-f]{2})*$') {
+      Throw ('The collection conditions did not read back as row, id and hex name: {0}' -f $Line)
+    }
+    $Rows.Add([PSCustomObject]@{
+        Hex  = $Parts[2].ToUpperInvariant()
+        Id   = $Parts[1]
+        Name = ConvertFrom-HexText -Hex:$Parts[2]
+        Row  = $Parts[0]
+      })
+  }
+  Return , $Rows
+}
+
 # Parse the whole declaration before any product read. Names are exact and unique, every package
 # is addressable, and every leaf value is retained for the nested-package deletion safeguard.
 $Declared = [System.Collections.Generic.Dictionary[System.String, System.String]]::new(
@@ -501,6 +649,8 @@ $DeclaredName = [System.Collections.Generic.List[System.String]]::new()
 $Referenced = [System.Collections.Generic.HashSet[System.String]]::new(
   [System.StringComparer]::Ordinal
 )
+$CollectionReference = [System.Collections.Generic.List[System.Object]]::new()
+$ScanReference = [System.Collections.Generic.List[System.Object]]::new()
 ForEach ($Text In $Definition) {
   $Normal = ConvertTo-ComparableText -Text:$Text
   $Document = [System.Xml.XmlDocument]::new()
@@ -526,12 +676,48 @@ ForEach ($Text In $Definition) {
   $Declared.Add($Name, $Normal)
   $DeclaredKey.Add($Name, (ConvertTo-ComparablePackage -Text:$Normal))
   $DeclaredName.Add($Name)
+
+  # What this definition points at that only THIS console can name. A condition carries the
+  # collection's name as well as its id, so the declaration says which collection it means; a scan
+  # step carries the id alone, so its profile is named in the declaration instead.
+  ForEach ($Node In $Document.SelectNodes("//PackageStepCondition[TypeName='Collection']")) {
+    $Collection = $Node.SelectSingleNode('InventoryCollectionName')
+    If ($Null -ne $Collection -and
+      -not [System.String]::IsNullOrWhiteSpace($Collection.InnerText)) {
+      $CollectionReference.Add([PSCustomObject]@{
+          Collection = [System.String]$Collection.InnerText
+          Package    = $Name
+          Step       = Get-StepLabel -Node:$Node
+        })
+    }
+  }
+  ForEach ($Node In $Document.SelectNodes("//PackageStep[TypeName='ScanStep']")) {
+    If (-not $ScanProfile.Contains($Name) -or
+      [System.String]::IsNullOrWhiteSpace([System.String]$ScanProfile[$Name])) {
+      Throw ('{0} carries {1}, which runs a scan profile no declaration names' -f @(
+          $Name, (Get-StepLabel -Node:$Node)
+        ))
+    }
+    $ScanReference.Add([PSCustomObject]@{
+        Package = $Name
+        Profile = [System.String]$ScanProfile[$Name]
+        Step    = Get-StepLabel -Node:$Node
+      })
+  }
+
   ForEach ($Node In $Document.SelectNodes('//*')) {
     If ($Node.ChildNodes.Count -eq 1 -and
       $Node.FirstChild.NodeType -eq [System.Xml.XmlNodeType]::Text) {
       $Null = $Referenced.Add($Node.InnerText)
     }
   }
+}
+
+$Orphan = [System.String[]]@($ScanProfile.Keys | Where-Object {
+    -not $Declared.ContainsKey([System.String]$PSItem)
+  })
+If ($Orphan.Count -gt 0) {
+  Throw ('A scan profile is declared for {0}, which no definition names' -f ($Orphan -join ', '))
 }
 
 $Held = Get-HeldPackageName
@@ -563,6 +749,80 @@ ForEach ($Name In $DeclaredName) {
   }
 }
 
+# Resolve every reference before anything is written. A package gated on a collection this console
+# does not hold is broken on arrival, and saying so costs one read, where importing it costs a
+# deployment that fails before its first step. A declaration that refers to neither a collection
+# nor a scan profile reads no database at all.
+$Localized = [System.Collections.Generic.Dictionary[System.String, System.String]]::new(
+  [System.StringComparer]::Ordinal
+)
+ForEach ($Name In $DeclaredName) {
+  $Localized.Add($Name, $Declared[$Name])
+}
+
+If ($CollectionReference.Count -gt 0 -or $ScanReference.Count -gt 0) {
+  $Sqlite = Join-Path -Path:(Split-Path -Path:$CliPath -Parent) -ChildPath:'sqlite3.exe'
+  If (-not (Test-Path -LiteralPath:$Sqlite -PathType:'Leaf')) {
+    Throw ('The product database tool is not at ''{0}''' -f $Sqlite)
+  }
+  $Database = Get-DatabasePath -Path:$CliPath -Product:'PDQ Deploy'
+}
+
+If ($CollectionReference.Count -gt 0) {
+  # Deploy holds the condition; Inventory holds the collection and mints the id both agree on.
+  If (-not (Test-Path -LiteralPath:$InventoryCliPath -PathType:'Leaf')) {
+    Throw ('The PDQ Inventory command line is not at ''{0}''' -f $InventoryCliPath)
+  }
+  $InventoryDatabase = Get-DatabasePath -Path:$InventoryCliPath -Product:'PDQ Inventory'
+  $CollectionTable = Get-NameToId -Database:$InventoryDatabase `
+    -Operation:'Reading the collections' -Statement:'SELECT CollectionId, hex(Name) FROM Collections;'
+  ForEach ($Reference In $CollectionReference) {
+    If ($CollectionTable.Ambiguous.Contains($Reference.Collection)) {
+      Throw ('{0} gates {1} on the collection ''{2}'', which PDQ Inventory holds more than once' -f @(
+          $Reference.Package, $Reference.Step, $Reference.Collection
+        ))
+    }
+    If (-not $CollectionTable.Id.ContainsKey($Reference.Collection)) {
+      Throw ('{0} gates {1} on the collection ''{2}'', which PDQ Inventory does not hold' -f @(
+          $Reference.Package, $Reference.Step, $Reference.Collection
+        ))
+    }
+  }
+}
+
+If ($ScanReference.Count -gt 0) {
+  # Deploy mirrors Inventory's scan profiles under ids of its own, so a step's profile is resolved
+  # against the product the step runs in.
+  $ProfileTable = Get-NameToId -Database:$Database -Operation:'Reading the scan profiles' `
+    -Statement:'SELECT InventoryScanProfileId, hex(Name) FROM InventoryScanProfiles;'
+  ForEach ($Reference In $ScanReference) {
+    If ($ProfileTable.Ambiguous.Contains($Reference.Profile)) {
+      Throw ('{0} runs the scan profile ''{1}'' at {2}, which PDQ Deploy holds more than once' -f @(
+          $Reference.Package, $Reference.Profile, $Reference.Step
+        ))
+    }
+    If (-not $ProfileTable.Id.ContainsKey($Reference.Profile)) {
+      Throw ('{0} runs the scan profile ''{1}'' at {2}, which PDQ Deploy does not hold' -f @(
+          $Reference.Package, $Reference.Profile, $Reference.Step
+        ))
+    }
+  }
+
+  # This id survives the import, so it is written into the document the product is given rather
+  # than into the row the product writes from it.
+  ForEach ($Name In [System.String[]]@($ScanReference | ForEach-Object Package |
+        Select-Object -Unique)) {
+    $Document = [System.Xml.XmlDocument]::new()
+    $Document.PreserveWhitespace = $True
+    $Document.LoadXml($Declared[$Name])
+    ForEach ($Node In $Document.SelectNodes(
+        "//PackageStep[TypeName='ScanStep']/InventoryScanProfileId")) {
+      $Node.SetAttribute('value', $ProfileTable.Id[[System.String]$ScanProfile[$Name]])
+    }
+    $Localized[$Name] = $Document.OuterXml
+  }
+}
+
 $Applied = [System.Collections.Generic.List[System.String]]::new()
 $Removed = [System.Collections.Generic.List[System.String]]::new()
 $Unchanged = [System.Collections.Generic.List[System.String]]::new()
@@ -579,7 +839,7 @@ If ($Ansible.CheckMode) {
     $Staged = Join-Path -Path:$Ansible.Tmpdir -ChildPath:'pdq-package-import.xml'
     Try {
       Try {
-        Set-Content -LiteralPath:$Staged -Value:$Declared[$Name] -Encoding:'utf8' -NoNewline
+        Set-Content -LiteralPath:$Staged -Value:$Localized[$Name] -Encoding:'utf8' -NoNewline
       } Catch {
         Throw ('Importing the package ''{0}'': it could not be staged at ''{1}'' ({2})' -f @(
             $Name, $Staged, $PSItem.Exception.Message
@@ -590,6 +850,33 @@ If ($Ansible.CheckMode) {
         -Argument:@('ImportPackages', '-Path', $Staged, '-Overwrite')
     } Finally {
       Remove-Item -LiteralPath:$Staged -Force -ErrorAction:'SilentlyContinue'
+    }
+  }
+
+  # ImportPackages stores a condition's collection NAME and leaves its id null, and the deployment
+  # runner resolves membership by id alone, so an imported package is gated on nothing until this
+  # write. Every statement is bound to the row it was read from and to the value that row still
+  # holds; a row already pointing at the right collection is not written at all.
+  If ($ToImport.Count -gt 0 -and $CollectionReference.Count -gt 0) {
+    $Wanted = [System.Collections.Generic.HashSet[System.String]]::new(
+      [System.String[]]@($CollectionReference | ForEach-Object Collection),
+      [System.StringComparer]::Ordinal
+    )
+    $Statements = [System.Collections.Generic.List[System.String]]::new()
+    ForEach ($Row In (Read-ConditionRow)) {
+      If ($Wanted.Contains($Row.Name) -and $Row.Id -cne $CollectionTable.Id[$Row.Name]) {
+        $Statements.Add(("UPDATE PackageStepConditionCollection SET InventoryCollectionId = {0} WHERE rowid = {1} AND IFNULL(InventoryCollectionId, '') = '{2}' AND hex(IFNULL(InventoryCollectionName, '')) = '{3}';" -f @(
+              $CollectionTable.Id[$Row.Name], $Row.Row, $Row.Id, $Row.Hex
+            )))
+      }
+    }
+    If ($Statements.Count -gt 0) {
+      $Statements.Insert(0, 'PRAGMA busy_timeout = 5000;')
+      $Statements.Insert(1, 'BEGIN IMMEDIATE;')
+      $Statements.Add('COMMIT;')
+      $Null = Invoke-NativeCommand -FilePath:$Sqlite `
+        -Operation:'Resolving the collection conditions' `
+        -Argument:@($Database, ($Statements -join ' '))
     }
   }
 
@@ -629,6 +916,69 @@ If ($Ansible.CheckMode) {
   ForEach ($Name In $Remaining) {
     If (-not $DeclaredSet.Contains($Name)) {
       $Survivors.Add($Name)
+    }
+  }
+
+  # Proof against the product rather than against the write: every condition row now carries the
+  # id of a collection that still answers to the declared name, and every scan step comes back out
+  # of the product carrying this console's own profile id. A package the product did not settle on
+  # is already named in the result, so its references are left to that.
+  $Settled = [System.Collections.Generic.HashSet[System.String]]::new(
+    [System.String[]]@($Applied.ToArray() + $Unchanged.ToArray()), [System.StringComparer]::Ordinal
+  )
+
+  If ($ToImport.Count -gt 0 -and $CollectionReference.Count -gt 0) {
+    $ConditionAfter = Read-ConditionRow
+    $CollectionAfter = Get-NameToId -Database:$InventoryDatabase `
+      -Operation:'Reading the collections' `
+      -Statement:'SELECT CollectionId, hex(Name) FROM Collections;'
+    ForEach ($Reference In @($CollectionReference | Where-Object {
+          $Settled.Contains($PSItem.Package)
+        })) {
+      $Resolved = $CollectionTable.Id[$Reference.Collection]
+      $Rows = @($ConditionAfter | Where-Object { $PSItem.Name -ceq $Reference.Collection })
+      If ($Rows.Count -eq 0 -or @($Rows | Where-Object { $PSItem.Id -cne $Resolved }).Count -gt 0) {
+        Throw ('{0} does not gate {1} on the collection ''{2}'' after the import' -f @(
+            $Reference.Package, $Reference.Step, $Reference.Collection
+          ))
+      }
+      If (-not $CollectionAfter.Id.ContainsKey($Reference.Collection) -or
+        $CollectionAfter.Id[$Reference.Collection] -cne $Resolved) {
+        Throw ('{0} gates {1} on collection {2}, which is no longer the collection named ''{3}''' -f @(
+            $Reference.Package, $Reference.Step, $Resolved, $Reference.Collection
+          ))
+      }
+    }
+  }
+
+  If ($ToImport.Count -gt 0 -and $ScanReference.Count -gt 0) {
+    $ProfileAfter = Get-NameToId -Database:$Database -Operation:'Reading the scan profiles' `
+      -Statement:'SELECT InventoryScanProfileId, hex(Name) FROM InventoryScanProfiles;'
+    ForEach ($Reference In @($ScanReference | Where-Object {
+          $Settled.Contains($PSItem.Package)
+        })) {
+      $Resolved = $ProfileTable.Id[$Reference.Profile]
+      If (-not $ProfileAfter.Id.ContainsKey($Reference.Profile) -or
+        $ProfileAfter.Id[$Reference.Profile] -cne $Resolved) {
+        Throw ('{0} runs {1} on scan profile {2}, which is no longer the profile named ''{3}''' -f @(
+            $Reference.Package, $Reference.Step, $Resolved, $Reference.Profile
+          ))
+      }
+    }
+    ForEach ($Name In [System.String[]]@($ScanReference | ForEach-Object Package |
+          Select-Object -Unique | Where-Object { $Settled.Contains($PSItem) })) {
+      $Resolved = $ProfileTable.Id[[System.String]$ScanProfile[$Name]]
+      $Document = [System.Xml.XmlDocument]::new()
+      $Document.LoadXml($Final[$Name])
+      ForEach ($Node In $Document.SelectNodes(
+          "//PackageStep[TypeName='ScanStep']/InventoryScanProfileId")) {
+        If ($Node.GetAttribute('value') -cne $Resolved) {
+          Throw ('{0} runs {1} on scan profile {2}, but the product stored {3}' -f @(
+              $Name, (Get-StepLabel -Node:$Node.ParentNode), $Resolved,
+              $Node.GetAttribute('value')
+            ))
+        }
+      }
     }
   }
 }

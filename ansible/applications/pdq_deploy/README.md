@@ -114,9 +114,23 @@ apart, so `defaults/main.yml` names the definitions the role expects under `pack
 converge stops before touching the host if what is on disk is not what is named. An empty
 `packages:` list is how a caller states that the product holds none.
 
+Two ids inside a definition belong to the console it was exported from rather than to the package:
+the collection a condition gates on, and the scan profile a scan step runs. Both are resolved by
+NAME on arrival and read back afterwards. A condition carries its collection's name as well as the
+id, so the definition already says which collection it means; the role asks PDQ Inventory for that
+collection's local id and writes it, because the import keeps the name and leaves the id null while
+a deployment resolves membership by id alone — until it is written, every deployment of that
+package stops before its first step with "Collection not found". A scan step carries only the
+number, so the profile's name is declared in `scan_profiles:` by package name, and this console's
+own id is written into the document before it is imported. A name that resolves to nothing stops
+the converge, rather than importing a package that would fail at deployment time. A definition that
+names a collection therefore makes PDQ Inventory a precondition for this role, which is why the
+play converges Inventory first.
+
 Adding a package is therefore three things: export it from the console into `files/packages/`,
 allow that exact filename in `.gitignore` (which tracks nothing it has not been told about by
-name), and name it in `packages:`.
+name), and name it in `packages:` — four, when it carries a scan step, which also names the
+profile that step runs in `scan_profiles:`.
 
 ## State
 

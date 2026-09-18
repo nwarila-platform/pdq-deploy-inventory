@@ -833,40 +833,6 @@
 
     #endregion --- [ Process: Apply The Product Settings ] ------------------------------------ #
 
-    #region ------ [ Process: Import The Pinned Variables ] ----------------------------------- #
-    # The pinned application versions cross as ONE map, keyed by each application's Add/Remove
-    # Programs identity (<Publisher>_<DisplayName>) with the value being its version. The shared
-    # script creates or updates only the ones that differ and proves each reads back through its
-    # export-verify pass, so a value the command line silently drops fails the run rather than
-    # passing as applied. Skipped when none are declared, so the disk role plus this role alone
-    # still converges. Runs AS the background service user, whose command line the product answers,
-    # after the service is up. The .ps1 is MATERIALIZED from scripts/ by
-    # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqVariable.ps1.stub).
-
-    - name: 'PROCESS | Import The Pinned Variables'
-      # PERF-HOLD (TD-007): the command line costs 7-18 s PER LAUNCH and this task pays it
-      # once per item -- 30.8 minutes of a converge. Held off until the object moves to the
-      # product's own sqlite3, which answers in 30-39 ms. Import and prune are held TOGETHER:
-      # a prune running without its import would empty the product.
-      when: false
-      become: true
-      become_method: 'ansible.builtin.runas'
-      become_user: "{{ pdq_deploy_running.service_account.name }}"
-      no_log: true
-      vars:
-        ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ pdq_deploy_running.service_account.password }}"
-
-      ansible.windows.win_powershell:
-        depth: 3
-        error_action: 'stop'
-        parameters:
-          Variable: "{{ pdq_deploy_running.variables }}"
-          CliPath: "{{ pdq_deploy_running.cli_path }}"
-        script: "{{ lookup('ansible.builtin.file', 'Set-PdqVariable.ps1') }}"
-
-    #endregion --- [ Process: Import The Pinned Variables ] ----------------------------------- #
-
     #region ------ [ Process: Declare The Credentials ] --------------------------------------- #
     # The list is the whole credential store: one invocation writes every declared row, removes
     # every other row, settles its one default, and proves the complete read-back. It runs for an
@@ -929,18 +895,15 @@
     #region ------ [ Process: Import The Declared Packages ] ---------------------------------- #
     # Each XML file under files/packages/ is a package the product must hold, exported from the
     # console and committed as-is, so the repository states the package rather than describing it.
-    # Its install steps reference the pinned variables imported above by name, which is why this
-    # runs after them. Deploy's own script imports a definition only when the product does not hold
-    # it or holds it differently, and proves the import by exporting the package again, so a
-    # converged host writes nothing and a package the command line silently drops fails the run.
+    # Its install steps reference pinned variables by name. Deploy's own script imports a definition
+    # only when the product does not hold it or holds it differently, and proves the import by
+    # exporting the package again, so a converged host writes nothing and a package the command line
+    # silently drops fails the run.
     # One call per definition, so the recap names the package that changed. The .ps1 is
     # MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role tracks only
     # files/Set-PdqPackage.ps1.stub). This adds and updates; a package no definition declares is
-    # left alone.
-    #
-    # These run while the variables above are still held under TD-007, because the hold is about
-    # COST and the costs are not alike: the command line is paid once per item, and this role
-    # declares one package against forty-five variables. Seconds here, half an hour there.
+    # left alone. The authoritative variable pass follows these tasks because an exported package
+    # carries a variables block; it must have the last word about the variable store.
 
     - name: 'PROCESS | Require Every Declared Definition To Be Present'
       vars:
@@ -1016,26 +979,14 @@
 
     #endregion --- [ Process: Remove The Undeclared Packages ] -------------------------------- #
 
-    #region ------ [ Process: Remove The Undeclared Variables ] ------------------------------- #
-    # The other half of the variable promise. The import earlier put every declared variable in
-    # place; this removes every variable the declaration does not name, so the declared set is the
-    # WHOLE set and a converge states the product's end state rather than a lower bound on it.
-    # There is no switch for that: a role that states an end state and then leaves strangers
-    # standing has not stated the end state. Removal is proved from the product's own export,
-    # re-read after the write, so a delete the database accepted and did not perform fails the run.
-    # It runs AFTER the package tasks deliberately -- an exported package definition carries a
-    # variables block of its own, so the last word about the store must come after the last task
-    # that could touch it -- and unconditionally: an empty declaration declares that the product
-    # holds NO custom variables, which on a fresh install is already true and changes nothing.
-    # The .ps1 is MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role
-    # tracks only files/Remove-PdqVariable.ps1.stub).
+    #region ------ [ Process: Make The Pinned Variables Authoritative ] ----------------------- #
+    # The pinned versions cross as one complete map. One export reads the whole store; the script
+    # writes only differing variables, removes undeclared ones, and re-exports after mutation to
+    # prove the final values and names. It runs after packages because their exported definitions
+    # carry variable snapshots, so this task must have the last word. An empty map means no custom
+    # variables. The .ps1 is materialized from scripts/ by scripts/materialize-role-scripts.sh.
 
-    - name: 'PROCESS | Remove The Undeclared Variables'
-      # PERF-HOLD (TD-007): the command line costs 7-18 s PER LAUNCH and this task pays it
-      # once per item -- 30.8 minutes of a converge. Held off until the object moves to the
-      # product's own sqlite3, which answers in 30-39 ms. Import and prune are held TOGETHER:
-      # a prune running without its import would empty the product.
-      when: false
+    - name: 'PROCESS | Make The Pinned Variables Authoritative'
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_deploy_running.service_account.name }}"
@@ -1048,11 +999,11 @@
         depth: 3
         error_action: 'stop'
         parameters:
-          Name: "{{ pdq_deploy_running.variables | list }}"
+          Variable: "{{ pdq_deploy_running.variables }}"
           CliPath: "{{ pdq_deploy_running.cli_path }}"
-        script: "{{ lookup('ansible.builtin.file', 'Remove-PdqVariable.ps1') }}"
+        script: "{{ lookup('ansible.builtin.file', 'Set-PdqVariable.ps1') }}"
 
-    #endregion --- [ Process: Remove The Undeclared Variables ] ------------------------------- #
+    #endregion --- [ Process: Make The Pinned Variables Authoritative ] ----------------------- #
 
     #region ------ [ Process: Choose The Event Log Severities ] ------------------------------- #
     # Which severities reach the Windows Application event log. A silent install writes no

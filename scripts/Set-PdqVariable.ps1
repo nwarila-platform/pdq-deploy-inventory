@@ -13,10 +13,10 @@
         product's export is the verify oracle -- a variable that does not read back with the
         requested value fails the run.
 
-        Two passes over one reading: decide which variables differ, write only those, then prove
-        every requested variable reads back. Idempotent -- a variable already at its value is left
-        untouched and reported unchanged. This script adds and updates; it never deletes. Removing
-        what the declaration does not name is Remove-PdqVariable.ps1's half of the promise.
+        The map is the complete declaration. One export decides which variables differ and which
+        held names are undeclared. Only those differences are written, every undeclared variable
+        is removed, and a second export after mutation proves the complete state settled. A
+        converged host therefore reads once, writes nothing and reports unchanged.
 
         The export is a FILE only, read whole and deleted at once; it carries no secrets.
 
@@ -36,9 +36,9 @@
         (0 SilentlyContinue, 1 Stop, 2 Continue, 3 Inquire, 4 Ignore, 5 Suspend).
 
     .PARAMETER Variable
-        The desired custom variables as a map of name to value. Names follow the product's own
-        rule -- non-empty, and free of @, $, ( and ) -- and values are strings. A name absent
-        from the map is left as the product holds it; this script adds and updates, never deletes.
+        The complete desired custom-variable map. Names follow the product's own rule --
+        non-empty, and free of @, $, ( and ) -- and values are strings. A name absent from the map
+        is removed. A null value is unmanaged and therefore absent from the desired set.
 
     .PARAMETER CliPath
         Full path to the product's command line (PDQInventory.exe or PDQDeploy.exe). The same
@@ -48,7 +48,8 @@
         .\Set-PdqVariable.ps1 -Variable @{ 'Google-LLC_Google-Chrome' = '147.0.7727.56' } -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
 
     .OUTPUTS
-        One object carrying applied, unchanged, ignored, requested, changed, check_mode and msg.
+        One object carrying applied, removed, unchanged, ignored, requested, changed, check_mode
+        and msg.
 #>
 
 [CmdletBinding(
@@ -121,7 +122,7 @@ New-Variable -Force -Name:'LOG_LEVELS' -Option:('Private', 'ReadOnly') -Value:(
 )
 
 # Export staging: the product writes every custom variable here, this reads it whole and deletes it.
-New-Variable -Force -Name:'EXPORT_PATH' -Option:('Private', 'ReadOnly') -Value:(
+New-Variable -Force -Name:'EXPORT_PATH' -Option:'ReadOnly' -Value:(
   [System.String]'C:\Windows\Temp\pdq-variables-export.xml'
 )
 
@@ -271,7 +272,9 @@ Function Invoke-NativeCommand {
 
 # Validate and normalise the request in one pass: every name must satisfy the product's rule and
 # every value must be a string, so a bad request fails before anything is read or written.
-$Desired = @{}
+$Desired = [System.Collections.Generic.Dictionary[System.String, System.String]]::new(
+  [System.StringComparer]::OrdinalIgnoreCase
+)
 ForEach ($Name In @($Variable.Keys)) {
   $Value = $Variable[$Name]
   If ($Null -eq $Value) {
@@ -289,100 +292,197 @@ ForEach ($Name In @($Variable.Keys)) {
   $Desired[$Text] = [System.String]$Value
 }
 
-# Working state: the verdict lists.
-$Applied = [System.Collections.Generic.List[System.String]]::new()
+# Read the whole variable store in one command-line launch. Exit 3 is a fresh, empty store. A
+# success that writes no file is not empty -- it is a failed read, and a pruner must never confuse
+# those two states.
+Function Get-VariableMap {
+  If (Test-Path -LiteralPath:$EXPORT_PATH) {
+    Remove-Item -LiteralPath:$EXPORT_PATH -Force
+  }
+  $Export = Invoke-NativeCommand -Operation:'Exporting the custom variables' -FilePath:$CliPath `
+    -SuccessExitCode:@(0, 3) -Argument:@('ExportVariables', '-Path', $EXPORT_PATH, '-Overwrite')
+  $Current = [System.Collections.Generic.Dictionary[System.String, System.String]]::new(
+    [System.StringComparer]::OrdinalIgnoreCase
+  )
+  If ($Export.Exit -eq 3) {
+    Return , $Current
+  }
+  If (-not (Test-Path -LiteralPath:$EXPORT_PATH -PathType:'Leaf')) {
+    Throw 'ExportVariables reported success and wrote no file'
+  }
+  Try {
+    $Document = [System.Xml.XmlDocument]::new()
+    $Document.LoadXml((Get-Content -LiteralPath:$EXPORT_PATH -Raw))
+  } Catch {
+    Throw ('Reading the exported variables at ''{0}'': {1}' -f @(
+        $EXPORT_PATH, $PSItem.Exception.GetBaseException().Message
+      ))
+  } Finally {
+    Remove-Item -LiteralPath:$EXPORT_PATH -Force -ErrorAction:'SilentlyContinue'
+  }
+  ForEach ($Node In @($Document.SelectNodes('//CustomVariable'))) {
+    $NameNode = $Node.SelectSingleNode('Name')
+    $ValueNode = $Node.SelectSingleNode('Value')
+    If ($Null -eq $NameNode) {
+      Continue
+    }
+    If ($Current.ContainsKey($NameNode.InnerText)) {
+      Throw ('The product holds more than one variable named {0} (differing only by case); resolve that by hand first' -f $NameNode.InnerText)
+    }
+    $Current.Add(
+      $NameNode.InnerText,
+      $(If ($Null -ne $ValueNode) { $ValueNode.InnerText } Else { [System.String]::Empty })
+    )
+  }
+  Return , $Current
+}
+
+$Initial = Get-VariableMap
+$ToWrite = [System.Collections.Generic.List[System.String]]::new()
 $Unchanged = [System.Collections.Generic.List[System.String]]::new()
+ForEach ($Name In $Desired.Keys) {
+  If ($Initial.ContainsKey($Name) -and $Initial[$Name] -ceq $Desired[$Name]) {
+    $Unchanged.Add($Name)
+  } Else {
+    $ToWrite.Add($Name)
+  }
+}
+$Strangers = @($Initial.Keys | Where-Object { -not $Desired.ContainsKey($PSItem) })
+
+# Prepare the existing, already-ratified prune before any write. The product has no delete verb,
+# so this retains the former pruner's exact transaction: corroborate export names against the
+# vendor table, then bind every delete to the row identity read here. No raw name enters SQL.
+$Sqlite = $Null
+$DatabasePath = $Null
+$RowByName = $Null
+If ($Strangers.Count -gt 0) {
+  $Sqlite = Join-Path -Path (Split-Path -Path $CliPath -Parent) -ChildPath 'sqlite3.exe'
+  If (-not (Test-Path -LiteralPath:$Sqlite -PathType:'Leaf')) {
+    Throw ('The product database tool is not at ''{0}''' -f $Sqlite)
+  }
+  $Info = (Invoke-NativeCommand -Operation:'Reading the product system information' `
+      -FilePath:$CliPath -Argument:@('SystemInfo')).Output
+  $DatabasePath = (
+    @($Info | Where-Object -FilterScript { $PSItem -match '^\s*Database\s*:' }) |
+      Select-Object -First 1
+  ) -replace '^\s*Database\s*:\s*', ''
+  If (-not $DatabasePath) {
+    Throw 'SystemInfo did not report a database path'
+  }
+  If (-not (Test-Path -LiteralPath:$DatabasePath -PathType:'Leaf')) {
+    Throw ('The database is not at {0}' -f $DatabasePath)
+  }
+
+  $RowByName = [System.Collections.Generic.Dictionary[System.String, System.Object]]::new(
+    [System.StringComparer]::Ordinal
+  )
+  ForEach ($Row In (Invoke-NativeCommand -Operation:'Reading the variable table' -FilePath:$Sqlite `
+        -Argument:@($DatabasePath, 'SELECT CustomVariableId, hex(Name) FROM CustomVariables;')).Output) {
+    $Parts = ([System.String]$Row).Split('|')
+    If ($Parts.Count -ne 2 -or $Parts[0] -notmatch '^[0-9]+$' -or $Parts[1] -notmatch '^([0-9A-Fa-f]{2})*$') {
+      Throw ('The variable table did not read back as id and hex name: {0}' -f $Row)
+    }
+    $Bytes = [System.Byte[]]::new($Parts[1].Length / 2)
+    For ($B = 0; $B -lt $Bytes.Length; $B++) {
+      $Bytes[$B] = [System.Convert]::ToByte($Parts[1].Substring($B * 2, 2), 16)
+    }
+    $RowByName.Add(
+      [System.Text.Encoding]::UTF8.GetString($Bytes),
+      [PSCustomObject]@{ Id = $Parts[0]; Hex = $Parts[1] }
+    )
+  }
+  $InitialSet = [System.Collections.Generic.HashSet[System.String]]::new(
+    [System.String[]]$Initial.Keys, [System.StringComparer]::Ordinal
+  )
+  $NotInTable = @($Initial.Keys | Where-Object { -not $RowByName.ContainsKey($PSItem) })
+  $NotInExport = @($RowByName.Keys | Where-Object { -not $InitialSet.Contains($PSItem) })
+  If ($NotInTable.Count -gt 0 -or $NotInExport.Count -gt 0) {
+    Throw ('The export and the variable table disagree (export only: {0}; table only: {1}); refusing to prune a product whose readings disagree' -f `
+      ($NotInTable -join ', '), ($NotInExport -join ', '))
+  }
+}
+
+$Applied = [System.Collections.Generic.List[System.String]]::new()
+$Removed = [System.Collections.Generic.List[System.String]]::new()
 $Ignored = [System.Collections.Generic.List[System.String]]::new()
+$Survivors = [System.Collections.Generic.List[System.String]]::new()
+$Changed = $ToWrite.Count -gt 0 -or $Strangers.Count -gt 0
 
-Try {
-  # Two passes over the same reading code: decide, then prove.
-  For ($Pass = 0; $Pass -lt 2; $Pass++) {
-    If (Test-Path -LiteralPath:$EXPORT_PATH) {
-      Remove-Item -LiteralPath:$EXPORT_PATH -Force
-    }
-    # Export ALL custom variables. Exit 3 means the product holds none yet -- a first run against a
-    # fresh install -- which is an empty current state, not a failure.
-    $Null = Invoke-NativeCommand -Operation:'Exporting the custom variables' -FilePath:$CliPath `
-      -SuccessExitCode:@(0, 3) -Argument:@('ExportVariables', '-Path', $EXPORT_PATH, '-Overwrite')
-
-    # Parse <CustomVariable><Name/><Value/></CustomVariable> into a name -> value map. Explicit
-    # SelectSingleNode, never the property adapter, because a child named 'Name' would otherwise
-    # collide with XmlNode's own Name property.
-    $Current = @{}
-    If (Test-Path -LiteralPath:$EXPORT_PATH) {
-      $Document = [System.Xml.XmlDocument]::new()
-      Try {
-        $Document.LoadXml((Get-Content -LiteralPath:$EXPORT_PATH -Raw))
-      } Catch {
-        Throw ('Reading the exported variables at ''{0}'': {1}' -f @(
-            $EXPORT_PATH, $PSItem.Exception.GetBaseException().Message
-          ))
-      }
-      Remove-Item -LiteralPath:$EXPORT_PATH -Force
-      ForEach ($Node In @($Document.SelectNodes('//CustomVariable'))) {
-        $NameNode = $Node.SelectSingleNode('Name')
-        $ValueNode = $Node.SelectSingleNode('Value')
-        If ($Null -ne $NameNode) {
-          $Current[$NameNode.InnerText] = If ($Null -ne $ValueNode) { $ValueNode.InnerText } Else { [System.String]::Empty }
-        }
-      }
+If ($Ansible.CheckMode) {
+  $Applied.AddRange($ToWrite)
+  $Removed.AddRange([System.String[]]$Strangers)
+} Else {
+  Try {
+    ForEach ($Name In $ToWrite) {
+      $Null = Invoke-NativeCommand -Operation:('Writing the variable ''{0}''' -f $Name) `
+        -FilePath:$CliPath `
+        -Argument:@('CreateCustomVariable', '-Name', $Name, '-Value', $Desired[$Name], '-Force')
     }
 
-    If ($Pass -eq 0) {
-      # Decide first: a variable already at its value is unchanged; everything else queues.
-      $ToWrite = [System.Collections.Generic.List[System.String]]::new()
-      ForEach ($Name In @($Desired.Keys)) {
-        If ($Current.ContainsKey($Name) -and [System.String]$Current[$Name] -ceq [System.String]$Desired[$Name]) {
-          $Unchanged.Add($Name)
-        } Else {
-          $ToWrite.Add($Name)
-        }
+    If ($Strangers.Count -gt 0) {
+      $Statements = [System.Collections.Generic.List[System.String]]::new()
+      $Statements.Add('PRAGMA busy_timeout = 5000;')
+      $Statements.Add('BEGIN IMMEDIATE;')
+      ForEach ($Stranger In $Strangers) {
+        $Statements.Add(("DELETE FROM CustomVariables WHERE CustomVariableId = {0} AND hex(Name) = '{1}';" -f `
+              $RowByName[$Stranger].Id, $RowByName[$Stranger].Hex))
       }
-      If ($Ansible.CheckMode) {
-        $Applied.AddRange($ToWrite)
-        Break
+      $Statements.Add('COMMIT;')
+      $Null = Invoke-NativeCommand -Operation:'Removing the undeclared variables' -FilePath:$Sqlite `
+        -Argument:@($DatabasePath, ($Statements -join ' '))
+    }
+
+    $Final = If ($Changed) { Get-VariableMap } Else { $Initial }
+    ForEach ($Name In $ToWrite) {
+      If ($Final.ContainsKey($Name) -and $Final[$Name] -ceq $Desired[$Name]) {
+        $Applied.Add($Name)
+      } Else {
+        $Ignored.Add($Name)
       }
-      # Create-or-overwrite by name. -Force makes one path serve both a new name and a changed
-      # value; only differing names reach here, so it never rewrites an unchanged variable.
-      ForEach ($Name In $ToWrite) {
-        $Null = Invoke-NativeCommand -Operation:('Writing the variable ''{0}''' -f $Name) `
-          -FilePath:$CliPath `
-          -Argument:@('CreateCustomVariable', '-Name', $Name, '-Value', $Desired[$Name], '-Force')
-      }
-    } Else {
-      # Prove it: anything that does not read back with the requested value was not applied -- the
-      # failure this script exists to surface.
-      ForEach ($Name In @($Desired.Keys)) {
-        If ($Unchanged -contains $Name) {
-          Continue
-        }
-        If ($Current.ContainsKey($Name) -and [System.String]$Current[$Name] -ceq [System.String]$Desired[$Name]) {
-          $Applied.Add($Name)
-        } Else {
+    }
+    ForEach ($Name In $Desired.Keys) {
+      If (-not $Final.ContainsKey($Name) -or $Final[$Name] -cne $Desired[$Name]) {
+        If (-not $Ignored.Contains($Name)) {
           $Ignored.Add($Name)
         }
       }
     }
-  }
-} Finally {
-  If (Test-Path -LiteralPath:$EXPORT_PATH) {
-    Remove-Item -LiteralPath:$EXPORT_PATH -Force -ErrorAction:'SilentlyContinue'
+    ForEach ($Name In $Strangers) {
+      If ($Final.ContainsKey($Name)) {
+        $Survivors.Add($Name)
+      } Else {
+        $Removed.Add($Name)
+      }
+    }
+    ForEach ($Name In $Final.Keys) {
+      If (-not $Desired.ContainsKey($Name) -and -not $Survivors.Contains($Name)) {
+        $Survivors.Add($Name)
+      }
+    }
+  } Finally {
+    If (Test-Path -LiteralPath:$EXPORT_PATH) {
+      Remove-Item -LiteralPath:$EXPORT_PATH -Force -ErrorAction:'SilentlyContinue'
+    }
   }
 }
 
 $Result = [PSCustomObject]@{
   applied    = [System.String[]]$Applied
-  changed    = [System.Boolean]($Applied.Count -gt 0)
+  changed    = [System.Boolean]$Changed
   check_mode = [System.Boolean]$Ansible.CheckMode
   ignored    = [System.String[]]$Ignored
   msg        = If ($Ansible.CheckMode) {
-    '{0} would be applied, {1} already correct' -f $Applied.Count, $Unchanged.Count
-  } ElseIf ($Ignored.Count -gt 0) {
-    'The product accepted but did not apply: {0}' -f ($Ignored -join ', ')
+    'Would apply: {0}; would remove: {1}' -f ($Applied -join ', '), ($Removed -join ', ')
+  } ElseIf ($Ignored.Count -gt 0 -or $Survivors.Count -gt 0) {
+    'The declared variable set did not settle (missing or different: {0}; undeclared still held: {1})' -f ($Ignored -join ', '), ($Survivors -join ', ')
+  } ElseIf (-not $Changed) {
+    'No variable changes; {0} already correct' -f $Unchanged.Count
   } Else {
-    '{0} applied, {1} already correct' -f $Applied.Count, $Unchanged.Count
+    'Applied: {0}; removed: {1}; already correct: {2}' -f ($Applied -join ', '), ($Removed -join ', '), $Unchanged.Count
   }
+  removed    = [System.String[]]$Removed
   requested  = [System.Int32]$Desired.Count
+  survivors  = [System.String[]]$Survivors
   unchanged  = [System.String[]]$Unchanged
 }
 
@@ -396,13 +496,13 @@ $Ansible.Result = $Result
 
 # The result is published either way, so a caller can see WHICH variables were ignored before the
 # failure is raised.
-If ($Result.ignored.Count -gt 0) {
+If ($Result.ignored.Count -gt 0 -or $Result.survivors.Count -gt 0) {
   $Ansible.Failed = $True
 }
 
 If ($StandaloneRun) {
   $Ansible.Result | ConvertTo-Json -Depth:4
-  If ($Result.ignored.Count -gt 0) {
+  If ($Result.ignored.Count -gt 0 -or $Result.survivors.Count -gt 0) {
     Exit 2
   }
 }

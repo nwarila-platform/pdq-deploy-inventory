@@ -388,6 +388,10 @@ pdq_deploy_defaults:
   #
   # An EMPTY list has the full blast radius of that promise: after the presence assertion confirms
   # files/packages/ is also empty, the reconcile removes EVERY package the product holds.
+  #
+  # A package carries TWO console-specific ids: a collection condition's InventoryCollectionId
+  # and a Scan step's InventoryScanProfileId. Set-PdqPackage.ps1 resolves both from NAME to the
+  # local console's id at import; ids embedded in exported definitions are not portable.
   packages:
     - '7-Zip - Install.xml'
     - 'Google Chrome - Install.xml'

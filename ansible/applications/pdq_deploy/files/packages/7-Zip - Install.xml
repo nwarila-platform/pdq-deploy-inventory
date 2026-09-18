@@ -27,10 +27,20 @@
       <CopyMode>Default</CopyMode>
       <DelayedApprovalTimeSpan>7.00:00:00</DelayedApprovalTimeSpan>
       <DownloadApprovalMode>Manual</DownloadApprovalMode>
-      <InventoryScanProfileId value="null" />
+      <InventoryScanProfileId value="2" />
       <IsDownloadApprovalModeInherited value="true" />
       <ScanAfterDeployment value="true" />
       <Steps type="list">
+        <PackageStep>
+          <InventoryScanProfileId value="2" />
+          <Conditions type="list" />
+          <ErrorMode>StopDeploymentFail</ErrorMode>
+          <Title>Scan: Applications</Title>
+          <TypeName>ScanStep</TypeName>
+          <IsEnabled value="true" />
+          <IsPostStep value="false" />
+          <IsPreStep value="false" />
+        </PackageStep>
         <PowerShellStep>
           <CustomCommandLine></CustomCommandLine>
           <Files>$(Repository)\~resources\Start-Uninstaller.ps1</Files>

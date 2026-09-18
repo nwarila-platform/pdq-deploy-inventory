@@ -142,8 +142,8 @@ and Pester-tested once under `scripts/` and materialized into the role by
 `scripts/materialize-role-scripts.sh` (the role tracks only the `.ps1.stub` markers). The role uses
 `Get-InstalledSoftware.ps1`, `Set-PdqSetting.ps1`, `Set-PdqVariable.ps1`,
 `Set-PdqCredential.ps1`, and `Set-PdqRegistration.ps1`, all shared with `pdq_inventory`, plus
-Deploy's own `Set-RepositoryAcl.ps1` for the package directory and `Set-PdqPackage.ps1` /
-`Remove-PdqPackage.ps1` for the packages.
+Deploy's own `Set-RepositoryAcl.ps1` for the package directory and `Set-PdqPackage.ps1` for the
+complete package set.
 
 ## Verification
 

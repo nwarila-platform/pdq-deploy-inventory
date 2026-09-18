@@ -4,17 +4,17 @@
 
 <#
     .SYNOPSIS
-        Applies one PDQ Deploy package definition and proves it took.
+        Makes the complete set of PDQ Deploy package definitions authoritative.
 
     .DESCRIPTION
-        The definition IS the declaration: the exported XML the caller hands over is the package
-        the product is required to hold, and the package's own Name element says which one, so
-        nothing names it twice.
+        The definitions ARE the declaration: each exported XML document names one package the
+        product is required to hold. Anything else is removed.
 
-        The product's export is both the comparison and the verify oracle. The package is imported
-        only when the product does not hold it or holds it differently, so a converged host writes
-        nothing and reports unchanged. After a write the package is exported again and must match,
-        so a package the product accepted and did not store is reported and fails the run.
+        The product's export is both the comparison and the verify oracle. Every declared name is
+        read in one ExportPackages launch, passing each name as a separate argument and a staging
+        directory for the resulting files. Only definitions that differ are imported, every
+        undeclared package is removed, and the complete set is read back after mutation. A
+        converged host pays for one batched export and writes nothing.
 
         Comparison ignores the byte-order mark, the line-ending style and trailing whitespace: an
         export is otherwise byte-for-byte what was imported (measured 2026-08-25 against PDQ Deploy
@@ -22,11 +22,17 @@
         definition through Ansible strips trailing whitespace on the way in, which is why the
         product's copy is trimmed to match rather than compared to the byte.
 
-        This script adds and updates; it never deletes, so a package the product holds but no
-        definition declares is left alone.
+        ExportPackages exit 1 is a successful partial read only when every missing requested name
+        has its matching not-found error and every other request wrote a valid package file. Exit
+        3 is the successful empty answer when none of the requested packages exists. Presence is
+        decided from each file's own Name element; filenames are presentation only.
 
-        Both files it touches are staging only, written and read whole inside the scratch directory
-        the module hands over and removes; a package definition carries no secrets.
+        A package that a declared definition refers to by name cannot be pruned accidentally. The
+        command line's forced delete bypasses its own nested-step prompt, so an undeclared but
+        referenced package stops the run before any mutation.
+
+        Staging files are written and read whole inside the scratch directory the module hands over
+        and removes; a package definition carries no secrets.
 
         One process stage (read -> act -> verify -> one result); shipped by the org three-file
         convention (the scripts/ pair plus each role's .stub).
@@ -44,18 +50,19 @@
         (0 SilentlyContinue, 1 Stop, 2 Continue, 3 Inquire, 4 Ignore, 5 Suspend).
 
     .PARAMETER Definition
-        The package definition, as the product's own export writes it. The caller reads one
-        definition file and hands over its text; this script owns every file it needs from there.
+        The complete set of package definitions, as the product's own export writes them. Required
+        even when empty, so owning no packages is an explicit declaration.
 
     .PARAMETER CliPath
         Full path to PDQDeploy.exe. Packages are a Deploy concept; Inventory has no equivalent, so
         this script serves the one product.
 
     .EXAMPLE
-        .\Set-PdqPackage.ps1 -Definition (Get-Content -Raw '.\Google Chrome - Install.xml') -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
+        .\Set-PdqPackage.ps1 -Definition @((Get-Content -Raw '.\Google Chrome - Install.xml')) -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe'
 
     .OUTPUTS
-        One object carrying name, definition, changed, check_mode, ignored and msg.
+        One object carrying applied, removed, unchanged, ignored, survivors, changed, check_mode
+        and msg.
 #>
 
 [CmdletBinding(
@@ -97,8 +104,8 @@ Param (
     ValueFromPipeline = $False,
     ValueFromPipelineByPropertyName = $False
   )]
-  [ValidateNotNullOrEmpty()]
-  [System.String]
+  [AllowEmptyCollection()]
+  [System.String[]]
   $Definition,
 
   [Parameter(
@@ -258,9 +265,10 @@ Function ConvertTo-ComparablePackage {
   Return $Document.OuterXml
 }
 
-# The ONE place a native command is run, so every failure names the operation that failed instead
+# The ordinary path for native commands, so every failure names the operation that failed instead
 # of surfacing the program's bare text, and every exit code is judged against a policy the caller
-# states rather than a convention the reader has to infer.
+# states rather than a convention the reader has to infer. ExportPackages has a separate reader
+# below because its stderr lines are part of the partial-success contract and must remain distinct.
 #
 # ErrorActionPreference is lowered across the call, and that part is load-bearing. Under Windows
 # PowerShell 5.1 a native command's stderr is raised as a TERMINATING error while the preference is
@@ -327,108 +335,328 @@ Function Invoke-NativeCommand {
   Return [PSCustomObject]@{ Exit = [System.Int32]$Exit; Output = $Written.ToArray() }
 }
 
-# Reading the package is the same act whether deciding or proving: export it by name and hand back
-# what the product holds. Exit 3 is the product's "no packages found matching the specified
-# name(s)", which is an empty current state rather than a failure; every other non-zero exit is a
-# failure to READ, and a read that failed must never be mistaken for a product holding nothing.
-Function Get-PackageText {
-  Param ([System.String] $Name)
-  $Staged = Join-Path -Path:$Ansible.Tmpdir -ChildPath:'pdq-package-export.xml'
-  If (Test-Path -LiteralPath:$Staged) {
-    Remove-Item -LiteralPath:$Staged -Force
-  }
-
-  $Export = Invoke-NativeCommand -FilePath:$CliPath -Operation:('Exporting the package ''{0}''' -f $Name) -SuccessExitCode:@(0, 3) -Argument:@(
-    'ExportPackages', '-Name', $Name, '-Path', $Staged, '-Overwrite'
-  )
-  If ($Export.Exit -eq 3) {
-    Return [System.String]::Empty
-  }
-  If (-not (Test-Path -LiteralPath:$Staged)) {
-    Throw ('Exporting the package ''{0}'': the command line reported success but wrote no file' -f $Name)
-  }
-
+# ExportPackages is unusual: exit 1 can be a complete, trustworthy read when every failure is the
+# ordinary not-found answer for a requested package. The shared helper deliberately turns stderr
+# into one warning, so this reader preserves its lines for the caller to account for individually.
+Function Invoke-PackageExport {
+  Param ([System.String[]] $Argument)
+  $Previous = $ErrorActionPreference
   Try {
-    $Text = Get-Content -LiteralPath:$Staged -Raw
+    $ErrorActionPreference = 'Continue'
+    $Captured = & $CliPath @Argument 2>&1
+    $Exit = $LASTEXITCODE
   } Catch {
-    Throw ('Exporting the package ''{0}'': its export at ''{1}'' could not be read ({2})' -f @(
-        $Name, $Staged, $PSItem.Exception.Message
-      ))
+    Throw [System.Management.Automation.RuntimeException]::new(
+      ('Exporting the declared packages: ''{0}'' could not be run ({1})' -f `
+        $CliPath, $PSItem.Exception.Message),
+      $PSItem.Exception
+    )
+  } Finally {
+    $ErrorActionPreference = $Previous
   }
-  Remove-Item -LiteralPath:$Staged -Force
-  Return (ConvertTo-ComparableText -Text:$Text)
+
+  $Said = [System.Collections.Generic.List[System.String]]::new()
+  ForEach ($Line In $Captured) {
+    If ($Line -is [System.Management.Automation.ErrorRecord]) {
+      $Said.Add(([System.String]$Line).Trim())
+    }
+  }
+  Return [PSCustomObject]@{
+    Error = $Said.ToArray()
+    Exit  = [System.Int32]$Exit
+  }
 }
 
-# Read the declaration first, so a malformed definition or an unaddressable name fails before
-# anything is written.
-$Declared = ConvertTo-ComparableText -Text:$Definition
-$Document = [System.Xml.XmlDocument]::new()
-Try {
-  $Document.LoadXml($Declared)
-} Catch {
-  Throw ('The definition is not valid XML ({0})' -f $PSItem.Exception.GetBaseException().Message)
-}
-# Explicit SelectSingleNode, never the property adapter, because a child named 'Name' would
-# otherwise collide with XmlNode's own Name property.
-$NameNode = $Document.SelectSingleNode('/AdminArsenal.Export/Package/Name')
-If ($Null -eq $NameNode -or [System.String]::IsNullOrWhiteSpace($NameNode.InnerText)) {
-  Throw 'The definition does not name a package'
-}
-$Name = [System.String]$NameNode.InnerText
-$DeclaredKey = ConvertTo-ComparablePackage -Text:$Declared
-If (-not $NAME_PATTERN.IsMatch($Name)) {
-  Throw ('{0} cannot be addressed by the command line, which reads *, ? and , as selection syntax' -f $Name)
-}
+# Read every declared name in one launch. Separate name arguments and a directory are required for
+# a batch. Each file's Name element decides which request it answers; filenames decide nothing.
+Function Get-PackageMap {
+  Param ([System.String[]] $Name)
+  $Current = [System.Collections.Generic.Dictionary[System.String, System.String]]::new(
+    [System.StringComparer]::Ordinal
+  )
+  If ($Name.Count -eq 0) {
+    Return , $Current
+  }
 
-$Changed = $False
-$Ignored = $False
-
-If ((ConvertTo-ComparablePackage -Text:(Get-PackageText -Name:$Name)) -cne $DeclaredKey) {
-  If ($Ansible.CheckMode) {
-    $Changed = $True
-  } Else {
-    # The command line imports a FILE, so the declaration becomes one. -Overwrite makes one path
-    # serve both a package the product does not hold and one it holds differently; a package that
-    # already matches never reaches here, so it never rewrites a match.
-    $Staged = Join-Path -Path:$Ansible.Tmpdir -ChildPath:'pdq-package-import.xml'
-    Try {
-      Set-Content -LiteralPath:$Staged -Value:$Declared -Encoding:'utf8' -NoNewline
-    } Catch {
-      Throw ('Importing the package ''{0}'': it could not be staged at ''{1}'' ({2})' -f @(
-          $Name, $Staged, $PSItem.Exception.Message
+  $Requested = [System.Collections.Generic.HashSet[System.String]]::new(
+    $Name, [System.StringComparer]::Ordinal
+  )
+  $Staged = Join-Path -Path:$Ansible.Tmpdir -ChildPath:'pdq-package-export'
+  If (Test-Path -LiteralPath:$Staged) {
+    Remove-Item -LiteralPath:$Staged -Recurse -Force
+  }
+  $Null = New-Item -ItemType:'Directory' -Path:$Staged
+  Try {
+    [System.String[]]$Argument = @('ExportPackages', '-Name') + $Name + @(
+      '-Path', $Staged, '-Overwrite'
+    )
+    $Export = Invoke-PackageExport -Argument:$Argument
+    Switch ($Export.Exit) {
+      2 { Throw 'ExportPackages was cancelled' }
+      4 { Throw 'ExportPackages skipped one or more requested packages because an export file already existed' }
+    }
+    If (@(0, 1, 3) -notcontains $Export.Exit) {
+      Throw ('ExportPackages exited {0}{1}' -f @(
+          $Export.Exit
+          $(If ($Export.Error.Count -gt 0) { ' -- ' + ($Export.Error -join '; ') } Else { '' })
         ))
     }
-    $Null = Invoke-NativeCommand -FilePath:$CliPath -Operation:('Importing the package ''{0}''' -f $Name) -Argument:@(
-      'ImportPackages', '-Path', $Staged, '-Overwrite'
-    )
-    Remove-Item -LiteralPath:$Staged -Force
 
-    # The product was told to write, so the host changed whatever the next read says. Reporting the
-    # change is not a claim that it is correct -- that is the read below, taken from the product
-    # rather than from the import's own report, because a package the product accepted and did not
-    # store would otherwise pass as applied.
-    $Changed = $True
-    $Ignored = (ConvertTo-ComparablePackage -Text:(Get-PackageText -Name:$Name)) -cne $DeclaredKey
+    ForEach ($File In @(Get-ChildItem -LiteralPath:$Staged -File)) {
+      Try {
+        $Text = ConvertTo-ComparableText -Text:(Get-Content -LiteralPath:$File.FullName -Raw)
+        $Document = [System.Xml.XmlDocument]::new()
+        $Document.LoadXml($Text)
+      } Catch {
+        Throw ('Reading the package export at ''{0}'': {1}' -f @(
+            $File.FullName, $PSItem.Exception.GetBaseException().Message
+          ))
+      }
+      If (@($Document.SelectNodes('/AdminArsenal.Export/Package')).Count -ne 1) {
+        Throw ('The package export at ''{0}'' does not carry exactly one package' -f $File.FullName)
+      }
+      $NameNode = $Document.SelectSingleNode('/AdminArsenal.Export/Package/Name')
+      If ($Null -eq $NameNode -or -not $Requested.Contains($NameNode.InnerText)) {
+        Throw ('The package export at ''{0}'' does not answer a requested name' -f $File.FullName)
+      }
+      If ($Current.ContainsKey($NameNode.InnerText)) {
+        Throw ('ExportPackages wrote more than one definition for {0}' -f $NameNode.InnerText)
+      }
+      $Current.Add($NameNode.InnerText, $Text)
+    }
+
+    $Missing = [System.String[]]@($Name | Where-Object { -not $Current.ContainsKey($PSItem) })
+    $ExpectedError = [System.Collections.Generic.HashSet[System.String]]::new(
+      [System.StringComparer]::Ordinal
+    )
+    ForEach ($MissingName In $Missing) {
+      $Null = $ExpectedError.Add(('Error: Package "{0}" not found.' -f $MissingName))
+    }
+    $Accounted = [System.Collections.Generic.HashSet[System.String]]::new(
+      [System.StringComparer]::Ordinal
+    )
+    $UnexpectedError = [System.Collections.Generic.List[System.String]]::new()
+    ForEach ($ErrorLine In $Export.Error) {
+      If (-not $ExpectedError.Contains($ErrorLine) -or -not $Accounted.Add($ErrorLine)) {
+        $UnexpectedError.Add($ErrorLine)
+      }
+    }
+    $Unreported = [System.String[]]@($ExpectedError | Where-Object {
+        -not $Accounted.Contains($PSItem)
+      })
+
+    Switch ($Export.Exit) {
+      0 {
+        If ($Missing.Count -gt 0 -or $Export.Error.Count -gt 0) {
+          Throw ('ExportPackages reported success for {0} requested package(s) but wrote {1} export file(s){2}' -f @(
+              $Requested.Count
+              $Current.Count
+              $(If ($Export.Error.Count -gt 0) { ' -- ' + ($Export.Error -join '; ') } Else { '' })
+            ))
+        }
+      }
+      1 {
+        If ($Missing.Count -eq 0 -or $Unreported.Count -gt 0 -or $UnexpectedError.Count -gt 0) {
+          Throw ('ExportPackages exited 1 without an exact not-found error for every missing package{0}' -f `
+            $(If ($Export.Error.Count -gt 0) { ' -- ' + ($Export.Error -join '; ') } Else { '' }))
+        }
+      }
+      3 {
+        If ($Current.Count -gt 0 -or $UnexpectedError.Count -gt 0) {
+          Throw ('ExportPackages exited 3 but did not report an empty package set{0}' -f `
+            $(If ($Export.Error.Count -gt 0) { ' -- ' + ($Export.Error -join '; ') } Else { '' }))
+        }
+      }
+    }
+  } Finally {
+    Remove-Item -LiteralPath:$Staged -Recurse -Force -ErrorAction:'SilentlyContinue'
+  }
+  Return , $Current
+}
+
+# What the product holds, read the only way it offers: one bare name per line. Only line endings
+# are stripped; trimming the name itself could cause a later delete to address a different package.
+Function Get-HeldPackageName {
+  $Listing = Invoke-NativeCommand -FilePath:$CliPath -Operation:'Listing the packages' `
+    -Argument:@('GetPackageNames')
+  $Names = [System.Collections.Generic.List[System.String]]::new()
+  ForEach ($Line In $Listing.Output) {
+    $Text = ([System.String]$Line).TrimEnd([System.Char]13, [System.Char]10)
+    If ($Text.Length -gt 0) {
+      $Names.Add($Text)
+    }
+  }
+  Return , $Names.ToArray()
+}
+
+# Parse the whole declaration before any product read. Names are exact and unique, every package
+# is addressable, and every leaf value is retained for the nested-package deletion safeguard.
+$Declared = [System.Collections.Generic.Dictionary[System.String, System.String]]::new(
+  [System.StringComparer]::Ordinal
+)
+$DeclaredKey = [System.Collections.Generic.Dictionary[System.String, System.String]]::new(
+  [System.StringComparer]::Ordinal
+)
+$DeclaredName = [System.Collections.Generic.List[System.String]]::new()
+$Referenced = [System.Collections.Generic.HashSet[System.String]]::new(
+  [System.StringComparer]::Ordinal
+)
+ForEach ($Text In $Definition) {
+  $Normal = ConvertTo-ComparableText -Text:$Text
+  $Document = [System.Xml.XmlDocument]::new()
+  Try {
+    $Document.LoadXml($Normal)
+  } Catch {
+    Throw ('A definition is not valid XML ({0})' -f $PSItem.Exception.GetBaseException().Message)
+  }
+  If (@($Document.SelectNodes('/AdminArsenal.Export/Package')).Count -ne 1) {
+    Throw 'A definition must carry exactly one package'
+  }
+  $NameNode = $Document.SelectSingleNode('/AdminArsenal.Export/Package/Name')
+  If ($Null -eq $NameNode -or [System.String]::IsNullOrWhiteSpace($NameNode.InnerText)) {
+    Throw 'A definition does not name a package'
+  }
+  $Name = [System.String]$NameNode.InnerText
+  If (-not $NAME_PATTERN.IsMatch($Name)) {
+    Throw ('{0} cannot be addressed by the command line, which reads *, ? and , as selection syntax' -f $Name)
+  }
+  If ($Declared.ContainsKey($Name)) {
+    Throw ('{0} is declared more than once; two definitions cannot own one name' -f $Name)
+  }
+  $Declared.Add($Name, $Normal)
+  $DeclaredKey.Add($Name, (ConvertTo-ComparablePackage -Text:$Normal))
+  $DeclaredName.Add($Name)
+  ForEach ($Node In $Document.SelectNodes('//*')) {
+    If ($Node.ChildNodes.Count -eq 1 -and
+      $Node.FirstChild.NodeType -eq [System.Xml.XmlNodeType]::Text) {
+      $Null = $Referenced.Add($Node.InnerText)
+    }
+  }
+}
+
+$Held = Get-HeldPackageName
+$DeclaredSet = [System.Collections.Generic.HashSet[System.String]]::new(
+  $DeclaredName, [System.StringComparer]::Ordinal
+)
+$Extra = [System.String[]]@($Held | Where-Object { -not $DeclaredSet.Contains($PSItem) })
+
+# Judge every delete before any import or delete. Forced deletion bypasses the product's own
+# nested-package prompt, so the declaration has to prove that no survivor refers to the target.
+ForEach ($Name In $Extra) {
+  If (-not $NAME_PATTERN.IsMatch($Name)) {
+    Throw ('{0} cannot be addressed by the command line, which reads *, ? and , as selection syntax' -f $Name)
+  }
+  If ($Referenced.Contains($Name)) {
+    Throw ('{0} is not declared, but a declared package refers to it; declare it or stop referring to it' -f $Name)
+  }
+}
+
+$Initial = Get-PackageMap -Name:$DeclaredName.ToArray()
+$ToImport = [System.Collections.Generic.List[System.String]]::new()
+$InitiallyUnchanged = [System.Collections.Generic.List[System.String]]::new()
+ForEach ($Name In $DeclaredName) {
+  If ($Initial.ContainsKey($Name) -and
+    (ConvertTo-ComparablePackage -Text:$Initial[$Name]) -ceq $DeclaredKey[$Name]) {
+    $InitiallyUnchanged.Add($Name)
+  } Else {
+    $ToImport.Add($Name)
+  }
+}
+
+$Applied = [System.Collections.Generic.List[System.String]]::new()
+$Removed = [System.Collections.Generic.List[System.String]]::new()
+$Unchanged = [System.Collections.Generic.List[System.String]]::new()
+$Ignored = [System.Collections.Generic.List[System.String]]::new()
+$Survivors = [System.Collections.Generic.List[System.String]]::new()
+$Changed = $ToImport.Count -gt 0 -or $Extra.Count -gt 0
+
+If ($Ansible.CheckMode) {
+  $Applied.AddRange($ToImport.ToArray())
+  $Removed.AddRange($Extra)
+  $Unchanged.AddRange($InitiallyUnchanged.ToArray())
+} Else {
+  ForEach ($Name In $ToImport) {
+    $Staged = Join-Path -Path:$Ansible.Tmpdir -ChildPath:'pdq-package-import.xml'
+    Try {
+      Try {
+        Set-Content -LiteralPath:$Staged -Value:$Declared[$Name] -Encoding:'utf8' -NoNewline
+      } Catch {
+        Throw ('Importing the package ''{0}'': it could not be staged at ''{1}'' ({2})' -f @(
+            $Name, $Staged, $PSItem.Exception.Message
+          ))
+      }
+      $Null = Invoke-NativeCommand -FilePath:$CliPath `
+        -Operation:('Importing the package ''{0}''' -f $Name) `
+        -Argument:@('ImportPackages', '-Path', $Staged, '-Overwrite')
+    } Finally {
+      Remove-Item -LiteralPath:$Staged -Force -ErrorAction:'SilentlyContinue'
+    }
+  }
+
+  ForEach ($Name In $Extra) {
+    $Null = Invoke-NativeCommand -FilePath:$CliPath `
+      -Operation:('Removing the package ''{0}''' -f $Name) `
+      -Argument:@('DeletePackages', '-Name', $Name, '-Force')
+  }
+
+  $Final = If ($Changed) {
+    Get-PackageMap -Name:$DeclaredName.ToArray()
+  } Else {
+    $Initial
+  }
+  $Remaining = If ($Changed) { Get-HeldPackageName } Else { $Held }
+  $RemainingSet = [System.Collections.Generic.HashSet[System.String]]::new(
+    [System.String[]]$Remaining, [System.StringComparer]::Ordinal
+  )
+
+  ForEach ($Name In $DeclaredName) {
+    If ($RemainingSet.Contains($Name) -and $Final.ContainsKey($Name) -and
+      (ConvertTo-ComparablePackage -Text:$Final[$Name]) -ceq $DeclaredKey[$Name]) {
+      If ($ToImport.Contains($Name)) {
+        $Applied.Add($Name)
+      } Else {
+        $Unchanged.Add($Name)
+      }
+    } Else {
+      $Ignored.Add($Name)
+    }
+  }
+  ForEach ($Name In $Extra) {
+    If (-not $RemainingSet.Contains($Name)) {
+      $Removed.Add($Name)
+    }
+  }
+  ForEach ($Name In $Remaining) {
+    If (-not $DeclaredSet.Contains($Name)) {
+      $Survivors.Add($Name)
+    }
   }
 }
 
 $Result = [PSCustomObject]@{
+  applied    = [System.String[]]$Applied
   changed    = [System.Boolean]$Changed
   check_mode = [System.Boolean]$Ansible.CheckMode
-  # The declaration itself, so the caller can hand the complete set to the pruning step: deciding
-  # what is safe to delete needs the definitions, not just their names.
-  definition = [System.String]$Declared
-  ignored    = [System.Boolean]$Ignored
-  msg        = If ($Ignored) {
-    '{0} does not read back as declared after import' -f $Name
+  declared   = [System.Int32]$Declared.Count
+  ignored    = [System.String[]]$Ignored
+  msg        = If ($Ansible.CheckMode) {
+    'Would apply: {0}; would remove: {1}; already correct: {2}' -f @(
+      ($Applied -join ', '), ($Removed -join ', '), $Unchanged.Count
+    )
+  } ElseIf ($Ignored.Count -gt 0 -or $Survivors.Count -gt 0) {
+    'The declared package set did not settle (missing or different: {0}; undeclared still held: {1})' -f @(
+      ($Ignored -join ', '), ($Survivors -join ', ')
+    )
   } ElseIf (-not $Changed) {
-    '{0} is already correct' -f $Name
-  } ElseIf ($Ansible.CheckMode) {
-    '{0} would be applied' -f $Name
+    'No package changes; {0} already correct' -f $Unchanged.Count
   } Else {
-    '{0} applied' -f $Name
+    'Applied: {0}; removed: {1}; already correct: {2}' -f @(
+      ($Applied -join ', '), ($Removed -join ', '), $Unchanged.Count
+    )
   }
-  name       = $Name
+  removed    = [System.String[]]$Removed
+  survivors  = [System.String[]]$Survivors
+  unchanged  = [System.String[]]$Unchanged
 }
 
 #endregion --- [ Main ] ---------------------------------------------------------------------- #
@@ -439,15 +667,14 @@ Write-Debug -Message:'Entering Stage: Output'
 $Ansible.Changed = $Result.changed
 $Ansible.Result = $Result
 
-# The result is published either way, so a caller can see which package failed to read back, and
-# that the host was written to, before the failure is raised.
-If ($Result.ignored) {
+# The result is published either way, so a caller can see every package that failed to settle.
+If ($Result.ignored.Count -gt 0 -or $Result.survivors.Count -gt 0) {
   $Ansible.Failed = $True
 }
 
 If ($StandaloneRun) {
   $Ansible.Result | ConvertTo-Json -Depth:4
-  If ($Result.ignored) {
+  If ($Result.ignored.Count -gt 0 -or $Result.survivors.Count -gt 0) {
     Exit 2
   }
 }

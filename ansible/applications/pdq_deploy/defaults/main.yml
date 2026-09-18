@@ -376,8 +376,12 @@ pdq_deploy_defaults:
   # definition never allowlisted in .gitignore, a partial checkout).
   #
   # Naming them twice is the point: the files say what to install, this list says what must be
-  # there, and a converge where they disagree stops instead of deleting. An EMPTY list is how a
-  # caller states that the product holds no packages at all.
+  # there, and a converge where they disagree stops instead of deleting. The complete definition
+  # set crosses to one reconcile: one batched export reads the declared names, only differing
+  # definitions are imported, every undeclared package is removed, and mutations are read back.
+  #
+  # An EMPTY list has the full blast radius of that promise: after the presence assertion confirms
+  # files/packages/ is also empty, the reconcile removes EVERY package the product holds.
   packages:
     - 'Google Chrome - Install.xml'
 

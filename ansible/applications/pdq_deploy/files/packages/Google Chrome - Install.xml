@@ -27,20 +27,10 @@
       <CopyMode>Default</CopyMode>
       <DelayedApprovalTimeSpan>7.00:00:00</DelayedApprovalTimeSpan>
       <DownloadApprovalMode>Manual</DownloadApprovalMode>
-      <InventoryScanProfileId value="2" />
+      <InventoryScanProfileId value="null" />
       <IsDownloadApprovalModeInherited value="true" />
-      <ScanAfterDeployment value="true" />
+      <ScanAfterDeployment value="false" />
       <Steps type="list">
-        <PackageStep>
-          <InventoryScanProfileId value="2" />
-          <Conditions type="list" />
-          <ErrorMode>StopDeploymentFail</ErrorMode>
-          <Title>Scan: Applications</Title>
-          <TypeName>ScanStep</TypeName>
-          <IsEnabled value="true" />
-          <IsPostStep value="false" />
-          <IsPreStep value="false" />
-        </PackageStep>
         <PowerShellStep>
           <CustomCommandLine></CustomCommandLine>
           <Files>$(Repository)\~resources\Start-Uninstaller.ps1</Files>
@@ -156,6 +146,23 @@ Exit 0</Script>
           <IsPostStep value="false" />
           <IsPreStep value="false" />
         </PowerShellStep>
+        <PackageStep>
+          <InventoryScanProfileId value="2" />
+          <Conditions type="list">
+            <PackageStepCondition>
+              <ConditionMode>IsMember</ConditionMode>
+              <InventoryCollectionId value="null" />
+              <InventoryCollectionName>Required: Google Chrome</InventoryCollectionName>
+              <TypeName>Collection</TypeName>
+            </PackageStepCondition>
+          </Conditions>
+          <ErrorMode>StopDeploymentFail</ErrorMode>
+          <Title>Scan: Applications</Title>
+          <TypeName>ScanStep</TypeName>
+          <IsEnabled value="true" />
+          <IsPostStep value="false" />
+          <IsPreStep value="false" />
+        </PackageStep>
       </Steps>
       <Timeout value="60" />
       <UseCustomTimeout value="false" />

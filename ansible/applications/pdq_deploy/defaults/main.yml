@@ -89,6 +89,12 @@ pdq_deploy_defaults:
   # fixed location as the command line above, and fixed for the same reason.
   service_path: 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeployService.exe'
 
+  # PDQ Inventory's command line, which is asked where the collections are kept. Deploy holds the
+  # condition, Inventory holds the collection it names, and only Inventory can say which id that
+  # is. Read only when a declared package gates a step on a collection, and fixed for the same
+  # reason the two paths above are.
+  inventory_cli_path: 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
+
   # The pinned custom variables to import, keyed by each application's Add/Remove Programs identity
   # (<Publisher>_<DisplayName>, Title Case, special characters spelled out) with the value being its
   # version. Supplied by the playbook, which hands the SAME map to both products. The declaration
@@ -376,9 +382,21 @@ pdq_deploy_defaults:
   # definition never allowlisted in .gitignore, a partial checkout).
   #
   # Naming them twice is the point: the files say what to install, this list says what must be
-  # there, and a converge where they disagree stops instead of deleting. An EMPTY list is how a
-  # caller states that the product holds no packages at all.
+  # there, and a converge where they disagree stops instead of deleting. The complete definition
+  # set crosses to one reconcile: one batched export reads the declared names, only differing
+  # definitions are imported, every undeclared package is removed, and mutations are read back.
+  #
+  # An EMPTY list has the full blast radius of that promise: after the presence assertion confirms
+  # files/packages/ is also empty, the reconcile removes EVERY package the product holds.
   packages:
     - 'Google Chrome - Install.xml'
+
+  # The scan profile every scan step in a package runs, by PACKAGE name -- the product's own
+  # identity for it, which is what the definition carries and the list above only spells as a file.
+  # A step's export names its profile by a NUMBER that the exporting console minted, so the name is
+  # the only portable half of the reference and it is declared here. A package with no scan step
+  # has no entry; a scan step whose package is not named here stops the converge, because a step
+  # pointed at another console's profile scans the wrong thing rather than failing.
+  scan_profiles: {}
 
   #endregion --- [ Declared packages ] ------------------------------------------------------- #

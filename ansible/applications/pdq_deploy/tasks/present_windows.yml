@@ -892,18 +892,17 @@
 
     #endregion --- [ Process: Declare The Credentials ] --------------------------------------- #
 
-    #region ------ [ Process: Import The Declared Packages ] ---------------------------------- #
-    # Each XML file under files/packages/ is a package the product must hold, exported from the
-    # console and committed as-is, so the repository states the package rather than describing it.
-    # Its install steps reference pinned variables by name. Deploy's own script imports a definition
-    # only when the product does not hold it or holds it differently, and proves the import by
-    # exporting the package again, so a converged host writes nothing and a package the command line
-    # silently drops fails the run.
-    # One call per definition, so the recap names the package that changed. The .ps1 is
-    # MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role tracks only
-    # files/Set-PdqPackage.ps1.stub). This adds and updates; a package no definition declares is
-    # left alone. The authoritative variable pass follows these tasks because an exported package
-    # carries a variables block; it must have the last word about the variable store.
+    #region ------ [ Process: Make The Declared Packages Authoritative ] --------------------- #
+    # The XML files are the complete package set. One script reads every declared name in one
+    # ExportPackages launch, imports only differing definitions, removes every undeclared package,
+    # then reads the set back after mutation. Its result names every applied or removed package.
+    # A definition also carries two ids that belong to the console it was exported from -- the
+    # collection a condition gates on and the profile a scan step runs -- so the script resolves
+    # both from their names on arrival, which is why it is given the scan profile declaration and
+    # the other product's command line.
+    # The authoritative variable pass follows because an exported package carries variable
+    # snapshots; the variable store must have the last word. The .ps1 is materialized from scripts/
+    # by scripts/materialize-role-scripts.sh.
 
     - name: 'PROCESS | Require Every Declared Definition To Be Present'
       vars:
@@ -920,46 +919,7 @@
         that:
           - __found__ == (pdq_deploy_running.packages | sort)
 
-    - name: 'PROCESS | Import The Declared Packages'
-      become: true
-      become_method: 'ansible.builtin.runas'
-      become_user: "{{ pdq_deploy_running.service_account.name }}"
-      loop: "{{ query('ansible.builtin.fileglob', __package_glob__) | sort }}"
-      loop_control:
-        label: "{{ item | basename }}"
-      no_log: true
-      register: '__pdq_deploy_packages__'
-      vars:
-        ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ pdq_deploy_running.service_account.password }}"
-
-      ansible.windows.win_powershell:
-        depth: 3
-        error_action: 'stop'
-        parameters:
-          Definition: "{{ lookup('ansible.builtin.file', item) }}"
-          CliPath: "{{ pdq_deploy_running.cli_path }}"
-        script: "{{ lookup('ansible.builtin.file', 'Set-PdqPackage.ps1') }}"
-
-    #endregion --- [ Process: Import The Declared Packages ] ---------------------------------- #
-
-    #region ------ [ Process: Remove The Undeclared Packages ] -------------------------------- #
-    # The definitions are the whole declaration, so a package the product holds that none of them
-    # names is drift and goes. There is no switch for that: a role that states an end state and
-    # then leaves strangers standing has not stated the end state, and an operator reading
-    # files/packages/ is entitled to read it as the list.
-    #
-    # Read that way, declaring no definitions declares that the product holds no packages, and this
-    # empties it -- which is why the task above refuses to proceed when the files on disk are not
-    # the ones the role declares.
-    #
-    # The definitions come from the import above rather than from the filenames, so the package's
-    # own <Name> decides what counts as declared -- the same field the import matched on -- and the
-    # script can see what a declared package refers to, so it never deletes a package that one of
-    # them needs. It proves the removal by listing the packages again, so a delete the command line
-    # accepted and did not perform fails the run.
-
-    - name: 'PROCESS | Remove The Undeclared Packages'
+    - name: 'PROCESS | Make The Declared Packages Authoritative'
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_deploy_running.service_account.name }}"
@@ -973,11 +933,14 @@
         error_action: 'stop'
         parameters:
           Definition: >-
-            {{ __pdq_deploy_packages__.results | map(attribute='result.definition') | list }}
+            {{ query('ansible.builtin.file',
+                     *(query('ansible.builtin.fileglob', __package_glob__) | sort)) }}
           CliPath: "{{ pdq_deploy_running.cli_path }}"
-        script: "{{ lookup('ansible.builtin.file', 'Remove-PdqPackage.ps1') }}"
+          InventoryCliPath: "{{ pdq_deploy_running.inventory_cli_path }}"
+          ScanProfile: "{{ pdq_deploy_running.scan_profiles }}"
+        script: "{{ lookup('ansible.builtin.file', 'Set-PdqPackage.ps1') }}"
 
-    #endregion --- [ Process: Remove The Undeclared Packages ] -------------------------------- #
+    #endregion --- [ Process: Make The Declared Packages Authoritative ] --------------------- #
 
     #region ------ [ Process: Make The Pinned Variables Authoritative ] ----------------------- #
     # The pinned versions cross as one complete map. One export reads the whole store; the script

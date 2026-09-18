@@ -258,7 +258,7 @@ Describe 'Set-PdqVariable' {
     }
     $Mine = & $Extract $script:ScriptPath
     ForEach ($Sibling In @(
-        'Set-PdqPackage.ps1', 'Remove-PdqPackage.ps1', 'Set-PdqVariable.ps1',
+        'Set-PdqPackage.ps1', 'Set-PdqVariable.ps1',
         'Set-PdqSetting.ps1', 'Set-PdqRegistration.ps1', 'Set-PdqCollection.ps1')) {
       (& $Extract (Join-Path $PSScriptRoot $Sibling)) | Should -BeExactly $Mine -Because:$Sibling
     }

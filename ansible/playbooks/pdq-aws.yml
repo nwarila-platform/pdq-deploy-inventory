@@ -3,7 +3,8 @@
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
 # Brings the EPHEMERAL EC2 instance from "the API says it exists" to a domain-joined host with
-# its data disks provisioned. The PDQ Deploy and Inventory roles follow, one product at a time.
+# its data disks provisioned. The two product roles follow, one product at a time, Inventory
+# first -- see the third play, where that order is a dependency rather than a preference.
 #
 # Runs from the COMPOSED tree only: the workflow overlays this repository onto the pinned
 # ansible-framework and runs this against a dynamic EC2 inventory filtered to one run.
@@ -236,6 +237,16 @@
 # One all-in-one Central Server: both products co-located, in the same operating mode, under one
 # background service user. They are separate roles because each is separately installable, not
 # because they are separately deployable.
+#
+# INVENTORY CONVERGES FIRST, and the order is a dependency rather than a preference. A Deploy
+# package can gate a step on an Inventory COLLECTION; the condition travels by the collection's
+# NAME but a deployment evaluates it by the id THIS console minted, so the package import resolves
+# the name and writes that id. A collection that does not exist yet resolves to nothing, and the
+# import stops rather than leaving a package that fails every deployment before its first step.
+#
+# Nothing runs the other way. Inventory's one reference into Deploy's volume -- the .NET installer
+# it hands a target that lacks the framework -- is a path it STORES; the file is read at scan
+# time, long after both roles have converged, so it does not have to be there when the path is.
 
 - name: 'PLAY | PDQ Deploy And Inventory (all-in-one Central Server, ephemeral AWS)'
   hosts: 'pdq_servers'
@@ -329,76 +340,6 @@
 
   #region ------ [ Roles ] -------------------------------------------------------------------- #
   roles:
-
-    #region ------ [ Roles: PDQ Deploy ] ------------------------------------------------------ #
-    - role: 'pdq_deploy'
-      vars:
-        pdq_deploy:
-
-          # The pinned application versions, defined once in the play vars above and shared with
-          # pdq_inventory: both products import the SAME map into their own variable stores.
-          variables: "{{ pdq_variables }}"
-
-          # What is actually being installed, stated where a reader can see it. The digest is
-          # verified on the GUEST immediately before the installer executes, so a changed object
-          # with an unchanged pin stops the deployment.
-          # Each artifact names its own bucket: executables live in the application repository,
-          # licences stay beside the other deployment material. Both carry the account id, so they
-          # are composed here rather than defaulted in the role.
-          installer:
-            bucket: "{{ pdq_repository_bucket }}"
-            version: '20.1.8.0'
-            sha256: '856dbe3dd4544d4b9ae1f382ee51f2a5f25f41714c462fa4afcff9743cc85eb9'
-
-          # The Windows account the background service runs as, declared the way every account
-          # here is: the account, and the password that opens it. '.\' is how Windows
-          # spells "local to this machine". Both products share this ONE service identity. This
-          # declaration configures service logon only; Inventory separately declares the same
-          # local account as its fallback credential, while Deploy's credential store is empty.
-          service_account:
-            password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-password.txt') }}"
-
-          # The licence lookup verifies the stored bytes against the pinned digest before passing
-          # the decoded value to the role. The licence and its shared registration email are never
-          # written to disk.
-          license_key: >-
-            {{ lookup('secret', pdq_secret_prefix ~ '/pdq-deploy-license-key.lic',
-                      'b0564515695a9d78f9bd0f18ee01107ae1c0462ee3982da1ef6305f7bf77da68') }}
-          license_email: >-
-            {{ lookup('secret', pdq_secret_prefix ~ '/pdq-deploy-license-email.txt') }}
-
-          # Deploy holds no target credential of its own. A deployment asks Inventory for the
-          # target's scan credential, which Inventory assigns from the target's OU sync container.
-          credentials: []
-
-          # The database grows without bound, so it goes on the volume provisioned for it rather
-          # than the system disk. Only the letter belongs here: which disk this host dedicates to
-          # PDQ is a property of the host, and the folder beneath it is the role's business.
-          database:
-            drive: 'E'
-
-          # The repository is shared out over the network, so it gets its own volume: package
-          # files are written by administrators and read by every deployment.
-          #
-          # Its contents come from the application repository bucket -- the same bucket the
-          # installer above is fetched from, because an installer PDQ deploys and an installer PDQ
-          # runs are the same kind of object. The role writes a sync script carrying these two
-          # values so an administrator can pull new content down without a deployment.
-          repository:
-            drive: "{{ pdq_repository_drive }}"
-            directory: "{{ pdq_repository_directory }}"
-            bucket: "{{ pdq_repository_bucket }}"
-            region: "{{ aws_region }}"
-
-          # The server answers consoles on the address this host actually holds, rather than on
-          # everything it happens to be attached to. It comes from the inventory because the
-          # address is assigned at launch and differs on every rebuild. The PUBLIC address is not
-          # usable here: AWS translates it, so the interface only ever sees the private one, and
-          # binding to an address the host does not own fails at service start.
-          server:
-            listen_addresses: [ "{{ aws_private_ip_address }}" ]
-
-    #endregion --- [ Roles: PDQ Deploy ] ------------------------------------------------------ #
 
     #region ------ [ Roles: PDQ Inventory ] --------------------------------------------------- #
     - role: 'pdq_inventory'
@@ -506,6 +447,76 @@
             listen_addresses: [ "{{ aws_private_ip_address }}" ]
 
     #endregion --- [ Roles: PDQ Inventory ] --------------------------------------------------- #
+
+    #region ------ [ Roles: PDQ Deploy ] ------------------------------------------------------ #
+    - role: 'pdq_deploy'
+      vars:
+        pdq_deploy:
+
+          # The pinned application versions, defined once in the play vars above and shared with
+          # pdq_inventory: both products import the SAME map into their own variable stores.
+          variables: "{{ pdq_variables }}"
+
+          # What is actually being installed, stated where a reader can see it. The digest is
+          # verified on the GUEST immediately before the installer executes, so a changed object
+          # with an unchanged pin stops the deployment.
+          # Each artifact names its own bucket: executables live in the application repository,
+          # licences stay beside the other deployment material. Both carry the account id, so they
+          # are composed here rather than defaulted in the role.
+          installer:
+            bucket: "{{ pdq_repository_bucket }}"
+            version: '20.1.8.0'
+            sha256: '856dbe3dd4544d4b9ae1f382ee51f2a5f25f41714c462fa4afcff9743cc85eb9'
+
+          # The Windows account the background service runs as, declared the way every account
+          # here is: the account, and the password that opens it. '.\' is how Windows
+          # spells "local to this machine". Both products share this ONE service identity. This
+          # declaration configures service logon only; Inventory separately declares the same
+          # local account as its fallback credential, while Deploy's credential store is empty.
+          service_account:
+            password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-password.txt') }}"
+
+          # The licence lookup verifies the stored bytes against the pinned digest before passing
+          # the decoded value to the role. The licence and its shared registration email are never
+          # written to disk.
+          license_key: >-
+            {{ lookup('secret', pdq_secret_prefix ~ '/pdq-deploy-license-key.lic',
+                      'b0564515695a9d78f9bd0f18ee01107ae1c0462ee3982da1ef6305f7bf77da68') }}
+          license_email: >-
+            {{ lookup('secret', pdq_secret_prefix ~ '/pdq-deploy-license-email.txt') }}
+
+          # Deploy holds no target credential of its own. A deployment asks Inventory for the
+          # target's scan credential, which Inventory assigns from the target's OU sync container.
+          credentials: []
+
+          # The database grows without bound, so it goes on the volume provisioned for it rather
+          # than the system disk. Only the letter belongs here: which disk this host dedicates to
+          # PDQ is a property of the host, and the folder beneath it is the role's business.
+          database:
+            drive: 'E'
+
+          # The repository is shared out over the network, so it gets its own volume: package
+          # files are written by administrators and read by every deployment.
+          #
+          # Its contents come from the application repository bucket -- the same bucket the
+          # installer above is fetched from, because an installer PDQ deploys and an installer PDQ
+          # runs are the same kind of object. The role writes a sync script carrying these two
+          # values so an administrator can pull new content down without a deployment.
+          repository:
+            drive: "{{ pdq_repository_drive }}"
+            directory: "{{ pdq_repository_directory }}"
+            bucket: "{{ pdq_repository_bucket }}"
+            region: "{{ aws_region }}"
+
+          # The server answers consoles on the address this host actually holds, rather than on
+          # everything it happens to be attached to. It comes from the inventory because the
+          # address is assigned at launch and differs on every rebuild. The PUBLIC address is not
+          # usable here: AWS translates it, so the interface only ever sees the private one, and
+          # binding to an address the host does not own fails at service start.
+          server:
+            listen_addresses: [ "{{ aws_private_ip_address }}" ]
+
+    #endregion --- [ Roles: PDQ Deploy ] ------------------------------------------------------ #
 
   #endregion --- [ Roles ] -------------------------------------------------------------------- #
 

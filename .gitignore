@@ -110,7 +110,6 @@
 !/ansible/applications/pdq_deploy/files/Set-PdqCredential.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqRegistration.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqPackage.ps1.stub
-!/ansible/applications/pdq_deploy/files/Remove-PdqPackage.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-PdqVariable.ps1.stub
 !/ansible/applications/pdq_deploy/handlers/
 !/ansible/applications/pdq_deploy/handlers/main.yml
@@ -192,8 +191,6 @@
 !/scripts/Set-PdqVariable.pester.ps1
 !/scripts/Set-PdqPackage.ps1
 !/scripts/Set-PdqPackage.pester.ps1
-!/scripts/Remove-PdqPackage.ps1
-!/scripts/Remove-PdqPackage.pester.ps1
 !/scripts/Set-PdqCollection.ps1
 !/scripts/Set-PdqCollection.pester.ps1
 !/scripts/Set-PdqCredential.ps1

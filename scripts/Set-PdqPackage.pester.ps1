@@ -53,11 +53,17 @@ BeforeAll {
       [System.String] $Detail = 'Silent install',
       [System.String] $Dependency = '',
       [System.String] $Collection = '',
-      [System.String] $ScanProfileId = ''
+      [System.String] $ScanProfileId = '',
+      [System.String] $NestedTarget = '',
+      [System.String] $NestedPath = '',
+      [System.Int32] $NestedCount = 1,
+      [System.String] $MinimumVersion = '15.0'
     )
     $Lines = [System.Collections.Generic.List[System.String]]::new()
     $Lines.Add('<?xml version="1.0" encoding="utf-8"?>')
-    $Lines.Add('<AdminArsenal.Export Code="PDQDeploy" Name="PDQ Deploy" Version="20.1.8.0">')
+    $Lines.Add(('<AdminArsenal.Export Code="PDQDeploy" Name="PDQ Deploy" ' +
+        'Version="20.1.8.0" MinimumVersion="{0}">' -f `
+        [System.Security.SecurityElement]::Escape($MinimumVersion)))
     $Lines.Add('  <Package>')
     $Lines.Add(('    <Name>{0}</Name>' -f [System.Security.SecurityElement]::Escape($Name)))
     $Lines.Add(('    <Description>{0}</Description>' -f `
@@ -68,9 +74,30 @@ BeforeAll {
             [System.Security.SecurityElement]::Escape($Dependency)))
       $Lines.Add('    </PackageStep>')
     }
-    If ($Collection.Length -gt 0 -or $ScanProfileId.Length -gt 0) {
+    If ($Collection.Length -gt 0 -or $ScanProfileId.Length -gt 0 -or
+      $NestedTarget.Length -gt 0) {
       $Lines.Add('    <PackageDefinition name="Definition">')
       $Lines.Add('      <Steps type="list">')
+      If ($NestedTarget.Length -gt 0) {
+        $TargetPath = If ($PSBoundParameters.ContainsKey('NestedPath')) {
+          $NestedPath
+        } Else {
+          $NestedTarget
+        }
+        For ($Nested = 0; $Nested -lt $NestedCount; $Nested++) {
+          $Lines.Add('        <NestedPackageStep>')
+          $Lines.Add('          <TargetPackageId value="null" />')
+          $Lines.Add(('          <TargetPackageName>{0}</TargetPackageName>' -f `
+                [System.Security.SecurityElement]::Escape($NestedTarget)))
+          $Lines.Add(('          <TargetPackagePath>{0}</TargetPackagePath>' -f `
+                [System.Security.SecurityElement]::Escape($TargetPath)))
+          $Lines.Add('          <UseNestedPackageConditions value="true" />')
+          $Lines.Add(('          <Title>Call: {0}</Title>' -f `
+                [System.Security.SecurityElement]::Escape($NestedTarget)))
+          $Lines.Add('          <TypeName>NestedPackage</TypeName>')
+          $Lines.Add('        </NestedPackageStep>')
+        }
+      }
       If ($Collection.Length -gt 0) {
         $Lines.Add('        <InstallStep>')
         $Lines.Add(('          <Title>Install: {0}</Title>' -f `
@@ -157,9 +184,12 @@ Describe 'Set-PdqPackage' {
     $global:FakeExportOmissions = @()
     $global:FakeExportExtraError = @()
     $global:FakeExportSuppressMissingError = $False
+    $global:FakeDropNestedReference = @()
+    $global:FakeKeepOneNestedReference = @()
     $global:FakeCliCalls = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeCliArgumentCalls = [System.Collections.Generic.List[System.Object]]::new()
     $global:FakeExportBatches = [System.Collections.Generic.List[System.Object]]::new()
+    $global:FakeImportedNames = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeDeployDatabase = $script:DeployDatabase
     $global:FakeInventoryDatabase = $script:InventoryDatabase
     $global:FakeCollectionIds = @{ 'Servers' = '7'; 'Workstations' = '9' }
@@ -236,11 +266,34 @@ Describe 'Set-PdqPackage' {
               # carry null, so a converge has to agree with the resolved id either way.
               $Text = $global:FakePackages[$Name]
               ForEach ($Row In @($global:FakeConditionRows | Where-Object {
-                    $PSItem.Package -ceq $Name -and $PSItem.Id.Length -gt 0
+                    $PSItem.Package -ceq $Name -and $Null -ne $PSItem.Id
                   })) {
                 $Text = $Text.Replace('<InventoryCollectionId value="null" />',
                   ('<InventoryCollectionId value="{0}" />' -f $Row.Id))
               }
+              $ExportDocument = [System.Xml.XmlDocument]::new()
+              $ExportDocument.PreserveWhitespace = $True
+              $ExportDocument.LoadXml($Text.TrimStart([System.Char]0xFEFF))
+              $Included = [System.Collections.Generic.HashSet[System.String]]::new(
+                [System.StringComparer]::Ordinal
+              )
+              ForEach ($Target In $ExportDocument.SelectNodes(
+                  '/AdminArsenal.Export/Package[1]//NestedPackageStep/TargetPackagePath')) {
+                If ($global:FakePackages.ContainsKey($Target.InnerText) -and
+                  $Included.Add($Target.InnerText)) {
+                  $DependencyDocument = [System.Xml.XmlDocument]::new()
+                  $DependencyDocument.LoadXml(
+                    $global:FakePackages[$Target.InnerText].TrimStart([System.Char]0xFEFF)
+                  )
+                  $DependencyPackage = $DependencyDocument.SelectSingleNode(
+                    '/AdminArsenal.Export/Package'
+                  )
+                  $Null = $ExportDocument.DocumentElement.AppendChild(
+                    $ExportDocument.ImportNode($DependencyPackage, $True)
+                  )
+                }
+              }
+              $Text = $ExportDocument.OuterXml
               Set-Content -LiteralPath:(Join-Path $Staged $FileName) `
                 -Value:$Text -NoNewline -WhatIf:$False
               $Written.Add($FileName)
@@ -284,7 +337,24 @@ Describe 'Set-PdqPackage' {
           $Document = [System.Xml.XmlDocument]::new()
           $Document.LoadXml($Text.TrimStart([System.Char]0xFEFF))
           $Name = $Document.SelectSingleNode('/AdminArsenal.Export/Package/Name').InnerText
+          $global:FakeImportedNames.Add($Name)
           If ($global:FakeImportExit -eq 0 -and $global:FakeIgnored -notcontains $Name) {
+            $Nested = 0
+            ForEach ($Node In @($Document.SelectNodes(
+                  "//NestedPackageStep[TypeName='NestedPackage']"))) {
+              $Target = $Node.SelectSingleNode('TargetPackagePath')
+              If ($global:FakeDropNestedReference -contains $Name -or
+                ($global:FakeKeepOneNestedReference -contains $Name -and $Nested -gt 0) -or
+                $Null -eq $Target -or
+                -not $global:FakePackages.ContainsKey($Target.InnerText)) {
+                $Null = $Node.ParentNode.RemoveChild($Node)
+              } Else {
+                $Node.SelectSingleNode('TargetPackageId').SetAttribute('value', '900')
+                $Node.SelectSingleNode('TargetPackageName').InnerText = $Target.InnerText
+              }
+              $Nested++
+            }
+            $Text = $Document.OuterXml
             $global:FakePackages[$Name] = $Text
             # Measured: the import keeps the condition's collection NAME and leaves its id null.
             ForEach ($Stale In @($global:FakeConditionRows | Where-Object {
@@ -296,7 +366,8 @@ Describe 'Set-PdqPackage' {
                 "//PackageStepCondition[TypeName='Collection']/InventoryCollectionName")) {
               If ($Node.InnerText.Length -gt 0) {
                 $global:FakeConditionRows.Add([PSCustomObject]@{
-                    Id      = ''
+                    Current = $True
+                    Id      = $Null
                     Name    = $Node.InnerText
                     Package = $Name
                     Row     = [System.String]$global:FakeNextConditionRow
@@ -350,24 +421,39 @@ Describe 'Set-PdqPackage' {
         ForEach ($Entry In $global:FakeScanProfileIds.GetEnumerator()) {
           Write-Output ('{0}|{1}' -f $Entry.Value, (Get-FakeHex -Text:$Entry.Key))
         }
-      } ElseIf ($Sql -like 'SELECT rowid*') {
+      } ElseIf ($Sql -like 'SELECT c.rowid*') {
         If ($Database -cne $global:FakeDeployDatabase) {
           Throw ('the collection conditions were read from {0}' -f $Database)
         }
-        ForEach ($Row In $global:FakeConditionRows) {
-          Write-Output ('{0}|{1}|{2}' -f $Row.Row, $Row.Id, (Get-FakeHex -Text:$Row.Name))
+        ForEach ($Row In @($global:FakeConditionRows | Where-Object Current)) {
+          Write-Output ('{0}|{1}|{2}|{3}' -f @(
+              $Row.Row, $Row.Id, (Get-FakeHex -Text:$Row.Name),
+              (Get-FakeHex -Text:$Row.Package)
+            ))
         }
       } ElseIf ($Sql -like '*UPDATE PackageStepConditionCollection*') {
-        ForEach ($Match In [Regex]::Matches($Sql, ('SET InventoryCollectionId = ([0-9]+) ' +
-              "WHERE rowid = ([0-9]+) AND IFNULL\(InventoryCollectionId, ''\) = '([0-9]*)' " +
-              "AND hex\(IFNULL\(InventoryCollectionName, ''\)\) = '([0-9A-F]*)'"))) {
+        $Pattern = ('SET InventoryCollectionId = (?<New>[0-9]+) ' +
+          'WHERE rowid = (?<Row>[0-9]+) AND ' +
+          "IFNULL\((?<IdExpression>CAST\(InventoryCollectionId AS TEXT\)|" +
+          "InventoryCollectionId), ''\) = '(?<Old>[0-9]*)' " +
+          "AND hex\(IFNULL\(InventoryCollectionName, ''\)\) = '(?<Name>[0-9A-F]*)'")
+        ForEach ($Match In [Regex]::Matches($Sql, $Pattern)) {
           $Row = @($global:FakeConditionRows | Where-Object {
-              $PSItem.Row -ceq $Match.Groups[2].Value -and
-              $PSItem.Id -ceq $Match.Groups[3].Value -and
-              (Get-FakeHex -Text:$PSItem.Name) -ceq $Match.Groups[4].Value
+              $StoredIdMatches = If ($Match.Groups['IdExpression'].Value -ceq
+                'CAST(InventoryCollectionId AS TEXT)') {
+                If ($Null -eq $PSItem.Id) {
+                  $Match.Groups['Old'].Value.Length -eq 0
+                } Else {
+                  ([System.String]$PSItem.Id) -ceq $Match.Groups['Old'].Value
+                }
+              } Else {
+                $Null -eq $PSItem.Id -and $Match.Groups['Old'].Value.Length -eq 0
+              }
+              $PSItem.Row -ceq $Match.Groups['Row'].Value -and $StoredIdMatches -and
+              (Get-FakeHex -Text:$PSItem.Name) -ceq $Match.Groups['Name'].Value
             } | Select-Object -First 1)
           If ($Row.Count -eq 1 -and $global:FakeUnwritableCondition -notcontains $Row[0].Name) {
-            $Row[0].Id = $Match.Groups[1].Value
+            $Row[0].Id = [System.Int64]$Match.Groups['New'].Value
           }
         }
       } Else {
@@ -392,8 +478,9 @@ Describe 'Set-PdqPackage' {
   AfterAll {
     Remove-Variable -Name:'FakePackages', 'FakeIgnored', 'FakeUndeletable', 'FakeImportExit',
       'FakeDeleteExit', 'FakeListExit', 'FakeExportExit', 'FakeExportOmissions',
-      'FakeExportExtraError', 'FakeExportSuppressMissingError', 'FakeCliCalls',
-      'FakeCliArgumentCalls', 'FakeExportBatches', 'FakeDeployDatabase',
+      'FakeExportExtraError', 'FakeExportSuppressMissingError', 'FakeDropNestedReference',
+      'FakeKeepOneNestedReference', 'FakeCliCalls', 'FakeCliArgumentCalls',
+      'FakeExportBatches', 'FakeImportedNames', 'FakeDeployDatabase',
       'FakeInventoryDatabase', 'FakeCollectionIds', 'FakeScanProfileIds', 'FakeConditionRows',
       'FakeNextConditionRow', 'FakeUnwritableCondition', 'FakeSqliteCalls' -Scope:'Global' `
       -Force -ErrorAction:'SilentlyContinue'
@@ -431,6 +518,152 @@ Describe 'Set-PdqPackage' {
         } | Should -Throw '*selection syntax*'
       }
       $global:FakeCliCalls.Count | Should -Be 0
+    }
+  }
+
+  Context 'nested package references' {
+    It 'refuses an empty target path before reading the product' {
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -NestedTarget:$script:Firefox `
+            -NestedPath:''
+          New-PackageText -Name:$script:Firefox
+        )
+      } | Should -Throw ("*$($script:Chrome) carries the step 'Call: $($script:Firefox)' with " +
+        'an empty TargetPackagePath*')
+      $global:FakeCliCalls.Count | Should -Be 0
+    }
+
+    It 'refuses a target no declaration names even when the product holds it' {
+      $Target = 'Held But Undeclared'
+      $global:FakePackages.Add($Target, (New-PackageText -Name:$Target))
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -NestedTarget:$Target
+        )
+      } | Should -Throw ("*$($script:Chrome) carries the step 'Call: $Target', which nests " +
+        "'$Target', but no declaration names that target*")
+      $global:FakeCliCalls.Count | Should -Be 0
+    }
+
+    It 'refuses a reference cycle and names the cycle' {
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -NestedTarget:$script:Firefox
+          New-PackageText -Name:$script:Firefox -NestedTarget:$script:Chrome
+        )
+      } | Should -Throw ("*$($script:Chrome) -> $($script:Firefox) -> $($script:Chrome)*")
+      $global:FakeCliCalls.Count | Should -Be 0
+    }
+
+    It 'imports a target before the package that nests it' {
+      $global:FakePackages.Clear()
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:@(
+        New-PackageText -Name:$script:Chrome -NestedTarget:$script:Firefox
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+
+      $Context.Failed | Should -BeFalse
+      $global:FakeImportedNames | Should -Be @($script:Firefox, $script:Chrome)
+      $Context.Result.applied | Should -Be @($script:Chrome, $script:Firefox)
+    }
+
+    It 'ignores a nested target id and name but compares its path' {
+      $Declaration = New-PackageText -Name:$script:Chrome -NestedTarget:$script:Firefox
+      $global:FakePackages[$script:Chrome] = $Declaration.
+        Replace('<TargetPackageId value="null" />', '<TargetPackageId value="83" />').
+        Replace(
+          ('<TargetPackageName>{0}</TargetPackageName>' -f $script:Firefox),
+          '<TargetPackageName>Console-derived name</TargetPackageName>'
+        )
+      $First = New-AnsibleContext
+      Invoke-Reconcile -Definition:@(
+        $Declaration
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+
+      $First.Changed | Should -BeFalse
+      $global:FakeImportedNames.Count | Should -Be 0
+
+      $global:FakePackages[$script:Chrome] = $global:FakePackages[$script:Chrome].Replace(
+        ('<TargetPackagePath>{0}</TargetPackagePath>' -f $script:Firefox),
+        '<TargetPackagePath>Wrong stored path</TargetPackagePath>'
+      )
+      $Second = New-AnsibleContext
+      Invoke-Reconcile -Definition:@(
+        $Declaration
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+
+      $Second.Changed | Should -BeTrue
+      $global:FakeImportedNames | Should -Be @($script:Chrome)
+    }
+
+    It 'reads a multi-package export as the requested first package' {
+      $global:FakePackages[$script:Chrome] = New-PackageText -Name:$script:Chrome `
+        -NestedTarget:$script:Firefox
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:@(
+        New-PackageText -Name:$script:Chrome -NestedTarget:$script:Firefox
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+
+      $Context.Changed | Should -BeFalse
+      $global:FakeExportBatches.Count | Should -Be 1
+      $global:FakeImportedNames.Count | Should -Be 0
+    }
+
+    It 'collects the package, step and target and fails when the product drops the reference' {
+      $global:FakeDropNestedReference = @($script:Chrome)
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -NestedTarget:$script:Firefox
+          New-PackageText -Name:$script:Firefox
+        )
+      } | Should -Throw ("*$($script:Chrome) does not carry the step 'Call: " +
+        "$($script:Firefox)' targeting '$($script:Firefox)' after the import*")
+      $global:FakeImportedNames | Should -Be @($script:Chrome)
+    }
+
+    It 'fails naming a duplicated reference when the product retains only one' {
+      $global:FakeKeepOneNestedReference = @($script:Chrome)
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -NestedTarget:$script:Firefox -NestedCount:2
+          New-PackageText -Name:$script:Firefox
+        )
+      } | Should -Throw ("*$($script:Chrome) does not carry the step 'Call: " +
+        "$($script:Firefox)' targeting '$($script:Firefox)' after the import*")
+      $global:FakeImportedNames | Should -Be @($script:Chrome)
+    }
+
+    It 'leaves a fully converged nested package unchanged without importing it' {
+      $Declaration = New-PackageText -Name:$script:Chrome -NestedTarget:$script:Firefox
+      $global:FakePackages[$script:Chrome] = $Declaration
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:@(
+        $Declaration
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+
+      $Context.Failed | Should -BeFalse
+      $Context.Changed | Should -BeFalse
+      $Context.Result.unchanged | Should -Be @($script:Chrome, $script:Firefox)
+      $global:FakeImportedNames.Count | Should -Be 0
+    }
+
+    It 'compares equal when only the export envelope MinimumVersion differs' {
+      $global:FakePackages[$script:Chrome] = New-PackageText -Name:$script:Chrome `
+        -MinimumVersion:'17.0'
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:@(
+        New-PackageText -Name:$script:Chrome -MinimumVersion:'15.0'
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+
+      $Context.Changed | Should -BeFalse
+      $global:FakeImportedNames.Count | Should -Be 0
     }
   }
 
@@ -721,7 +954,7 @@ Describe 'Set-PdqPackage' {
 
       $First.Failed | Should -BeFalse
       $First.Result.applied | Should -Be @($script:Chrome)
-      @($global:FakeConditionRows | ForEach-Object Id) | Should -Be @('7')
+      @($global:FakeConditionRows | ForEach-Object Id) | Should -Be @(7)
       @($global:FakeSqliteCalls -like '*UPDATE PackageStepConditionCollection*').Count |
         Should -Be 1
 
@@ -731,6 +964,109 @@ Describe 'Set-PdqPackage' {
       $Second.Changed | Should -BeFalse
       @($global:FakeSqliteCalls -like '*UPDATE PackageStepConditionCollection*').Count |
         Should -Be 1
+    }
+
+    It 'repairs an integer-stored moved collection id and binds the write as text' {
+      $Definition = @(
+        New-PackageText -Name:$script:Chrome -Collection:'Servers'
+        New-PackageText -Name:$script:Firefox
+      )
+      $global:FakePackages[$script:Chrome] = $Definition[0]
+      $global:FakeConditionRows.Add([PSCustomObject]@{
+          Current = $True; Id = 6; Name = 'Servers'; Package = $script:Chrome; Row = '1'
+        })
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:$Definition | Out-Null
+
+      $Context.Failed | Should -BeFalse
+      $Context.Changed | Should -BeTrue
+      $Context.Result.applied.Count | Should -Be 0
+      $Context.Result.repaired | Should -Be @($script:Chrome)
+      $Context.Result.unchanged | Should -Be @($script:Chrome, $script:Firefox)
+      $Context.Result.msg | Should -Be (
+        "Repaired references: $($script:Chrome); already correct: 2"
+      )
+      @($global:FakeCliCalls -like 'ImportPackages*').Count | Should -Be 0
+      @($global:FakeConditionRows | ForEach-Object Id) | Should -Be @(7)
+      $Writes = @($global:FakeSqliteCalls -like '*UPDATE PackageStepConditionCollection*')
+      $Writes.Count | Should -Be 1
+      $Writes[0] | Should -Match ([Regex]::Escape(
+          "IFNULL(CAST(InventoryCollectionId AS TEXT), '') = '6'"
+        ))
+    }
+
+    It 'predicts a moved collection id repair in check mode without writing' {
+      $Definition = @(
+        New-PackageText -Name:$script:Chrome -Collection:'Servers'
+        New-PackageText -Name:$script:Firefox
+      )
+      $global:FakePackages[$script:Chrome] = $Definition[0]
+      $global:FakeConditionRows.Add([PSCustomObject]@{
+          Current = $True; Id = 6; Name = 'Servers'; Package = $script:Chrome; Row = '1'
+        })
+      $Context = New-AnsibleContext -CheckMode
+      Invoke-Reconcile -Definition:$Definition | Out-Null
+
+      $Context.Failed | Should -BeFalse
+      $Context.Changed | Should -BeTrue
+      $Context.Result.applied.Count | Should -Be 0
+      $Context.Result.repaired | Should -Be @($script:Chrome)
+      $Context.Result.unchanged | Should -Be @($script:Chrome, $script:Firefox)
+      $Context.Result.msg | Should -Be (
+        "Would apply: ; would remove: ; would repair references: $($script:Chrome); " +
+        'already correct: 2'
+      )
+      @($global:FakeConditionRows | ForEach-Object Id) | Should -Be @(6)
+      @($global:FakeSqliteCalls -like 'SELECT c.rowid*').Count | Should -Be 1
+      @($global:FakeSqliteCalls -like '*UPDATE PackageStepConditionCollection*').Count |
+        Should -Be 0
+      @($global:FakeCliCalls -like 'ImportPackages*').Count | Should -Be 0
+      @($global:FakeCliCalls -like 'DeletePackages*').Count | Should -Be 0
+    }
+
+    It 'writes nothing and reports no change on the converge after an id repair' {
+      $Definition = @(
+        New-PackageText -Name:$script:Chrome -Collection:'Servers'
+        New-PackageText -Name:$script:Firefox
+      )
+      $global:FakePackages[$script:Chrome] = $Definition[0]
+      $global:FakeConditionRows.Add([PSCustomObject]@{
+          Current = $True; Id = 6; Name = 'Servers'; Package = $script:Chrome; Row = '1'
+        })
+      New-AnsibleContext | Out-Null
+      Invoke-Reconcile -Definition:$Definition | Out-Null
+      $Writes = @($global:FakeSqliteCalls -like '*UPDATE PackageStepConditionCollection*').Count
+
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:$Definition | Out-Null
+
+      $Context.Failed | Should -BeFalse
+      $Context.Changed | Should -BeFalse
+      @($global:FakeSqliteCalls -like '*UPDATE PackageStepConditionCollection*').Count |
+        Should -Be $Writes
+    }
+
+    It 'ignores a superseded collection id held by an older package version' {
+      $Definition = @(
+        New-PackageText -Name:$script:Chrome -Collection:'Servers'
+        New-PackageText -Name:$script:Firefox
+      )
+      $global:FakePackages[$script:Chrome] = $Definition[0]
+      $global:FakeConditionRows.Add([PSCustomObject]@{
+          Current = $True; Id = 7; Name = 'Servers'; Package = $script:Chrome; Row = '1'
+        })
+      $global:FakeConditionRows.Add([PSCustomObject]@{
+          Current = $False; Id = 6; Name = 'Servers'; Package = $script:Chrome; Row = '2'
+        })
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:$Definition | Out-Null
+
+      $Context.Failed | Should -BeFalse
+      $Context.Changed | Should -BeFalse
+      @($global:FakeSqliteCalls -like '*UPDATE PackageStepConditionCollection*').Count |
+        Should -Be 0
+      @($global:FakeConditionRows | Where-Object { -not $PSItem.Current } |
+          ForEach-Object Id) | Should -Be @(6)
     }
 
     It 'stops the run naming the package, the step and the collection it cannot find' {
@@ -761,6 +1097,29 @@ Describe 'Set-PdqPackage' {
       $Second = New-AnsibleContext
       Invoke-Reconcile -Definition:$Definition -ScanProfile:$Runs | Out-Null
       $Second.Changed | Should -BeFalse
+    }
+
+    It 'checks a nester scan step without reading its dependency scan step' {
+      $global:FakePackages.Clear()
+      $Definition = @(
+        New-PackageText -Name:$script:Chrome -NestedTarget:$script:Firefox `
+          -ScanProfileId:'2'
+        New-PackageText -Name:$script:Firefox -ScanProfileId:'2'
+      )
+      $Runs = @{
+        $script:Chrome = 'Applications'
+        $script:Firefox = 'Standard'
+      }
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:$Definition -ScanProfile:$Runs | Out-Null
+
+      $Context.Failed | Should -BeFalse
+      $Context.Result.applied | Should -Be @($script:Chrome, $script:Firefox)
+      $global:FakeImportedNames | Should -Be @($script:Firefox, $script:Chrome)
+      $global:FakePackages[$script:Chrome] | Should -Match `
+        '<InventoryScanProfileId value="5" />'
+      $global:FakePackages[$script:Firefox] | Should -Match `
+        '<InventoryScanProfileId value="1" />'
     }
 
     It 'stops the run naming the package, the step and the scan profile it cannot find' {

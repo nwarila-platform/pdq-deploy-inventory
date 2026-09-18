@@ -12,30 +12,36 @@
 
         The product's export is both the comparison and the verify oracle. Every declared name is
         read in one ExportPackages launch, passing each name as a separate argument and a staging
-        directory for the resulting files. Only definitions that differ are imported, every
-        undeclared package is removed, and the complete set is read back after mutation. A
+        directory for the resulting files. An export can append a package's nested dependencies;
+        its first package alone answers the request. Only definitions that differ are imported,
+        every undeclared package is removed, and the complete set is read back after mutation. A
         converged host pays for one batched export and writes nothing.
 
-        Comparison ignores the byte-order mark, the line-ending style and trailing whitespace: an
-        export is otherwise byte-for-byte what was imported (measured 2026-08-25 against PDQ Deploy
-        20.1.8.0), so any remaining difference is a real difference in the package. Reading the
-        definition through Ansible strips trailing whitespace on the way in, which is why the
-        product's copy is trimmed to match rather than compared to the byte.
+        Comparison uses that first package and ignores the byte-order mark, line-ending style,
+        trailing whitespace, export MinimumVersion, console filing and console-derived values.
+        The remaining XML is otherwise what was imported (measured 2026-08-25 against PDQ Deploy
+        20.1.8.0), so any difference is a real difference in the package. Reading the definition
+        through Ansible strips trailing whitespace on the way in, which is why the product's copy
+        is trimmed to match rather than compared to the byte.
 
         ExportPackages exit 1 is a successful partial read only when every missing requested name
         has its matching not-found error and every other request wrote a valid package file. Exit
         3 is the successful empty answer when none of the requested packages exists. Presence is
         decided from each file's own Name element; filenames are presentation only.
 
-        Two ids in a definition belong to the console that exported it rather than to the
-        package: the collection a condition gates on, and the scan profile a scan step runs. Both
-        are resolved from a NAME against this console's own tables. The condition's id is written
-        to the product's database, because ImportPackages stores the name and leaves the id null
-        and the deployment runner resolves membership by id alone; the scan step's is written into
-        the document that is imported, because that one does travel. Both are read back afterwards
-        and must name what the declaration asked for. A name that resolves to nothing stops the
-        run: a package gated on a collection this console does not hold imports quietly and then
-        fails every deployment before its first step.
+        A collection condition's id and a scan step's profile id belong to the console that
+        exported them. Both are resolved from a NAME against this console's own tables. Current
+        condition rows are repaired whenever their id differs, even when their package needs no
+        import, because the deployment runner resolves membership by id alone. A scan profile id
+        is written into the document that is imported, because that one does travel. Both are read
+        back after a write and must name what the declaration asked for. A name that resolves to
+        nothing stops the run: a package gated on a collection this console does not hold imports
+        quietly and then fails every deployment before its first step.
+
+        A nested step's target id and name are also console output; its target path declares the
+        package it means. Every target must name another declaration, dependencies are imported
+        before the packages that nest them, and a cycle stops the run before mutation. After an
+        import, the export must prove that each declared nested reference survived the write.
 
         A package that a declared definition refers to by name cannot be pruned accidentally. The
         command line's forced delete bypasses its own nested-step prompt, so an undeclared but
@@ -81,8 +87,8 @@
         .\Set-PdqPackage.ps1 -Definition @((Get-Content -Raw '.\Google Chrome - Install.xml')) -ScanProfile @{} -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe' -InventoryCliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
 
     .OUTPUTS
-        One object carrying applied, removed, unchanged, ignored, survivors, changed, check_mode
-        and msg.
+        One object carrying applied, repaired, removed, unchanged, ignored, survivors, changed,
+        check_mode and msg.
 #>
 
 [CmdletBinding(
@@ -214,6 +220,15 @@ New-Variable -Force -Name:'LOCAL_ID_ELEMENTS' -Option:'ReadOnly' -Value:(
   )
 )
 
+# A nested target's path is its declaration-owned resolver; its id and name are console-derived
+# output, so only the path participates in comparison.
+New-Variable -Force -Name:'NESTED_OUTPUT_ELEMENTS' -Option:'ReadOnly' -Value:(
+  [System.String[]]@(
+    '//NestedPackageStep/TargetPackageId'
+    '//NestedPackageStep/TargetPackageName'
+  )
+)
+
 # Custom stream preferences; built-ins already exist.
 New-Variable -Verbose:$False -Force -Name:'ErrorPreference' -Value:(
   [System.Management.Automation.ActionPreference]::Stop
@@ -295,9 +310,9 @@ Function ConvertTo-ComparableText {
   Return $Text.TrimStart([System.Char]0xFEFF).Replace("`r`n", "`n").TrimEnd()
 }
 
-# What gets COMPARED: the same document with the console's filing removed, so two products holding
-# the same package in different folders agree. Both sides go through it, so encoding and formatting
-# cannot differ either -- this compares the document, not the bytes that happened to carry it.
+# The export envelope's MinimumVersion is product-derived, so the envelope cannot participate in
+# comparison. Placement is stripped so two consoles holding the same package filed differently
+# agree.
 Function ConvertTo-ComparablePackage {
   Param ([System.String] $Text)
   If ([System.String]::IsNullOrWhiteSpace($Text)) {
@@ -309,12 +324,12 @@ Function ConvertTo-ComparablePackage {
   } Catch {
     Throw ('A package definition is not valid XML ({0})' -f $PSItem.Exception.GetBaseException().Message)
   }
-  ForEach ($Element In ($PLACEMENT_ELEMENTS + $LOCAL_ID_ELEMENTS)) {
+  ForEach ($Element In ($PLACEMENT_ELEMENTS + $LOCAL_ID_ELEMENTS + $NESTED_OUTPUT_ELEMENTS)) {
     ForEach ($Node In @($Document.SelectNodes($Element))) {
       $Null = $Node.ParentNode.RemoveChild($Node)
     }
   }
-  Return $Document.OuterXml
+  Return $Document.SelectSingleNode('/AdminArsenal.Export/Package').OuterXml
 }
 
 # The ordinary path for native commands, so every failure names the operation that failed instead
@@ -420,7 +435,7 @@ Function Invoke-PackageExport {
 }
 
 # Read every declared name in one launch. Separate name arguments and a directory are required for
-# a batch. Each file's Name element decides which request it answers; filenames decide nothing.
+# a batch. Each file's first package names the request it answers; filenames decide nothing.
 Function Get-PackageMap {
   Param ([System.String[]] $Name)
   $Current = [System.Collections.Generic.Dictionary[System.String, System.String]]::new(
@@ -464,10 +479,11 @@ Function Get-PackageMap {
             $File.FullName, $PSItem.Exception.GetBaseException().Message
           ))
       }
-      If (@($Document.SelectNodes('/AdminArsenal.Export/Package')).Count -ne 1) {
-        Throw ('The package export at ''{0}'' does not carry exactly one package' -f $File.FullName)
+      $Packages = @($Document.SelectNodes('/AdminArsenal.Export/Package'))
+      If ($Packages.Count -eq 0) {
+        Throw ('The package export at ''{0}'' does not carry a package' -f $File.FullName)
       }
-      $NameNode = $Document.SelectSingleNode('/AdminArsenal.Export/Package/Name')
+      $NameNode = $Packages[0].SelectSingleNode('Name')
       If ($Null -eq $NameNode -or -not $Requested.Contains($NameNode.InnerText)) {
         Throw ('The package export at ''{0}'' does not answer a requested name' -f $File.FullName)
       }
@@ -567,6 +583,38 @@ Function Get-StepLabel {
   Return 'the package itself'
 }
 
+Function Add-PackageDependencyOrder {
+  Param (
+    [System.String] $Name,
+    [System.Collections.IDictionary] $Dependency,
+    [System.Collections.Generic.HashSet[System.String]] $Complete,
+    [System.Collections.Generic.List[System.String]] $Trail,
+    [System.Collections.Generic.List[System.String]] $Order
+  )
+  If ($Complete.Contains($Name)) {
+    Return
+  }
+  $CycleStart = $Trail.IndexOf($Name)
+  If ($CycleStart -ge 0) {
+    $Cycle = [System.Collections.Generic.List[System.String]]::new()
+    For ($C = $CycleStart; $C -lt $Trail.Count; $C++) {
+      $Cycle.Add($Trail[$C])
+    }
+    $Cycle.Add($Name)
+    Throw ('The declared packages carry a nested-package reference cycle: {0}' -f `
+      ($Cycle -join ' -> '))
+  }
+
+  $Trail.Add($Name)
+  ForEach ($Target In $Dependency[$Name]) {
+    Add-PackageDependencyOrder -Name:$Target -Dependency:$Dependency -Complete:$Complete `
+      -Trail:$Trail -Order:$Order
+  }
+  $Trail.RemoveAt($Trail.Count - 1)
+  $Null = $Complete.Add($Name)
+  $Order.Add($Name)
+}
+
 # Where a product keeps its database, asked of the product rather than assumed from where it was
 # installed: the two products keep theirs on different volumes here.
 Function Get-DatabasePath {
@@ -613,25 +661,35 @@ Function Get-NameToId {
   Return [PSCustomObject]@{ Ambiguous = $Ambiguous; Id = $Id }
 }
 
-# Every collection condition the product holds, with the row identity a write has to be bound to.
-# rowid is sqlite's own, so this asks the schema for nothing it has not already been told.
+# Every current package's collection condition, with the row identity a write has to be bound to.
+# Historical definitions have no current Packages.PackageDefinitionId owner and are not reconciled.
 Function Read-ConditionRow {
   $Rows = [System.Collections.Generic.List[System.Object]]::new()
   ForEach ($Line In (Invoke-NativeCommand -FilePath:$Sqlite `
         -Operation:'Reading the collection conditions' -Argument:@(
         $Database
-        "SELECT rowid, IFNULL(InventoryCollectionId, ''), hex(IFNULL(InventoryCollectionName, '')) FROM PackageStepConditionCollection;"
+        ("SELECT c.rowid, IFNULL(c.InventoryCollectionId, ''), " +
+        "hex(IFNULL(c.InventoryCollectionName, '')), hex(p.Name) " +
+        'FROM PackageStepConditionCollection c ' +
+        'JOIN PackageStepConditions pc ' +
+        'ON pc.PackageStepConditionId = c.PackageStepConditionId ' +
+        'LEFT JOIN PackageSteps s ON s.PackageStepId = pc.PackageStepId ' +
+        'JOIN PackageDefinitions d ON d.PackageDefinitionId = ' +
+        'COALESCE(s.PackageDefinitionId, pc.PackageDefinitionId) ' +
+        'JOIN Packages p ON p.PackageDefinitionId = d.PackageDefinitionId;')
       )).Output) {
     $Parts = ([System.String]$Line).Split('|')
-    If ($Parts.Count -ne 3 -or $Parts[0] -notmatch '^[0-9]+$' -or $Parts[1] -notmatch '^[0-9]*$' -or
-      $Parts[2] -notmatch '^([0-9A-Fa-f]{2})*$') {
-      Throw ('The collection conditions did not read back as row, id and hex name: {0}' -f $Line)
+    If ($Parts.Count -ne 4 -or $Parts[0] -notmatch '^[0-9]+$' -or $Parts[1] -notmatch '^[0-9]*$' -or
+      $Parts[2] -notmatch '^([0-9A-Fa-f]{2})*$' -or
+      $Parts[3] -notmatch '^([0-9A-Fa-f]{2})+$') {
+      Throw ('The collection conditions did not read back as row, id, hex name and hex package: {0}' -f $Line)
     }
     $Rows.Add([PSCustomObject]@{
-        Hex  = $Parts[2].ToUpperInvariant()
-        Id   = $Parts[1]
-        Name = ConvertFrom-HexText -Hex:$Parts[2]
-        Row  = $Parts[0]
+        Hex     = $Parts[2].ToUpperInvariant()
+        Id      = $Parts[1]
+        Name    = ConvertFrom-HexText -Hex:$Parts[2]
+        Package = ConvertFrom-HexText -Hex:$Parts[3]
+        Row     = $Parts[0]
       })
   }
   Return , $Rows
@@ -651,6 +709,7 @@ $Referenced = [System.Collections.Generic.HashSet[System.String]]::new(
 )
 $CollectionReference = [System.Collections.Generic.List[System.Object]]::new()
 $ScanReference = [System.Collections.Generic.List[System.Object]]::new()
+$NestedReference = [System.Collections.Generic.List[System.Object]]::new()
 ForEach ($Text In $Definition) {
   $Normal = ConvertTo-ComparableText -Text:$Text
   $Document = [System.Xml.XmlDocument]::new()
@@ -705,6 +764,19 @@ ForEach ($Text In $Definition) {
       })
   }
 
+  ForEach ($Node In $Document.SelectNodes("//NestedPackageStep[TypeName='NestedPackage']")) {
+    $Target = $Node.SelectSingleNode('TargetPackagePath')
+    $Step = Get-StepLabel -Node:$Node
+    If ($Null -eq $Target -or [System.String]::IsNullOrWhiteSpace($Target.InnerText)) {
+      Throw ('{0} carries {1} with an empty TargetPackagePath' -f $Name, $Step)
+    }
+    $NestedReference.Add([PSCustomObject]@{
+        Package = $Name
+        Step    = $Step
+        Target  = [System.String]$Target.InnerText
+      })
+  }
+
   ForEach ($Node In $Document.SelectNodes('//*')) {
     If ($Node.ChildNodes.Count -eq 1 -and
       $Node.FirstChild.NodeType -eq [System.Xml.XmlNodeType]::Text) {
@@ -720,10 +792,41 @@ If ($Orphan.Count -gt 0) {
   Throw ('A scan profile is declared for {0}, which no definition names' -f ($Orphan -join ', '))
 }
 
-$Held = Get-HeldPackageName
 $DeclaredSet = [System.Collections.Generic.HashSet[System.String]]::new(
   $DeclaredName, [System.StringComparer]::Ordinal
 )
+# TargetPackagePath resolves against bare names only while imports discard FolderId and
+# Packages\ paths.
+ForEach ($Reference In $NestedReference) {
+  If (-not $DeclaredSet.Contains($Reference.Target)) {
+    Throw ('{0} carries {1}, which nests ''{2}'', but no declaration names that target' -f @(
+        $Reference.Package, $Reference.Step, $Reference.Target
+      ))
+  }
+}
+
+$Dependency = [System.Collections.Generic.Dictionary[System.String, System.Object]]::new(
+  [System.StringComparer]::Ordinal
+)
+ForEach ($Name In $DeclaredName) {
+  $Dependency.Add($Name, [System.Collections.Generic.List[System.String]]::new())
+}
+ForEach ($Reference In $NestedReference) {
+  If (-not $Dependency[$Reference.Package].Contains($Reference.Target)) {
+    $Dependency[$Reference.Package].Add($Reference.Target)
+  }
+}
+$DependencyOrder = [System.Collections.Generic.List[System.String]]::new()
+$Complete = [System.Collections.Generic.HashSet[System.String]]::new(
+  [System.StringComparer]::Ordinal
+)
+$Trail = [System.Collections.Generic.List[System.String]]::new()
+ForEach ($Name In $DeclaredName) {
+  Add-PackageDependencyOrder -Name:$Name -Dependency:$Dependency -Complete:$Complete `
+    -Trail:$Trail -Order:$DependencyOrder
+}
+
+$Held = Get-HeldPackageName
 $Extra = [System.String[]]@($Held | Where-Object { -not $DeclaredSet.Contains($PSItem) })
 
 # Judge every delete before any import or delete. Forced deletion bypasses the product's own
@@ -738,13 +841,21 @@ ForEach ($Name In $Extra) {
 }
 
 $Initial = Get-PackageMap -Name:$DeclaredName.ToArray()
-$ToImport = [System.Collections.Generic.List[System.String]]::new()
+$NeedsImport = [System.Collections.Generic.HashSet[System.String]]::new(
+  [System.StringComparer]::Ordinal
+)
 $InitiallyUnchanged = [System.Collections.Generic.List[System.String]]::new()
 ForEach ($Name In $DeclaredName) {
   If ($Initial.ContainsKey($Name) -and
     (ConvertTo-ComparablePackage -Text:$Initial[$Name]) -ceq $DeclaredKey[$Name]) {
     $InitiallyUnchanged.Add($Name)
   } Else {
+    $Null = $NeedsImport.Add($Name)
+  }
+}
+$ToImport = [System.Collections.Generic.List[System.String]]::new()
+ForEach ($Name In $DependencyOrder) {
+  If ($NeedsImport.Contains($Name)) {
     $ToImport.Add($Name)
   }
 }
@@ -824,6 +935,7 @@ If ($ScanReference.Count -gt 0) {
 }
 
 $Applied = [System.Collections.Generic.List[System.String]]::new()
+$Repaired = [System.Collections.Generic.List[System.String]]::new()
 $Removed = [System.Collections.Generic.List[System.String]]::new()
 $Unchanged = [System.Collections.Generic.List[System.String]]::new()
 $Ignored = [System.Collections.Generic.List[System.String]]::new()
@@ -834,6 +946,27 @@ If ($Ansible.CheckMode) {
   $Applied.AddRange($ToImport.ToArray())
   $Removed.AddRange($Extra)
   $Unchanged.AddRange($InitiallyUnchanged.ToArray())
+  If ($CollectionReference.Count -gt 0) {
+    $RepairSet = [System.Collections.Generic.HashSet[System.String]]::new(
+      [System.StringComparer]::Ordinal
+    )
+    ForEach ($Row In (Read-ConditionRow)) {
+      $Wanted = @($CollectionReference | Where-Object {
+          $PSItem.Package -ceq $Row.Package -and $PSItem.Collection -ceq $Row.Name
+        })
+      If ($Wanted.Count -gt 0 -and $Row.Id -cne $CollectionTable.Id[$Row.Name]) {
+        $Null = $RepairSet.Add($Row.Package)
+      }
+    }
+    ForEach ($Name In $DeclaredName) {
+      If ($RepairSet.Contains($Name)) {
+        $Repaired.Add($Name)
+      }
+    }
+    If ($Repaired.Count -gt 0) {
+      $Changed = $True
+    }
+  }
 } Else {
   ForEach ($Name In $ToImport) {
     $Staged = Join-Path -Path:$Ansible.Tmpdir -ChildPath:'pdq-package-import.xml'
@@ -853,19 +986,22 @@ If ($Ansible.CheckMode) {
     }
   }
 
-  # ImportPackages stores a condition's collection NAME and leaves its id null, and the deployment
-  # runner resolves membership by id alone, so an imported package is gated on nothing until this
-  # write. Every statement is bound to the row it was read from and to the value that row still
-  # holds; a row already pointing at the right collection is not written at all.
-  If ($ToImport.Count -gt 0 -and $CollectionReference.Count -gt 0) {
-    $Wanted = [System.Collections.Generic.HashSet[System.String]]::new(
-      [System.String[]]@($CollectionReference | ForEach-Object Collection),
+  # ImportPackages stores a condition's collection NAME and leaves its id null, while collection
+  # ids can also move after a package has converged. Every statement remains bound to the row and
+  # values read, and a current definition already pointing at the right collection is not written.
+  $ConditionChanged = $False
+  If ($CollectionReference.Count -gt 0) {
+    $Statements = [System.Collections.Generic.List[System.String]]::new()
+    $RepairSet = [System.Collections.Generic.HashSet[System.String]]::new(
       [System.StringComparer]::Ordinal
     )
-    $Statements = [System.Collections.Generic.List[System.String]]::new()
     ForEach ($Row In (Read-ConditionRow)) {
-      If ($Wanted.Contains($Row.Name) -and $Row.Id -cne $CollectionTable.Id[$Row.Name]) {
-        $Statements.Add(("UPDATE PackageStepConditionCollection SET InventoryCollectionId = {0} WHERE rowid = {1} AND IFNULL(InventoryCollectionId, '') = '{2}' AND hex(IFNULL(InventoryCollectionName, '')) = '{3}';" -f @(
+      $Wanted = @($CollectionReference | Where-Object {
+          $PSItem.Package -ceq $Row.Package -and $PSItem.Collection -ceq $Row.Name
+        })
+      If ($Wanted.Count -gt 0 -and $Row.Id -cne $CollectionTable.Id[$Row.Name]) {
+        $Null = $RepairSet.Add($Row.Package)
+        $Statements.Add(("UPDATE PackageStepConditionCollection SET InventoryCollectionId = {0} WHERE rowid = {1} AND IFNULL(CAST(InventoryCollectionId AS TEXT), '') = '{2}' AND hex(IFNULL(InventoryCollectionName, '')) = '{3}';" -f @(
               $CollectionTable.Id[$Row.Name], $Row.Row, $Row.Id, $Row.Hex
             )))
       }
@@ -877,6 +1013,13 @@ If ($Ansible.CheckMode) {
       $Null = Invoke-NativeCommand -FilePath:$Sqlite `
         -Operation:'Resolving the collection conditions' `
         -Argument:@($Database, ($Statements -join ' '))
+      ForEach ($Name In $DeclaredName) {
+        If ($RepairSet.Contains($Name)) {
+          $Repaired.Add($Name)
+        }
+      }
+      $ConditionChanged = $True
+      $Changed = $True
     }
   }
 
@@ -895,6 +1038,35 @@ If ($Ansible.CheckMode) {
   $RemainingSet = [System.Collections.Generic.HashSet[System.String]]::new(
     [System.String[]]$Remaining, [System.StringComparer]::Ordinal
   )
+
+  # An unresolved target is accepted on import and silently removed, so only the read-back proves
+  # that the declared nested reference survived the write.
+  ForEach ($Reference In @($NestedReference | Where-Object {
+        $ToImport.Contains($PSItem.Package) -and $Final.ContainsKey($PSItem.Package)
+      })) {
+    $Document = [System.Xml.XmlDocument]::new()
+    $Document.LoadXml($Final[$Reference.Package])
+    $Package = $Document.SelectSingleNode('/AdminArsenal.Export/Package')
+    $DeclaredCount = @($NestedReference | Where-Object {
+        $PSItem.Package -ceq $Reference.Package -and
+        $PSItem.Step -ceq $Reference.Step -and
+        $PSItem.Target -ceq $Reference.Target
+      }).Count
+    $Resolved = @($Package.SelectNodes(".//NestedPackageStep[TypeName='NestedPackage']") |
+        Where-Object {
+          (Get-StepLabel -Node:$PSItem) -ceq $Reference.Step -and
+          $Null -ne $PSItem.SelectSingleNode('TargetPackagePath') -and
+          -not [System.String]::IsNullOrWhiteSpace(
+            $PSItem.SelectSingleNode('TargetPackagePath').InnerText
+          ) -and
+          $PSItem.SelectSingleNode('TargetPackagePath').InnerText -ceq $Reference.Target
+        })
+    If ($Resolved.Count -lt $DeclaredCount) {
+      Throw ('{0} does not carry {1} targeting ''{2}'' after the import' -f @(
+          $Reference.Package, $Reference.Step, $Reference.Target
+        ))
+    }
+  }
 
   ForEach ($Name In $DeclaredName) {
     If ($RemainingSet.Contains($Name) -and $Final.ContainsKey($Name) -and
@@ -927,7 +1099,7 @@ If ($Ansible.CheckMode) {
     [System.String[]]@($Applied.ToArray() + $Unchanged.ToArray()), [System.StringComparer]::Ordinal
   )
 
-  If ($ToImport.Count -gt 0 -and $CollectionReference.Count -gt 0) {
+  If (($ToImport.Count -gt 0 -or $ConditionChanged) -and $CollectionReference.Count -gt 0) {
     $ConditionAfter = Read-ConditionRow
     $CollectionAfter = Get-NameToId -Database:$InventoryDatabase `
       -Operation:'Reading the collections' `
@@ -936,7 +1108,10 @@ If ($Ansible.CheckMode) {
           $Settled.Contains($PSItem.Package)
         })) {
       $Resolved = $CollectionTable.Id[$Reference.Collection]
-      $Rows = @($ConditionAfter | Where-Object { $PSItem.Name -ceq $Reference.Collection })
+      $Rows = @($ConditionAfter | Where-Object {
+          $PSItem.Package -ceq $Reference.Package -and
+          $PSItem.Name -ceq $Reference.Collection
+        })
       If ($Rows.Count -eq 0 -or @($Rows | Where-Object { $PSItem.Id -cne $Resolved }).Count -gt 0) {
         Throw ('{0} does not gate {1} on the collection ''{2}'' after the import' -f @(
             $Reference.Package, $Reference.Step, $Reference.Collection
@@ -970,8 +1145,9 @@ If ($Ansible.CheckMode) {
       $Resolved = $ProfileTable.Id[[System.String]$ScanProfile[$Name]]
       $Document = [System.Xml.XmlDocument]::new()
       $Document.LoadXml($Final[$Name])
-      ForEach ($Node In $Document.SelectNodes(
-          "//PackageStep[TypeName='ScanStep']/InventoryScanProfileId")) {
+      $Package = $Document.SelectSingleNode('/AdminArsenal.Export/Package')
+      ForEach ($Node In $Package.SelectNodes(
+          ".//PackageStep[TypeName='ScanStep']/InventoryScanProfileId")) {
         If ($Node.GetAttribute('value') -cne $Resolved) {
           Throw ('{0} runs {1} on scan profile {2}, but the product stored {3}' -f @(
               $Name, (Get-StepLabel -Node:$Node.ParentNode), $Resolved,
@@ -990,8 +1166,8 @@ $Result = [PSCustomObject]@{
   declared   = [System.Int32]$Declared.Count
   ignored    = [System.String[]]$Ignored
   msg        = If ($Ansible.CheckMode) {
-    'Would apply: {0}; would remove: {1}; already correct: {2}' -f @(
-      ($Applied -join ', '), ($Removed -join ', '), $Unchanged.Count
+    'Would apply: {0}; would remove: {1}; would repair references: {2}; already correct: {3}' -f @(
+      ($Applied -join ', '), ($Removed -join ', '), ($Repaired -join ', '), $Unchanged.Count
     )
   } ElseIf ($Ignored.Count -gt 0 -or $Survivors.Count -gt 0) {
     'The declared package set did not settle (missing or different: {0}; undeclared still held: {1})' -f @(
@@ -999,11 +1175,20 @@ $Result = [PSCustomObject]@{
     )
   } ElseIf (-not $Changed) {
     'No package changes; {0} already correct' -f $Unchanged.Count
+  } ElseIf ($Applied.Count -eq 0 -and $Removed.Count -eq 0 -and $Repaired.Count -gt 0) {
+    'Repaired references: {0}; already correct: {1}' -f @(
+      ($Repaired -join ', '), $Unchanged.Count
+    )
+  } ElseIf ($Repaired.Count -gt 0) {
+    'Applied: {0}; removed: {1}; repaired references: {2}; already correct: {3}' -f @(
+      ($Applied -join ', '), ($Removed -join ', '), ($Repaired -join ', '), $Unchanged.Count
+    )
   } Else {
     'Applied: {0}; removed: {1}; already correct: {2}' -f @(
       ($Applied -join ', '), ($Removed -join ', '), $Unchanged.Count
     )
   }
+  repaired   = [System.String[]]$Repaired
   removed    = [System.String[]]$Removed
   survivors  = [System.String[]]$Survivors
   unchanged  = [System.String[]]$Unchanged

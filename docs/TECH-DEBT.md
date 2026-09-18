@@ -54,7 +54,7 @@
   composition converged against it and the second converge reported only the two expected
   credential changes, so the exit criteria are met.
 
-## TD-007 — OPEN — collection import loops on the controller, not inside the script
+## TD-007 — CLOSED 2026-09-18 — collection import is batched inside the script
 
 - **Recorded:** 2026-08-31.
 - **Issue:** `PROCESS | Import The Declared Collections` loops on the Ansible side, so each of the
@@ -70,16 +70,33 @@
   The collection loop bills 17.3 s per launch. The ~13 s difference is per-task overhead that the
   variable path pays once and the collection path pays 17 times. The changed path corroborates:
   three launches per collection predicts 2.8 + 3 × 17.3 ≈ 55 s against 48.0 s measured.
-- **Correction:** move the loop inside the script, as `Set-PdqVariable.ps1` already does, and read
-  the whole set in one `ExportCollections` — its `-Name` takes a comma-separated list, which is the
-  same product behaviour that makes `Set-PdqCollection.ps1` refuse a name carrying a comma. A
-  converged run then costs one logon, one script transfer and one command-line read.
-- **What the correction costs:** the per-collection recap moves out of the loop's output and into
-  the result object, where the variable path already keeps its own; the export staging invariant
-  becomes one file per requested name rather than exactly one file.
-- **Exit criteria:** collections are applied by a single task; a converged host reads the whole
-  collection state in one command-line launch; a second converge still reports `changed=0` and
-  still names any collection that changed.
+- **Correction:** `Set-PdqCollection.ps1` now owns the complete definition array. The Inventory
+  role invokes it once, with no Ansible loop; one `ExportCollections` call carries every declared
+  name as a separate argument after `-Name` and writes one file per collection into a staging
+  directory, only differing definitions are imported, and the complete set is read back after
+  mutation. This is the measured `string+` invocation required by Inventory 20.1.8; a single
+  comma-joined argument is treated as one collection name. The result object's `applied`,
+  `removed`, `unchanged`, `ignored`, and `survivors` arrays preserve the names formerly supplied
+  by loop labels.
+- **Authoritative sets:** the collection and variable Set scripts now also own removal, including
+  empty declarations. The standalone Remove scripts, specs, stubs, role tasks, and allowlist
+  entries were retired. Built-in collections and every Collection Library row retain the former
+  pruner's exact protection.
+- **Closure evidence:** the collection spec proves a converged plural declaration makes exactly
+  one `ExportCollections` launch with each name as a separate `string+` argument. The script
+  creates the staging directory before that launch, requires one file per requested collection,
+  and correlates each file by its embedded XML `Name` rather than by its filename. The spec also
+  proves exit 3 is the valid empty-product answer, while statuses 1, 2 and 4 stop before import or
+  prune. Comma-bearing names remain refused because comma is per-name selection syntax; that
+  addressability rule is independent of batching multiple names as separate arguments. The
+  mutation cases prove only differences are imported, undeclared entries are removed, built-ins
+  and the library survive, failures name what did not settle, and read-back is batched. The
+  focused collection spec passed all 20 tests on 2026-09-18. The deployment workflow's drift,
+  export-equality, and repaired-state gates are enabled again, so its next live run must
+  independently prove the authoritative repair and following steady converge.
+- **Exit criteria met:** one task applies the collection set; one command-line launch reads all
+  declared collections on a converged host; the converged script reports `changed=0`; every changed
+  collection remains named in the result.
 
 ## TD-008 — OPEN — no role installs the AWS command line on a deployed host
 

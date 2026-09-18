@@ -13,8 +13,9 @@ The credential list and variable map are complete declarations: a converge adds 
 corrects what differs, removes what the declaration does not name, and proves the resulting set.
 A collection is stated as its exported XML, imported only on difference and
 proven by re-export; every top-level collection the role does not own is removed with its
-children, except the product's own built-in furniture and the shipped Collection Library, whose
-rows are compared identity by identity before and after so a converge that touched them fails.
+children, except the product's own built-in furniture, shipped Collection Library and
+directory-sync-owned collections. Library and directory-sync rows are compared identity by
+identity before and after so a converge that touched them fails.
 
 Everything moves through the controller: it fetches each artifact from S3 and hands the installer
 to the target, so the guest never receives cloud credentials. The installer is verified against
@@ -114,10 +115,9 @@ Guest-side logic that a task cannot express cleanly is a first-class PowerShell 
 and Pester-tested once under `scripts/` and materialized into the role by
 `scripts/materialize-role-scripts.sh` (the role tracks only the `.ps1.stub` markers). The role uses
 `Get-InstalledSoftware.ps1`, `Set-PdqSetting.ps1`, `Set-PdqVariable.ps1`,
-`Remove-PdqVariable.ps1`, `Set-PdqCredential.ps1`, and `Set-PdqRegistration.ps1`, all shared with
-`pdq_deploy`, plus Inventory's own
-`Set-PdqCollection.ps1` / `Remove-PdqCollection.ps1` for the collections and
-`Set-PdqSyncContainer.ps1` for the directory sync.
+`Set-PdqCredential.ps1`, and `Set-PdqRegistration.ps1`, all shared with `pdq_deploy`, plus
+Inventory's own `Set-PdqCollection.ps1` for the collections and `Set-PdqSyncContainer.ps1` for
+the directory sync.
 
 ## Verification
 

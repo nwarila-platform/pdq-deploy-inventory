@@ -844,22 +844,14 @@
 
     #endregion --- [ Process: Declare The Directory Sync Containers ] ------------------------- #
 
-    #region ------ [ Process: Import The Pinned Variables ] ----------------------------------- #
-    # The pinned application versions cross as ONE map, keyed by each application's Add/Remove
-    # Programs identity (<Publisher>_<DisplayName>) with the value being its version. The shared
-    # script creates or updates only the ones that differ and proves each reads back through its
-    # export-verify pass, so a value the command line silently drops fails the run rather than
-    # passing as applied. Skipped when none are declared, so the disk role plus this role alone
-    # still converges. Runs AS the background service user, whose command line the product answers,
-    # after the service is up. The .ps1 is MATERIALIZED from scripts/ by
-    # scripts/materialize-role-scripts.sh (the role tracks only files/Set-PdqVariable.ps1.stub).
+    #region ------ [ Process: Make The Pinned Variables Authoritative ] ----------------------- #
+    # The pinned versions cross as one complete map. One export reads the whole store; the script
+    # writes only differing variables, removes undeclared ones, and re-exports after mutation to
+    # prove the final values and names. An empty map means no custom variables. Runs as the service
+    # account whose command line the product answers. The .ps1 is materialized from scripts/ by
+    # scripts/materialize-role-scripts.sh.
 
-    - name: 'PROCESS | Import The Pinned Variables'
-      # PERF-HOLD (TD-007): the command line costs 7-18 s PER LAUNCH and this task pays it
-      # once per item -- 30.8 minutes of a converge. Held off until the object moves to the
-      # product's own sqlite3, which answers in 30-39 ms. Import and prune are held TOGETHER:
-      # a prune running without its import would empty the product.
-      when: false
+    - name: 'PROCESS | Make The Pinned Variables Authoritative'
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_inventory_running.service_account.name }}"
@@ -876,61 +868,16 @@
           CliPath: "{{ pdq_inventory_running.cli_path }}"
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqVariable.ps1') }}"
 
-    #endregion --- [ Process: Import The Pinned Variables ] ----------------------------------- #
+    #endregion --- [ Process: Make The Pinned Variables Authoritative ] ----------------------- #
 
-    #region ------ [ Process: Remove The Undeclared Variables ] ------------------------------- #
-    # The other half of the variable promise. The import above puts every declared variable in
-    # place; this removes every variable the declaration does not name, so the declared set is the
-    # WHOLE set and a converge states the product's end state rather than a lower bound on it.
-    # There is no switch for that: a role that states an end state and then leaves strangers
-    # standing has not stated the end state. Removal is proved from the product's own export,
-    # re-read after the write, so a delete the database accepted and did not perform fails the run.
-    # Runs unconditionally -- an empty declaration declares that the product holds NO custom
-    # variables, which on a fresh install is already true and changes nothing.
-    # The .ps1 is MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role
-    # tracks only files/Remove-PdqVariable.ps1.stub).
-
-    - name: 'PROCESS | Remove The Undeclared Variables'
-      # PERF-HOLD (TD-007): the command line costs 7-18 s PER LAUNCH and this task pays it
-      # once per item -- 30.8 minutes of a converge. Held off until the object moves to the
-      # product's own sqlite3, which answers in 30-39 ms. Import and prune are held TOGETHER:
-      # a prune running without its import would empty the product.
-      when: false
-      become: true
-      become_method: 'ansible.builtin.runas'
-      become_user: "{{ pdq_inventory_running.service_account.name }}"
-      no_log: true
-      vars:
-        ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
-
-      ansible.windows.win_powershell:
-        depth: 3
-        error_action: 'stop'
-        parameters:
-          Name: "{{ pdq_inventory_running.variables | list }}"
-          CliPath: "{{ pdq_inventory_running.cli_path }}"
-        script: "{{ lookup('ansible.builtin.file', 'Remove-PdqVariable.ps1') }}"
-
-    #endregion --- [ Process: Remove The Undeclared Variables ] ------------------------------- #
-
-    #region ------ [ Process: Import The Declared Collections ] ------------------------------- #
-    # Each XML file under files/collections/ is a collection this repository owns, exported from
-    # the console and committed as-is, so the repository states the collection rather than
-    # describing it. A filter references the pinned variables imported above by name, which is why
-    # this runs after them. The script imports a definition only when the product does not hold it
-    # or holds it differently, and proves the import by exporting the collection again, so a
-    # converged host writes nothing and a collection the command line silently drops fails the
-    # run. One call per definition, so the recap names the collection that changed. The .ps1 is
-    # MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role tracks only
-    # files/Set-PdqCollection.ps1.stub).
+    #region ------ [ Process: Make The Declared Collections Authoritative ] ------------------ #
+    # The XML files are the complete owned set. The script reads every declared name in one
+    # ExportCollections launch, imports only differing definitions, removes every undeclared
+    # top-level collection except the pinned built-ins, Collection Library and directory-sync
+    # tree, then reads the set back after mutation. Its result names every applied or removed
+    # collection. The .ps1 is materialized from scripts/ by scripts/materialize-role-scripts.sh.
 
     - name: 'PROCESS | Require Every Declared Collection To Be Present'
-      # PERF-HOLD (TD-007): the command line costs 7-18 s PER LAUNCH and this task pays it
-      # once per item -- 30.8 minutes of a converge. Held off until the object moves to the
-      # product's own sqlite3, which answers in 30-39 ms. Import and prune are held TOGETHER:
-      # a prune running without its import would empty the product.
-      when: false
       vars:
         __found__: "{{ query('ansible.builtin.fileglob', __collection_glob__) | map('basename') | sort }}"
 
@@ -943,20 +890,11 @@
         that:
           - __found__ == (pdq_inventory_running.collections | sort)
 
-    - name: 'PROCESS | Import The Declared Collections'
-      # PERF-HOLD (TD-007): the command line costs 7-18 s PER LAUNCH and this task pays it
-      # once per item -- 30.8 minutes of a converge. Held off until the object moves to the
-      # product's own sqlite3, which answers in 30-39 ms. Import and prune are held TOGETHER:
-      # a prune running without its import would empty the product.
-      when: false
+    - name: 'PROCESS | Make The Declared Collections Authoritative'
       become: true
       become_method: 'ansible.builtin.runas'
       become_user: "{{ pdq_inventory_running.service_account.name }}"
-      loop: "{{ query('ansible.builtin.fileglob', __collection_glob__) | sort }}"
-      loop_control:
-        label: "{{ item | basename }}"
       no_log: true
-      register: '__pdq_inventory_collections__'
       vars:
         ansible_become_flags: 'logon_type=batch'
         ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
@@ -965,48 +903,14 @@
         depth: 3
         error_action: 'stop'
         parameters:
-          Definition: "{{ lookup('ansible.builtin.file', item) }}"
+          BuiltIn: "{{ pdq_inventory_running.built_in_collections }}"
+          Definition: >-
+            {{ query('ansible.builtin.file',
+                     *(query('ansible.builtin.fileglob', __collection_glob__) | sort)) }}
           CliPath: "{{ pdq_inventory_running.cli_path }}"
         script: "{{ lookup('ansible.builtin.file', 'Set-PdqCollection.ps1') }}"
 
-    #endregion --- [ Process: Import The Declared Collections ] ------------------------------- #
-
-    #region ------ [ Process: Remove The Undeclared Collections ] ----------------------------- #
-    # The other half of the collection promise. The import above put every owned collection in
-    # place; this removes every top-level collection that is neither owned, nor the product's own
-    # furniture, nor the shipped Collection Library's -- so the declared set is the WHOLE set of
-    # what this repository stands behind, and drift is removed together with its children. The
-    # library is proven untouched on every run: the script compares its exact row identities
-    # before and after and fails if they differ. A collection a scan profile or auto report references is refused
-    # rather than removed. Runs unconditionally -- an empty declaration owns nothing, which on a
-    # fresh install changes nothing. The .ps1 is MATERIALIZED from scripts/ by
-    # scripts/materialize-role-scripts.sh (the role tracks only files/Remove-PdqCollection.ps1.stub).
-
-    - name: 'PROCESS | Remove The Undeclared Collections'
-      # PERF-HOLD (TD-007): the command line costs 7-18 s PER LAUNCH and this task pays it
-      # once per item -- 30.8 minutes of a converge. Held off until the object moves to the
-      # product's own sqlite3, which answers in 30-39 ms. Import and prune are held TOGETHER:
-      # a prune running without its import would empty the product.
-      when: false
-      become: true
-      become_method: 'ansible.builtin.runas'
-      become_user: "{{ pdq_inventory_running.service_account.name }}"
-      no_log: true
-      vars:
-        ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
-
-      ansible.windows.win_powershell:
-        depth: 3
-        error_action: 'stop'
-        parameters:
-          Definition: >-
-            {{ __pdq_inventory_collections__.results | map(attribute='result.definition') | list }}
-          BuiltIn: "{{ pdq_inventory_running.built_in_collections }}"
-          CliPath: "{{ pdq_inventory_running.cli_path }}"
-        script: "{{ lookup('ansible.builtin.file', 'Remove-PdqCollection.ps1') }}"
-
-    #endregion --- [ Process: Remove The Undeclared Collections ] ----------------------------- #
+    #endregion --- [ Process: Make The Declared Collections Authoritative ] ------------------ #
 
     #region ------ [ Process: Choose The Event Log Severities ] ------------------------------- #
     # Which severities reach the Windows Application event log. A silent install writes no

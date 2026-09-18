@@ -4,18 +4,19 @@
 
 <#
     .SYNOPSIS
-        Applies one PDQ Inventory collection definition and proves it took.
+        Makes a complete set of PDQ Inventory collection definitions authoritative.
 
     .DESCRIPTION
-        The definition IS the declaration: the exported XML the caller hands over is the
-        collection the product is required to hold, and the collection's own Name element says
-        which one, so nothing names it twice.
+        The definitions ARE the declaration: each exported XML document names one collection the
+        product is required to hold. Anything else outside the product's built-in set, shipped
+        Collection Library and directory-sync-owned tree is removed, including its children.
 
-        The product's export is both the comparison and the verify oracle. The collection is
-        imported only when the product does not hold it or holds it differently, so a converged
-        host writes nothing and reports unchanged. After a write the collection is exported again
-        and must match, so a collection the product accepted and did not store is reported and
-        fails the run.
+        The product's export is both the comparison and the verify oracle. Every declared name is
+        read in one ExportCollections launch, passing each name as a separate argument and a
+        staging directory for the resulting files. Only definitions that differ are imported.
+        After mutation the complete declared set is read in one more launch and must match, so
+        anything the product accepted but did not store is named and fails the run. A converged
+        host pays for one export and writes nothing.
 
         Comparison ignores where the console FILED the collection: the row id, parent, path and
         the library-or-not type marker never survive a round trip (measured 2026-08-26 against
@@ -26,13 +27,8 @@
         are normalised for the same reason as everywhere else: Ansible strips trailing whitespace
         from the declaration on its way in.
 
-        The export writes into a staging DIRECTORY named by this script, because the product
-        names the file after the collection; the one file inside is read whole and the directory
-        removed. A collection definition carries no secrets.
-
-        This script adds and updates; it never deletes. Removing what the declaration does not
-        name is Remove-PdqCollection.ps1's half of the promise, and the shipped Collection
-        Library is no script's business at all.
+        The export writes one file per requested collection into a staging directory. Every file
+        is read whole and the directory is removed. A collection definition carries no secrets.
 
         One process stage (read -> act -> verify -> one result); shipped by the org three-file
         convention (the scripts/ pair plus each role's .stub).
@@ -50,18 +46,22 @@
         (0 SilentlyContinue, 1 Stop, 2 Continue, 3 Inquire, 4 Ignore, 5 Suspend).
 
     .PARAMETER Definition
-        The collection definition, as the product's own export writes it. The caller reads one
-        definition file and hands over its text; this script owns every file it needs from there.
+        The complete set of collection definitions, as the product's own export writes them.
+        Required even when empty, so owning nothing is an explicit declaration.
+
+    .PARAMETER BuiltIn
+        Top-level collections the pinned product ships outside the Collection Library. These are
+        product-owned furniture and are never pruned.
 
     .PARAMETER CliPath
         Full path to PDQInventory.exe. Collections are an Inventory concept; Deploy has no
         equivalent, so this script serves the one product.
 
     .EXAMPLE
-        .\Set-PdqCollection.ps1 -Definition (Get-Content -Raw '.\Chrome Below Pinned Version.xml') -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
+        .\Set-PdqCollection.ps1 -Definition @((Get-Content -Raw '.\Chrome Below Pinned Version.xml')) -BuiltIn @('Servers', 'Workstations') -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
 
     .OUTPUTS
-        One object carrying name, definition, changed, check_mode, ignored and msg.
+        One object carrying applied, removed, unchanged, ignored, changed, check_mode and msg.
 #>
 
 [CmdletBinding(
@@ -74,6 +74,17 @@
 )]
 [OutputType([System.Void])]
 Param (
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $True,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [AllowEmptyCollection()]
+  [System.String[]]
+  $BuiltIn,
+
   [Parameter(
     DontShow = $False,
     Mandatory = $True,
@@ -103,8 +114,8 @@ Param (
     ValueFromPipeline = $False,
     ValueFromPipelineByPropertyName = $False
   )]
-  [ValidateNotNullOrEmpty()]
-  [System.String]
+  [AllowEmptyCollection()]
+  [System.String[]]
   $Definition,
 
   [Parameter(
@@ -134,9 +145,9 @@ New-Variable -Force -Name:'LOG_LEVELS' -Option:('Private', 'ReadOnly') -Value:(
   [System.String[]]@('Verbose', 'Debug', 'Information', 'Warning', 'Error', 'Fatal')
 )
 
-# The command line selects a collection by PATTERN: -Name reads * and ? as wildcards and a comma
-# as a separator (the product's own reference), so a name carrying one of those cannot be
-# addressed as itself.
+# The command line selects a collection by PATTERN: -Name reads * and ? as wildcards, and its help
+# reserves commas as selection syntax. Multiple names are passed as separate arguments, but a name
+# carrying any of those characters still cannot be addressed unambiguously as itself.
 New-Variable -Force -Name:'NAME_PATTERN' -Option:('Private', 'ReadOnly') -Value:(
   [System.Text.RegularExpressions.Regex]::new('^[^*?,]+$')
 )
@@ -339,117 +350,402 @@ Function Invoke-NativeCommand {
   Return [PSCustomObject]@{ Exit = [System.Int32]$Exit; Output = $Written.ToArray() }
 }
 
-# Reading the collection is the same act whether deciding or proving: export it by name and hand
-# back what the product holds. Exit 3 is the product's "no collections found matching the
-# specified name(s)", an empty current state rather than a failure; every other non-zero exit is
-# a failure to READ, and a read that failed must never be mistaken for a product holding nothing.
-# The export goes into a staging DIRECTORY because the product names the file after the
-# collection; exactly one file must come back, and it is read whole.
-Function Get-CollectionText {
-  Param ([System.String] $Name)
+# Read every declared name in one ExportCollections launch. Exit 3 means none of the requested
+# names exist. A successful batch must yield exactly one file per requested name, and each file's
+# own Name element decides which request it answers; filenames are product presentation only.
+Function Get-CollectionMap {
+  Param ([System.String[]] $Name)
+  $Current = [System.Collections.Generic.Dictionary[System.String, System.String]]::new(
+    [System.StringComparer]::OrdinalIgnoreCase
+  )
+  If ($Name.Count -eq 0) {
+    Return , $Current
+  }
+
+  $Requested = [System.Collections.Generic.HashSet[System.String]]::new(
+    $Name, [System.StringComparer]::OrdinalIgnoreCase
+  )
   $Staged = Join-Path -Path:$Ansible.Tmpdir -ChildPath:'pdq-collection-export'
   If (Test-Path -LiteralPath:$Staged) {
     Remove-Item -LiteralPath:$Staged -Recurse -Force
   }
-
-  $Export = Invoke-NativeCommand -FilePath:$CliPath -Operation:('Exporting the collection ''{0}''' -f $Name) -SuccessExitCode:@(0, 3) -Argument:@(
-    'ExportCollections', '-Name', $Name, '-Path', $Staged, '-Overwrite'
-  )
-  If ($Export.Exit -eq 3) {
-    Return [System.String]::Empty
-  }
-  $File = @(Get-ChildItem -LiteralPath:$Staged -Filter:'*.xml' -ErrorAction:'SilentlyContinue')
-  If ($File.Count -ne 1) {
-    Throw ('Exporting the collection ''{0}'': the command line reported success and wrote {1} files' -f $Name, $File.Count)
-  }
-
+  $Null = New-Item -ItemType:'Directory' -Path:$Staged
   Try {
-    $Text = Get-Content -LiteralPath:$File[0].FullName -Raw
-  } Catch {
-    Throw ('Exporting the collection ''{0}'': its export at ''{1}'' could not be read ({2})' -f @(
-        $Name, $File[0].FullName, $PSItem.Exception.Message
-      ))
-  }
-  Remove-Item -LiteralPath:$Staged -Recurse -Force
-  Return (ConvertTo-ComparableText -Text:$Text)
-}
-
-# Read the declaration first, so a malformed definition or an unaddressable name fails before
-# anything is written.
-$Declared = ConvertTo-ComparableText -Text:$Definition
-$Document = [System.Xml.XmlDocument]::new()
-Try {
-  $Document.LoadXml($Declared)
-} Catch {
-  Throw ('The definition is not valid XML ({0})' -f $PSItem.Exception.GetBaseException().Message)
-}
-# Explicit SelectSingleNode, never the property adapter, because a child named 'Name' would
-# otherwise collide with XmlNode's own Name property.
-If (@($Document.SelectNodes('/AdminArsenal.Export/Collection')).Count -ne 1) {
-  Throw 'The definition must carry exactly one top-level collection'
-}
-$NameNode = $Document.SelectSingleNode('/AdminArsenal.Export/Collection/Name')
-If ($Null -eq $NameNode -or [System.String]::IsNullOrWhiteSpace($NameNode.InnerText)) {
-  Throw 'The definition does not name a collection'
-}
-$Name = [System.String]$NameNode.InnerText
-If ($Name.Contains('\')) {
-  Throw ('{0} holds a backslash, which the product''s listing reads as a level separator; the pruning step could never corroborate it, so it is refused here, before it is ever imported' -f $Name)
-}
-$DeclaredKey = ConvertTo-ComparableCollection -Text:$Declared
-If (-not $NAME_PATTERN.IsMatch($Name)) {
-  Throw ('{0} cannot be addressed by the command line, which reads *, ? and , as selection syntax' -f $Name)
-}
-
-$Changed = $False
-$Ignored = $False
-
-If ((ConvertTo-ComparableCollection -Text:(Get-CollectionText -Name:$Name)) -cne $DeclaredKey) {
-  If ($Ansible.CheckMode) {
-    $Changed = $True
-  } Else {
-    # The command line imports a FILE, so the declaration becomes one. -Overwrite makes one path
-    # serve both a collection the product does not hold and one it holds differently; a
-    # collection that already matches never reaches here, so it never rewrites a match.
-    $Staged = Join-Path -Path:$Ansible.Tmpdir -ChildPath:'pdq-collection-import.xml'
-    Try {
-      Set-Content -LiteralPath:$Staged -Value:$Declared -Encoding:'utf8' -NoNewline
-    } Catch {
-      Throw ('Importing the collection ''{0}'': it could not be staged at ''{1}'' ({2})' -f @(
-          $Name, $Staged, $PSItem.Exception.Message
+    [System.String[]]$Argument = @('ExportCollections', '-Name') + $Name + @(
+      '-Path', $Staged, '-Overwrite'
+    )
+    $Export = Invoke-NativeCommand -FilePath:$CliPath `
+      -Operation:'Exporting the declared collections' `
+      -SuccessExitCode:@(0, 1, 2, 3, 4) -Argument:$Argument
+    Switch ($Export.Exit) {
+      1 { Throw 'ExportCollections reported that one or more requested collections failed to export' }
+      2 { Throw 'ExportCollections was cancelled' }
+      3 { Return , $Current }
+      4 { Throw 'ExportCollections skipped one or more requested collections because an export file already existed' }
+    }
+    $Files = @(Get-ChildItem -LiteralPath:$Staged -File)
+    If ($Files.Count -ne $Requested.Count) {
+      Throw ('ExportCollections reported success for {0} requested collection(s) but wrote {1} export file(s)' -f @(
+          $Requested.Count, $Files.Count
         ))
     }
-    $Null = Invoke-NativeCommand -FilePath:$CliPath -Operation:('Importing the collection ''{0}''' -f $Name) -Argument:@(
-      'ImportCollections', '-Path', $Staged, '-Overwrite'
-    )
-    Remove-Item -LiteralPath:$Staged -Force
+    ForEach ($File In $Files) {
+      Try {
+        $Text = ConvertTo-ComparableText -Text:(Get-Content -LiteralPath:$File.FullName -Raw)
+        $Document = [System.Xml.XmlDocument]::new()
+        $Document.LoadXml($Text)
+      } Catch {
+        Throw ('Reading the collection export at ''{0}'': {1}' -f @(
+            $File.FullName, $PSItem.Exception.GetBaseException().Message
+          ))
+      }
+      If (@($Document.SelectNodes('/AdminArsenal.Export/Collection')).Count -ne 1) {
+        Throw ('The collection export at ''{0}'' does not carry exactly one top-level collection' -f $File.FullName)
+      }
+      $NameNode = $Document.SelectSingleNode('/AdminArsenal.Export/Collection/Name')
+      If ($Null -eq $NameNode -or -not $Requested.Contains($NameNode.InnerText)) {
+        Throw ('The collection export at ''{0}'' does not answer a requested name' -f $File.FullName)
+      }
+      If ($Current.ContainsKey($NameNode.InnerText)) {
+        Throw ('ExportCollections wrote more than one definition for {0}' -f $NameNode.InnerText)
+      }
+      $Current.Add($NameNode.InnerText, $Text)
+    }
+  } Finally {
+    Remove-Item -LiteralPath:$Staged -Recurse -Force -ErrorAction:'SilentlyContinue'
+  }
+  Return , $Current
+}
 
-    # The product was told to write, so the host changed whatever the next read says. Reporting the
-    # change is not a claim that it is correct -- that is the read below, taken from the product
-    # rather than from the import's own report, because a collection the product accepted and did not
-    # store would otherwise pass as applied.
-    $Changed = $True
-    $Ignored = (ConvertTo-ComparableCollection -Text:(Get-CollectionText -Name:$Name)) -cne $DeclaredKey
+# Parse the complete declaration before any product read. Each name has exactly one owner, is
+# addressable by the batch export, and cannot overlap the product furniture protected below.
+$BuiltInSet = [System.Collections.Generic.HashSet[System.String]]::new(
+  $BuiltIn, [System.StringComparer]::OrdinalIgnoreCase
+)
+$Declared = [System.Collections.Generic.Dictionary[System.String, System.String]]::new(
+  [System.StringComparer]::OrdinalIgnoreCase
+)
+$DeclaredKey = [System.Collections.Generic.Dictionary[System.String, System.String]]::new(
+  [System.StringComparer]::OrdinalIgnoreCase
+)
+ForEach ($Text In $Definition) {
+  $Normal = ConvertTo-ComparableText -Text:$Text
+  $Document = [System.Xml.XmlDocument]::new()
+  Try {
+    $Document.LoadXml($Normal)
+  } Catch {
+    Throw ('A definition is not valid XML ({0})' -f $PSItem.Exception.GetBaseException().Message)
+  }
+  If (@($Document.SelectNodes('/AdminArsenal.Export/Collection')).Count -ne 1) {
+    Throw 'A definition must carry exactly one top-level collection'
+  }
+  $NameNode = $Document.SelectSingleNode('/AdminArsenal.Export/Collection/Name')
+  If ($Null -eq $NameNode -or [System.String]::IsNullOrWhiteSpace($NameNode.InnerText)) {
+    Throw 'A definition does not name a collection'
+  }
+  $Name = [System.String]$NameNode.InnerText
+  If ($Name.Contains('\')) {
+    Throw ('{0} holds a backslash, which the product''s listing reads as a level separator' -f $Name)
+  }
+  If (-not $NAME_PATTERN.IsMatch($Name)) {
+    Throw ('{0} cannot be addressed by the command line, which reads *, ? and , as selection syntax' -f $Name)
+  }
+  If ($BuiltInSet.Contains($Name)) {
+    Throw ('{0} is both declared and listed as the product''s own furniture; one name cannot have two owners' -f $Name)
+  }
+  If ($Declared.ContainsKey($Name)) {
+    Throw ('{0} is declared more than once; two definitions cannot own one name' -f $Name)
+  }
+  $Declared.Add($Name, $Normal)
+  $DeclaredKey.Add($Name, (ConvertTo-ComparableCollection -Text:$Normal))
+}
+
+$Initial = Get-CollectionMap -Name:@($Declared.Keys)
+$ToImport = [System.Collections.Generic.List[System.String]]::new()
+$Unchanged = [System.Collections.Generic.List[System.String]]::new()
+ForEach ($Name In $Declared.Keys) {
+  If ($Initial.ContainsKey($Name) -and
+    (ConvertTo-ComparableCollection -Text:$Initial[$Name]) -ceq $DeclaredKey[$Name]) {
+    $Unchanged.Add($Name)
+  } Else {
+    $ToImport.Add($Name)
   }
 }
 
+# The former pruner's established transaction remains intact: the product has no collection
+# delete verb, so the shipped sqlite3 is used only for that already-ratified DELETE. All state
+# comparison, import and post-write definition verification stays on PDQInventory.exe.
+$Sqlite = Join-Path -Path (Split-Path -Path $CliPath -Parent) -ChildPath 'sqlite3.exe'
+If (-not (Test-Path -LiteralPath:$Sqlite -PathType:'Leaf')) {
+  Throw ('The product database tool is not at ''{0}''' -f $Sqlite)
+}
+$Info = (Invoke-NativeCommand -Operation:'Reading the product system information' `
+    -FilePath:$CliPath -Argument:@('SystemInfo')).Output
+$DatabasePath = (
+  @($Info | Where-Object -FilterScript { $PSItem -match '^\s*Database\s*:' }) |
+    Select-Object -First 1
+) -replace '^\s*Database\s*:\s*', ''
+If (-not $DatabasePath) {
+  Throw 'SystemInfo did not report a database path'
+}
+If (-not (Test-Path -LiteralPath:$DatabasePath -PathType:'Leaf')) {
+  Throw ('The database is not at {0}' -f $DatabasePath)
+}
+
+Function Read-CollectionRow {
+  $Rows = [System.Collections.Generic.List[System.Object]]::new()
+  ForEach ($Line In (Invoke-NativeCommand -Operation:'Reading the collection table' -FilePath:$Sqlite `
+        -Argument:@($DatabasePath, "SELECT CollectionId, IFNULL(ParentId, ''), IFNULL(Type, ''), hex(Name), hex(IFNULL(ADDistinguishedName, '')) FROM Collections;")).Output) {
+    $Parts = ([System.String]$Line).Split('|')
+    If ($Parts.Count -ne 5 -or $Parts[0] -notmatch '^[0-9]+$' -or
+      $Parts[1] -notmatch '^[0-9]*$' -or $Parts[3] -notmatch '^([0-9A-Fa-f]{2})*$' -or
+      $Parts[4] -notmatch '^([0-9A-Fa-f]{2})*$') {
+      Throw ('The collection table did not read back as id, parent, type, hex name and hex AD distinguished name: {0}' -f $Line)
+    }
+    $Bytes = [System.Byte[]]::new($Parts[3].Length / 2)
+    For ($B = 0; $B -lt $Bytes.Length; $B++) {
+      $Bytes[$B] = [System.Convert]::ToByte($Parts[3].Substring($B * 2, 2), 16)
+    }
+    $Rows.Add([PSCustomObject]@{
+        Id                   = $Parts[0]
+        Parent               = $Parts[1]
+        Type                 = $Parts[2]
+        Hex                  = $Parts[3]
+        Name                 = [System.Text.Encoding]::UTF8.GetString($Bytes)
+        ADDistinguishedHex   = $Parts[4]
+        ActiveDirectoryOwned = $Parts[2] -ceq 'ActiveDirectoryCollection' -or $Parts[4].Length -gt 0
+      })
+  }
+  Return , $Rows
+}
+
+$Rows = Read-CollectionRow
+$TopLevel = @($Rows | Where-Object { $PSItem.Parent -eq '' })
+$LibraryRows = @($Rows | Where-Object { $PSItem.Type -ceq 'LibraryCollection' })
+$LibraryIdentity = @($LibraryRows | ForEach-Object { '{0}|{1}' -f $PSItem.Id, $PSItem.Hex } |
+    Sort-Object) -join "`n"
+$ActiveDirectoryRows = @($Rows | Where-Object { $PSItem.ActiveDirectoryOwned })
+$ActiveDirectoryIdentity = @($ActiveDirectoryRows |
+    ForEach-Object { '{0}|{1}' -f $PSItem.Id, $PSItem.Hex } | Sort-Object) -join "`n"
+$ActiveDirectoryNames = [System.Collections.Generic.HashSet[System.String]]::new(
+  [System.String[]]@($ActiveDirectoryRows | ForEach-Object Name),
+  [System.StringComparer]::OrdinalIgnoreCase
+)
+$ClaimedActiveDirectory = @($Declared.Keys | Where-Object {
+    $ActiveDirectoryNames.Contains($PSItem)
+  })
+If ($ClaimedActiveDirectory.Count -gt 0) {
+  Throw ('{0} is declared but owned by Active Directory sync; one name cannot have two owners' -f `
+    ($ClaimedActiveDirectory -join ', '))
+}
+
+$Folded = [System.Collections.Generic.HashSet[System.String]]::new(
+  [System.StringComparer]::OrdinalIgnoreCase
+)
+ForEach ($Row In $TopLevel) {
+  If ($Row.Type -cne 'LibraryCollection' -and -not $Row.ActiveDirectoryOwned -and
+    -not $Folded.Add($Row.Name)) {
+    Throw ('The product holds more than one top-level collection named {0} (differing only by case); resolve that by hand first' -f $Row.Name)
+  }
+}
+
+$SyntheticNames = [System.String[]]@('All Computers')
+$Listing = [System.Collections.Generic.HashSet[System.String]]::new(
+  [System.String[]]@((Invoke-NativeCommand -Operation:'Listing the collections' `
+        -FilePath:$CliPath -Argument:@('GetAllCollections')).Output |
+      ForEach-Object { ([System.String]$PSItem).TrimEnd([System.Char]13, [System.Char]10) } |
+      Where-Object { $PSItem.Length -gt 0 }),
+  [System.StringComparer]::Ordinal
+)
+ForEach ($Row In @($TopLevel | Where-Object {
+      $PSItem.Type -cne 'LibraryCollection' -and -not $PSItem.ActiveDirectoryOwned
+    })) {
+  If ($Row.Name.Contains('\')) {
+    Throw ('{0} holds a backslash, which the listing reads as a level separator; it cannot be corroborated' -f $Row.Name)
+  }
+  If ($SyntheticNames -contains $Row.Name) {
+    Throw ('{0} wears the name of an entry the listing invents; it cannot be corroborated' -f $Row.Name)
+  }
+  If (-not $Listing.Contains($Row.Name)) {
+    Throw ('The table holds the top-level collection {0} but the product''s listing does not' -f $Row.Name)
+  }
+}
+
+$TopNames = [System.Collections.Generic.HashSet[System.String]]::new(
+  [System.String[]]@($TopLevel | ForEach-Object Name), [System.StringComparer]::OrdinalIgnoreCase
+)
+$Vanished = @($BuiltIn | Where-Object { -not $TopNames.Contains($PSItem) })
+If ($Vanished.Count -gt 0) {
+  Throw ('The product does not hold the built-in collection(s) {0}; refusing to prune' -f ($Vanished -join ', '))
+}
+
+$Strangers = @($TopLevel | Where-Object {
+    $PSItem.Type -cne 'LibraryCollection' -and
+    -not $PSItem.ActiveDirectoryOwned -and
+    -not $BuiltInSet.Contains($PSItem.Name) -and
+    -not $Declared.ContainsKey($PSItem.Name)
+  })
+$Doomed = [System.Collections.Generic.List[System.Object]]::new()
+ForEach ($Root In $Strangers) {
+  $Queue = [System.Collections.Generic.Queue[System.Object]]::new()
+  $Queue.Enqueue($Root)
+  While ($Queue.Count -gt 0) {
+    $Current = $Queue.Dequeue()
+    $Doomed.Add($Current)
+    ForEach ($Child In @($Rows | Where-Object { $PSItem.Parent -eq $Current.Id })) {
+      $Queue.Enqueue($Child)
+    }
+  }
+}
+ForEach ($Dead In $Doomed) {
+  If ($Dead.Type -ceq 'LibraryCollection') {
+    Throw ('{0} sits under an undeclared collection but belongs to the Collection Library' -f $Dead.Name)
+  }
+  # Refuse the whole subtree: deleting its ancestor would detach directory-sync-owned state, so
+  # skipping only this row would still damage the product's hierarchy.
+  If ($Dead.ActiveDirectoryOwned) {
+    Throw ('{0} sits under an undeclared collection but belongs to Active Directory sync' -f $Dead.Name)
+  }
+}
+
+If ($Doomed.Count -gt 0) {
+  $DoomedId = [System.Collections.Generic.HashSet[System.String]]::new(
+    [System.String[]]@($Doomed | ForEach-Object Id), [System.StringComparer]::Ordinal
+  )
+  $Referenced = (Invoke-NativeCommand -Operation:'Reading the collection references' -FilePath:$Sqlite `
+      -Argument:@($DatabasePath, "SELECT IFNULL(CollectionId, '') FROM ScanProfileCollections UNION SELECT IFNULL(CollectionSourceId, '') FROM AutoReports;")).Output
+  ForEach ($Reference In $Referenced) {
+    If ($DoomedId.Contains(([System.String]$Reference).Trim())) {
+      $Holder = @($Doomed | Where-Object { $PSItem.Id -eq ([System.String]$Reference).Trim() })[0]
+      Throw ('{0} is not declared, but a scan profile or auto report refers to it' -f $Holder.Name)
+    }
+  }
+}
+
+$Applied = [System.Collections.Generic.List[System.String]]::new()
+$Removed = [System.Collections.Generic.List[System.String]]::new()
+$Ignored = [System.Collections.Generic.List[System.String]]::new()
+$Survivors = [System.Collections.Generic.List[System.String]]::new()
+$Changed = $ToImport.Count -gt 0 -or $Strangers.Count -gt 0
+
+If ($Ansible.CheckMode) {
+  $Applied.AddRange($ToImport)
+  $Removed.AddRange([System.String[]]@($Strangers | ForEach-Object Name))
+} Else {
+  ForEach ($Name In $ToImport) {
+    $Staged = Join-Path -Path:$Ansible.Tmpdir -ChildPath:'pdq-collection-import.xml'
+    Try {
+      Set-Content -LiteralPath:$Staged -Value:$Declared[$Name] -Encoding:'utf8' -NoNewline
+      $Null = Invoke-NativeCommand -FilePath:$CliPath `
+        -Operation:('Importing the collection ''{0}''' -f $Name) `
+        -Argument:@('ImportCollections', '-Path', $Staged, '-Overwrite')
+    } Finally {
+      Remove-Item -LiteralPath:$Staged -Force -ErrorAction:'SilentlyContinue'
+    }
+  }
+
+  If ($Doomed.Count -gt 0) {
+    $Statements = [System.Collections.Generic.List[System.String]]::new()
+    $Statements.Add('PRAGMA busy_timeout = 5000;')
+    $Statements.Add('BEGIN IMMEDIATE;')
+    For ($D = $Doomed.Count - 1; $D -ge 0; $D--) {
+      $TypeHex = -join ([System.Text.Encoding]::UTF8.GetBytes($Doomed[$D].Type) |
+          ForEach-Object { $PSItem.ToString('X2') })
+      $Predicate = "DELETE FROM Collections WHERE CollectionId = {0} AND hex(Name) = '{1}' AND IFNULL(ParentId, '') = '{2}' AND hex(IFNULL(Type, '')) = '{3}' AND hex(IFNULL(ADDistinguishedName, '')) = '{4}'" -f @(
+        $Doomed[$D].Id, $Doomed[$D].Hex, $Doomed[$D].Parent, $TypeHex,
+        $Doomed[$D].ADDistinguishedHex
+      )
+      $Statements.Add($Predicate `
+          + ' AND CollectionId NOT IN (SELECT CollectionId FROM ScanProfileCollections)' `
+          + ' AND CollectionId NOT IN (SELECT IFNULL(CollectionSourceId, -1) FROM AutoReports);')
+    }
+    $Statements.Add('COMMIT;')
+    $Null = Invoke-NativeCommand -Operation:'Removing the undeclared collections' -FilePath:$Sqlite `
+      -Argument:@($DatabasePath, ($Statements -join ' '))
+  }
+
+  $Final = If ($Changed) { Get-CollectionMap -Name:@($Declared.Keys) } Else { $Initial }
+  ForEach ($Name In $ToImport) {
+    If ($Final.ContainsKey($Name) -and
+      (ConvertTo-ComparableCollection -Text:$Final[$Name]) -ceq $DeclaredKey[$Name]) {
+      $Applied.Add($Name)
+    } Else {
+      $Ignored.Add($Name)
+    }
+  }
+  ForEach ($Name In $Declared.Keys) {
+    If (-not $Final.ContainsKey($Name) -or
+      (ConvertTo-ComparableCollection -Text:$Final[$Name]) -cne $DeclaredKey[$Name]) {
+      If (-not $Ignored.Contains($Name)) {
+        $Ignored.Add($Name)
+      }
+    }
+  }
+
+  If ($Changed) {
+    $After = Read-CollectionRow
+    $AfterIdentity = [System.Collections.Generic.HashSet[System.String]]::new(
+      [System.StringComparer]::Ordinal
+    )
+    ForEach ($Row In $After) {
+      $Null = $AfterIdentity.Add(('{0}|{1}' -f $Row.Id, $Row.Hex))
+    }
+    ForEach ($Dead In $Doomed) {
+      If ($AfterIdentity.Contains(('{0}|{1}' -f $Dead.Id, $Dead.Hex))) {
+        $Survivors.Add($Dead.Name)
+      }
+    }
+    ForEach ($Root In $Strangers) {
+      If (-not $AfterIdentity.Contains(('{0}|{1}' -f $Root.Id, $Root.Hex))) {
+        $Removed.Add($Root.Name)
+      }
+    }
+    $AfterTop = @($After | Where-Object { $PSItem.Parent -eq '' })
+    $AfterNames = [System.Collections.Generic.HashSet[System.String]]::new(
+      [System.String[]]@($AfterTop | ForEach-Object Name), [System.StringComparer]::OrdinalIgnoreCase
+    )
+    $MissingProtected = @(@($Declared.Keys) + @($BuiltIn) |
+        Where-Object { -not $AfterNames.Contains($PSItem) })
+    If ($MissingProtected.Count -gt 0) {
+      Throw ('The product does not hold the declared or built-in collection(s) {0}' -f `
+        ($MissingProtected -join ', '))
+    }
+    $LibraryAfter = @($After | Where-Object { $PSItem.Type -ceq 'LibraryCollection' } |
+        ForEach-Object { '{0}|{1}' -f $PSItem.Id, $PSItem.Hex } | Sort-Object) -join "`n"
+    If ($LibraryAfter -cne $LibraryIdentity) {
+      Throw 'The Collection Library does not hold the same rows it held before this run'
+    }
+    $ActiveDirectoryAfter = @($After | Where-Object { $PSItem.ActiveDirectoryOwned } |
+        ForEach-Object { '{0}|{1}' -f $PSItem.Id, $PSItem.Hex } | Sort-Object) -join "`n"
+    If ($ActiveDirectoryAfter -cne $ActiveDirectoryIdentity) {
+      Throw 'Active Directory sync does not hold the same collection rows it held before this run'
+    }
+  }
+}
+
+$KeptCount = @($TopLevel | Where-Object {
+    $PSItem.Type -cne 'LibraryCollection' -and -not $PSItem.ActiveDirectoryOwned
+  }).Count - $Strangers.Count
 $Result = [PSCustomObject]@{
+  applied    = [System.String[]]$Applied
   changed    = [System.Boolean]$Changed
   check_mode = [System.Boolean]$Ansible.CheckMode
-  # The declaration itself, so the caller can hand the complete set to the pruning step: deciding
-  # what is owned needs the definitions, not just their names.
-  definition = [System.String]$Declared
-  ignored    = [System.Boolean]$Ignored
-  msg        = If ($Ignored) {
-    '{0} does not read back as declared after import' -f $Name
+  declared   = [System.Int32]$Declared.Count
+  ignored    = [System.String[]]$Ignored
+  kept       = [System.Int32]$KeptCount
+  library    = [System.Int32]$LibraryRows.Count
+  msg        = If ($Ansible.CheckMode) {
+    'Would apply: {0}; would remove: {1}' -f ($Applied -join ', '), ($Removed -join ', ')
+  } ElseIf ($Ignored.Count -gt 0 -or $Survivors.Count -gt 0) {
+    'The declared collection set did not settle (missing or different: {0}; undeclared still held: {1})' -f ($Ignored -join ', '), ($Survivors -join ', ')
   } ElseIf (-not $Changed) {
-    '{0} is already correct' -f $Name
-  } ElseIf ($Ansible.CheckMode) {
-    '{0} would be applied' -f $Name
+    'No collection changes; {0} already correct, {1} built-in kept, library untouched' -f $Unchanged.Count, $BuiltInSet.Count
   } Else {
-    '{0} applied' -f $Name
+    'Applied: {0}; removed: {1}; already correct: {2}' -f ($Applied -join ', '), ($Removed -join ', '), $Unchanged.Count
   }
-  name       = $Name
+  removed    = [System.String[]]$Removed
+  survivors  = [System.String[]]$Survivors
+  unchanged  = [System.String[]]$Unchanged
 }
 
 #endregion --- [ Main ] ---------------------------------------------------------------------- #
@@ -460,15 +756,14 @@ Write-Debug -Message:'Entering Stage: Output'
 $Ansible.Changed = $Result.changed
 $Ansible.Result = $Result
 
-# The result is published either way, so a caller can see which collection failed to read back, and
-# that the host was written to, before the failure is raised.
-If ($Result.ignored) {
+# The result is published either way, so a caller can see every collection that failed to settle.
+If ($Result.ignored.Count -gt 0 -or $Result.survivors.Count -gt 0) {
   $Ansible.Failed = $True
 }
 
 If ($StandaloneRun) {
   $Ansible.Result | ConvertTo-Json -Depth:4
-  If ($Result.ignored) {
+  If ($Result.ignored.Count -gt 0 -or $Result.survivors.Count -gt 0) {
     Exit 2
   }
 }

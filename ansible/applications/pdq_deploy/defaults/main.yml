@@ -389,6 +389,7 @@ pdq_deploy_defaults:
   # An EMPTY list has the full blast radius of that promise: after the presence assertion confirms
   # files/packages/ is also empty, the reconcile removes EVERY package the product holds.
   packages:
+    - '7-Zip - Install.xml'
     - 'Google Chrome - Install.xml'
 
   # The scan profile every scan step in a package runs, by PACKAGE name -- the product's own

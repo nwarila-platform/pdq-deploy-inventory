@@ -102,6 +102,7 @@
 # The stub names its source script under scripts/; the materialized files/Get-InstalledSoftware.ps1
 # is a build artifact and is deliberately NEVER allowlisted, so it cannot be committed.
 !/ansible/applications/pdq_deploy/files/packages/.gitattributes
+!/ansible/applications/pdq_deploy/files/packages/7-Zip - Install.xml
 !/ansible/applications/pdq_deploy/files/packages/Google Chrome - Install.xml
 !/ansible/applications/pdq_deploy/files/Get-InstalledSoftware.ps1.stub
 !/ansible/applications/pdq_deploy/files/Set-RepositoryContent.ps1.stub
@@ -133,6 +134,8 @@
 !/ansible/applications/pdq_inventory/files/Set-PdqVariable.ps1.stub
 !/ansible/applications/pdq_inventory/files/Set-PdqCollection.ps1.stub
 !/ansible/applications/pdq_inventory/files/collections/*.xml
+!/ansible/applications/pdq_inventory/files/collections/Required_ 7-Zip.xml
+!/ansible/applications/pdq_inventory/files/collections/Required_ Google Chrome.xml
 !/ansible/applications/pdq_inventory/handlers/main.yml
 !/ansible/applications/pdq_inventory/meta/main.yml
 !/ansible/applications/pdq_inventory/tasks/absent_windows.yml
@@ -181,6 +184,8 @@
 # PowerShell ships as a pair: the script and its spec are both tracked here.
 !/scripts/Get-InstalledSoftware.pester.ps1
 !/scripts/Get-InstalledSoftware.ps1
+!/scripts/Start-Uninstaller.pester.ps1
+!/scripts/Start-Uninstaller.ps1
 !/scripts/Set-RepositoryAcl.pester.ps1
 !/scripts/Set-RepositoryAcl.ps1
 !/scripts/Set-PdqSetting.pester.ps1

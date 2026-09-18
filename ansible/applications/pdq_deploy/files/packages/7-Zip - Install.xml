@@ -34,7 +34,7 @@
         <PowerShellStep>
           <CustomCommandLine></CustomCommandLine>
           <Files>$(Repository)\~resources\Start-Uninstaller.ps1</Files>
-          <Script>&amp; ".\Start-Uninstaller.ps1" -DisplayNamePattern 'Google Chrome*' -SilentSwitch '--force-uninstall' -SuccessExitCode @(0, 1641, 3010)
+          <Script>&amp; ".\Start-Uninstaller.ps1" -DisplayNamePattern '7-Zip*' -SilentSwitch '/S' -SuccessExitCode @(0, 1641, 3010)
 Exit $LASTEXITCODE</Script>
           <SuccessCodes>0</SuccessCodes>
           <RunAs value="null" />
@@ -51,12 +51,12 @@ Exit $LASTEXITCODE</Script>
             <PackageStepCondition>
               <ConditionMode>IsMember</ConditionMode>
               <InventoryCollectionId value="null" />
-              <InventoryCollectionName>Required: Google Chrome</InventoryCollectionName>
+              <InventoryCollectionName>Required: 7-Zip</InventoryCollectionName>
               <TypeName>Collection</TypeName>
             </PackageStepCondition>
           </Conditions>
           <ErrorMode>StopDeploymentFail</ErrorMode>
-          <Title>Remove: non-MSI Google Chrome</Title>
+          <Title>Remove: non-MSI 7-Zip</Title>
           <TypeName>PowerShell</TypeName>
           <IsEnabled value="true" />
           <IsPostStep value="false" />
@@ -64,7 +64,7 @@ Exit $LASTEXITCODE</Script>
         </PowerShellStep>
         <InstallStep>
           <CustomCommandLine></CustomCommandLine>
-          <FileName>$(Repository)\Google LLC\Google Chrome\@(Google-LLC_Google-Chrome)\Google-LLC_Google-Chrome_@(Google-LLC_Google-Chrome)_x64.msi</FileName>
+          <FileName>$(Repository)\Igor Pavlov\7-Zip\@(Igor-Pavlov_7-Zip)\Igor-Pavlov_7-Zip_@(Igor-Pavlov_7-Zip)_x64.msi</FileName>
           <Files></Files>
           <IncludeDirectory value="false" />
           <LeaveInstallFile value="false" />
@@ -87,12 +87,12 @@ Exit $LASTEXITCODE</Script>
             <PackageStepCondition>
               <ConditionMode>IsMember</ConditionMode>
               <InventoryCollectionId value="null" />
-              <InventoryCollectionName>Required: Google Chrome</InventoryCollectionName>
+              <InventoryCollectionName>Required: 7-Zip</InventoryCollectionName>
               <TypeName>Collection</TypeName>
             </PackageStepCondition>
           </Conditions>
           <ErrorMode>StopDeploymentFail</ErrorMode>
-          <Title>Install: Google Chrome (x64)</Title>
+          <Title>Install: 7-Zip (x64)</Title>
           <TypeName>Install</TypeName>
           <IsEnabled value="true" />
           <IsPostStep value="false" />
@@ -102,7 +102,7 @@ Exit $LASTEXITCODE</Script>
           <CustomCommandLine></CustomCommandLine>
           <Files>$(Repository)\~resources\Get-InstalledSoftware.ps1</Files>
           <Script>Try {
-  $Result = &amp; ".\Get-InstalledSoftware.ps1" -DisplayName 'Google Chrome' -Version '@(Google-LLC_Google-Chrome)' | ConvertFrom-Json -ErrorAction:'Stop'
+  $Result = &amp; ".\Get-InstalledSoftware.ps1" -DisplayName '7-Zip 26.02 (x64 edition)' -Version '@(Igor-Pavlov_7-Zip)' | ConvertFrom-Json -ErrorAction:'Stop'
 } Catch {
   Write-Error -Message:('Verification failed: {0}' -f $PSItem.Exception.Message) -ErrorAction:'Continue'
   Exit 3
@@ -116,7 +116,7 @@ If ($Result.ambiguous) {
   Exit 2
 }
 If ($Result.action_required) {
-  Write-Error -Message:('Verification failed: Google Chrome is missing or below version @(Google-LLC_Google-Chrome). {0}' -f $Result.msg) -ErrorAction:'Continue'
+  Write-Error -Message:('Verification failed: 7-Zip is missing or below version @(Igor-Pavlov_7-Zip). {0}' -f $Result.msg) -ErrorAction:'Continue'
   Exit 1
 }
 Exit 0</Script>
@@ -140,7 +140,7 @@ Exit 0</Script>
             </PackageStepCondition>
           </Conditions>
           <ErrorMode>StopDeploymentFail</ErrorMode>
-          <Title>Verify: Google Chrome</Title>
+          <Title>Verify: 7-Zip</Title>
           <TypeName>PowerShell</TypeName>
           <IsEnabled value="true" />
           <IsPostStep value="false" />
@@ -154,23 +154,23 @@ Exit 0</Script>
     <Description></Description>
     <NewLibraryPackageVersionId value="null" />
     <OriginalId value="null" />
-    <Version>@(Google-LLC_Google-Chrome)</Version>
+    <Version>@(Igor-Pavlov_7-Zip)</Version>
     <IsAutoDownload value="false" />
     <FolderId value="4" />
     <LibraryPackageId value="null" />
     <LibraryPackageVersionId value="null" />
-    <Name>Google Chrome - Install</Name>
-    <Path>Packages\Google LLC\Google Chrome\Google Chrome - Install</Path>
+    <Name>7-Zip - Install</Name>
+    <Path>Packages\Igor Pavlov\7-Zip\7-Zip - Install</Path>
     <CustomVariables type="list">
       <CustomVariable>
-        <Name>Google-LLC_Google-Chrome</Name>
-        <Value>152.0.7977.76</Value>
+        <Name>Igor-Pavlov_7-Zip</Name>
+        <Value>26.02.00.0</Value>
       </CustomVariable>
     </CustomVariables>
     <PackageDisplaySettings name="DisplaySettings">
       <DisplayType>Normal</DisplayType>
       <IconKey>Icon-Package</IconKey>
-      <SortOrder value="7" />
+      <SortOrder value="8" />
     </PackageDisplaySettings>
   </Package>
 </AdminArsenal.Export>

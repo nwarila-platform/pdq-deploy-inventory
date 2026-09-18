@@ -21,11 +21,15 @@
         Comparison ignores where the console FILED the collection: the row id, parent, path and
         the library-or-not type marker never survive a round trip (measured 2026-08-26 against
         PDQ Inventory 20.1.8.0 -- an import lands at the top level and comes back as its own
-        DynamicCollection whatever the source said). Everything else, the filter logic and the
-        timestamps included, exports back byte-for-byte, so any remaining difference is a real
-        difference in the collection. The byte-order mark, line endings and trailing whitespace
-        are normalised for the same reason as everywhere else: Ansible strips trailing whitespace
-        from the declaration on its way in.
+        DynamicCollection whatever the source said). The product normalizes Created and Modified
+        to UTC on import. A declaration cannot be required to predict the product's spelling of
+        either instant. Created is bookkeeping with no effect on what the collection selects;
+        Modified likewise does not affect membership and a console edit also re-stamps it. Across
+        the sixteen UTC declarations measured at HEAD, the filter logic and other fields exported
+        byte-for-byte. Error and ImportedPath are product-writable but remain compared, so
+        differences there fail to settle rather than silently accepting a wrong state. The
+        byte-order mark, line endings and trailing whitespace are normalised for the same reason as
+        everywhere else: Ansible strips trailing whitespace from the declaration on its way in.
 
         The export writes one file per requested collection into a staging directory. Every file
         is read whole and the directory is removed. A collection definition carries no secrets.
@@ -157,8 +161,11 @@ New-Variable -Force -Name:'NAME_PATTERN' -Option:('Private', 'ReadOnly') -Value:
 # survive a round trip: compared, they would report a change on every converge and then fail the
 # verification that follows it. Measured 2026-08-26 -- Id 4431 -> 5765, ParentId 4430 -> null,
 # Path to the bare name, Type LibraryCollection -> DynamicCollection, and a LibraryCollectionId
-# the declaration never carried came back as value="null"; TypeName, the filter logic and even
-# the timestamps came back byte-identical.
+# the declaration never carried came back as value="null"; TypeName and the filter logic came
+# back byte-identical. The product normalizes Created and Modified to UTC on import. A declaration
+# cannot be required to predict the product's spelling of either instant.
+# Created is bookkeeping with no effect on what the collection selects; Modified likewise does not
+# affect membership and a console edit also re-stamps it.
 #
 # CustomVariables is different in kind but equally derived: the export EMBEDS a snapshot of every
 # referenced custom variable's CURRENT value (measured -- a filter naming the pinned browser
@@ -174,6 +181,8 @@ New-Variable -Force -Name:'PLACEMENT_ELEMENTS' -Option:'ReadOnly' -Value:(
     '//Collection/Path'
     '//Collection/Type'
     '//Collection/LibraryCollectionId'
+    '//Collection/Created'
+    '//Collection/Modified'
     '//Collection/CustomVariables'
   )
 )
@@ -651,7 +660,7 @@ If ($Ansible.CheckMode) {
     For ($D = $Doomed.Count - 1; $D -ge 0; $D--) {
       $TypeHex = -join ([System.Text.Encoding]::UTF8.GetBytes($Doomed[$D].Type) |
           ForEach-Object { $PSItem.ToString('X2') })
-      $Predicate = "DELETE FROM Collections WHERE CollectionId = {0} AND hex(Name) = '{1}' AND IFNULL(ParentId, '') = '{2}' AND hex(IFNULL(Type, '')) = '{3}' AND hex(IFNULL(ADDistinguishedName, '')) = '{4}'" -f @(
+      $Predicate = "DELETE FROM Collections WHERE CollectionId = {0} AND hex(Name) = '{1}' AND IFNULL(CAST(ParentId AS TEXT), '') = '{2}' AND hex(IFNULL(Type, '')) = '{3}' AND hex(IFNULL(ADDistinguishedName, '')) = '{4}'" -f @(
         $Doomed[$D].Id, $Doomed[$D].Hex, $Doomed[$D].Parent, $TypeHex,
         $Doomed[$D].ADDistinguishedHex
       )

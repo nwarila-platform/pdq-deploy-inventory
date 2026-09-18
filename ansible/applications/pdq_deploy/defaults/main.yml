@@ -407,6 +407,10 @@ pdq_deploy_defaults:
   # the only portable half of the reference and it is declared here. A package with no scan step
   # has no entry; a scan step whose package is not named here stops the converge, because a step
   # pointed at another console's profile scans the wrong thing rather than failing.
-  scan_profiles: {}
+  # The profile is chosen per package, not defaulted: a change that changes an application is
+  # followed by an application scan, and the console mirrors several profiles, five product-owned.
+  scan_profiles:
+    '7-Zip - Install': 'Applications'
+    'Google Chrome - Install': 'Applications'
 
   #endregion --- [ Declared packages ] ------------------------------------------------------- #

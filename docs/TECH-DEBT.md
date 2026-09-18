@@ -72,21 +72,28 @@
   three launches per collection predicts 2.8 + 3 × 17.3 ≈ 55 s against 48.0 s measured.
 - **Correction:** `Set-PdqCollection.ps1` now owns the complete definition array. The Inventory
   role invokes it once, with no Ansible loop; one `ExportCollections` call carries every declared
-  name as the command's comma-separated list, only differing definitions are imported, and the
-  complete set is read back after mutation. The result object's `applied`, `removed`, `unchanged`,
-  `ignored`, and `survivors` arrays preserve the names formerly supplied by loop labels.
+  name as a separate argument after `-Name` and writes one file per collection into a staging
+  directory, only differing definitions are imported, and the complete set is read back after
+  mutation. This is the measured `string+` invocation required by Inventory 20.1.8; a single
+  comma-joined argument is treated as one collection name. The result object's `applied`,
+  `removed`, `unchanged`, `ignored`, and `survivors` arrays preserve the names formerly supplied
+  by loop labels.
 - **Authoritative sets:** the collection and variable Set scripts now also own removal, including
   empty declarations. The standalone Remove scripts, specs, stubs, role tasks, and allowlist
   entries were retired. Built-in collections and every Collection Library row retain the former
   pruner's exact protection.
 - **Closure evidence:** the collection spec proves a converged plural declaration makes exactly
-  one `ExportCollections` launch and reports unchanged; the mutation cases prove only differences
-  are imported, undeclared entries are removed, built-ins and the library survive, failures name
-  what did not settle, and read-back is batched. Its first-change/second-converge case proves the
-  changed collection is named first and the following pass makes one read, no write, and reports
-  unchanged. The two authoritative-set specs passed all 22 tests on 2026-09-18. The deployment
-  workflow's drift, export-equality, and repaired-state gates are enabled again, so its next live
-  run must independently prove the authoritative repair and following steady converge.
+  one `ExportCollections` launch with each name as a separate `string+` argument. The script
+  creates the staging directory before that launch, requires one file per requested collection,
+  and correlates each file by its embedded XML `Name` rather than by its filename. The spec also
+  proves exit 3 is the valid empty-product answer, while statuses 1, 2 and 4 stop before import or
+  prune. Comma-bearing names remain refused because comma is per-name selection syntax; that
+  addressability rule is independent of batching multiple names as separate arguments. The
+  mutation cases prove only differences are imported, undeclared entries are removed, built-ins
+  and the library survive, failures name what did not settle, and read-back is batched. The
+  focused collection spec passed all 20 tests on 2026-09-18. The deployment workflow's drift,
+  export-equality, and repaired-state gates are enabled again, so its next live run must
+  independently prove the authoritative repair and following steady converge.
 - **Exit criteria met:** one task applies the collection set; one command-line launch reads all
   declared collections on a converged host; the converged script reports `changed=0`; every changed
   collection remains named in the result.

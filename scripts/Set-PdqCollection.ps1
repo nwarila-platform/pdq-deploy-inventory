@@ -12,10 +12,11 @@
         Collection Library and directory-sync-owned tree is removed, including its children.
 
         The product's export is both the comparison and the verify oracle. Every declared name is
-        read in one ExportCollections launch, using the command's comma-separated name list. Only
-        definitions that differ are imported. After mutation the complete declared set is read in
-        one more launch and must match, so anything the product accepted but did not store is
-        named and fails the run. A converged host pays for one export and writes nothing.
+        read in one ExportCollections launch, passing each name as a separate argument and a
+        staging directory for the resulting files. Only definitions that differ are imported.
+        After mutation the complete declared set is read in one more launch and must match, so
+        anything the product accepted but did not store is named and fails the run. A converged
+        host pays for one export and writes nothing.
 
         Comparison ignores where the console FILED the collection: the row id, parent, path and
         the library-or-not type marker never survive a round trip (measured 2026-08-26 against
@@ -144,9 +145,9 @@ New-Variable -Force -Name:'LOG_LEVELS' -Option:('Private', 'ReadOnly') -Value:(
   [System.String[]]@('Verbose', 'Debug', 'Information', 'Warning', 'Error', 'Fatal')
 )
 
-# The command line selects a collection by PATTERN: -Name reads * and ? as wildcards and a comma
-# as a separator (the product's own reference), so a name carrying one of those cannot be
-# addressed as itself.
+# The command line selects a collection by PATTERN: -Name reads * and ? as wildcards, and its help
+# reserves commas as selection syntax. Multiple names are passed as separate arguments, but a name
+# carrying any of those characters still cannot be addressed unambiguously as itself.
 New-Variable -Force -Name:'NAME_PATTERN' -Option:('Private', 'ReadOnly') -Value:(
   [System.Text.RegularExpressions.Regex]::new('^[^*?,]+$')
 )
@@ -350,7 +351,7 @@ Function Invoke-NativeCommand {
 }
 
 # Read every declared name in one ExportCollections launch. Exit 3 means none of the requested
-# names exist. A successful batch must yield at most one file per requested name, and each file's
+# names exist. A successful batch must yield exactly one file per requested name, and each file's
 # own Name element decides which request it answers; filenames are product presentation only.
 Function Get-CollectionMap {
   Param ([System.String[]] $Name)
@@ -368,17 +369,27 @@ Function Get-CollectionMap {
   If (Test-Path -LiteralPath:$Staged) {
     Remove-Item -LiteralPath:$Staged -Recurse -Force
   }
-  $Export = Invoke-NativeCommand -FilePath:$CliPath -Operation:'Exporting the declared collections' `
-    -SuccessExitCode:@(0, 3) `
-    -Argument:@('ExportCollections', '-Name', ($Name -join ','), '-Path', $Staged, '-Overwrite')
-  If ($Export.Exit -eq 3) {
-    Return , $Current
-  }
-  If (-not (Test-Path -LiteralPath:$Staged -PathType:'Container')) {
-    Throw 'ExportCollections reported success and wrote no directory'
-  }
+  $Null = New-Item -ItemType:'Directory' -Path:$Staged
   Try {
-    ForEach ($File In @(Get-ChildItem -LiteralPath:$Staged -Filter:'*.xml')) {
+    [System.String[]]$Argument = @('ExportCollections', '-Name') + $Name + @(
+      '-Path', $Staged, '-Overwrite'
+    )
+    $Export = Invoke-NativeCommand -FilePath:$CliPath `
+      -Operation:'Exporting the declared collections' `
+      -SuccessExitCode:@(0, 1, 2, 3, 4) -Argument:$Argument
+    Switch ($Export.Exit) {
+      1 { Throw 'ExportCollections reported that one or more requested collections failed to export' }
+      2 { Throw 'ExportCollections was cancelled' }
+      3 { Return , $Current }
+      4 { Throw 'ExportCollections skipped one or more requested collections because an export file already existed' }
+    }
+    $Files = @(Get-ChildItem -LiteralPath:$Staged -File)
+    If ($Files.Count -ne $Requested.Count) {
+      Throw ('ExportCollections reported success for {0} requested collection(s) but wrote {1} export file(s)' -f @(
+          $Requested.Count, $Files.Count
+        ))
+    }
+    ForEach ($File In $Files) {
       Try {
         $Text = ConvertTo-ComparableText -Text:(Get-Content -LiteralPath:$File.FullName -Raw)
         $Document = [System.Xml.XmlDocument]::new()

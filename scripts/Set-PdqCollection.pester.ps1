@@ -127,24 +127,66 @@ Describe 'Set-PdqCollection' {
     $global:FakeUndeletable = @()
     $global:FakeReferenced = @()
     $global:FakeCliCalls = [System.Collections.Generic.List[System.String]]::new()
+    $global:FakeCliArgumentCalls = [System.Collections.Generic.List[System.Object]]::new()
+    $global:FakeExportBatches = [System.Collections.Generic.List[System.Object]]::new()
+    $global:FakeExportExitCode = 0
+    $global:FakeExportOmissions = @()
     $global:FakeSqliteCalls = [System.Collections.Generic.List[System.String]]::new()
     $global:LASTEXITCODE = 0
     Remove-AnsibleContext
 
     New-Item -Force -Path:('function:global:' + $script:CliPath) -Value {
       $global:FakeCliCalls.Add($args -join ' ')
+      $Argument = [System.String[]]@($args)
+      $global:FakeCliArgumentCalls.Add([PSCustomObject]@{ Argument = $Argument })
       Switch ($args[0]) {
         'ExportCollections' {
-          $Names = @(([System.String]$args[2]).Split(','))
+          $NameIndex = [System.Array]::IndexOf($Argument, '-Name')
+          $PathIndex = [System.Array]::IndexOf($Argument, '-Path')
+          $Names = [System.String[]]@($Argument[($NameIndex + 1)..($PathIndex - 1)])
+          $Staged = $Argument[$PathIndex + 1]
+          $WasDirectory = Test-Path -LiteralPath:$Staged -PathType:'Container'
+          If ($global:FakeExportExitCode -ne 0) {
+            $global:FakeExportBatches.Add([PSCustomObject]@{
+                Exit         = $global:FakeExportExitCode
+                FileCount    = 0
+                Files        = [System.String[]]@()
+                Names        = $Names
+                Path         = $Staged
+                WasDirectory = $WasDirectory
+              })
+            $global:LASTEXITCODE = $global:FakeExportExitCode
+            Return
+          }
+          If (-not $WasDirectory) {
+            Throw 'ExportCollections requires a directory for multiple names'
+          }
           $Held = @($Names | Where-Object { $global:FakeCollections.ContainsKey($PSItem) })
           If ($Held.Count -eq 0) {
+            $global:FakeExportBatches.Add([PSCustomObject]@{
+                Exit         = 3
+                FileCount    = 0
+                Files        = [System.String[]]@()
+                Names        = $Names
+                Path         = $Staged
+                WasDirectory = $WasDirectory
+              })
             $global:LASTEXITCODE = 3
             Return
           }
-          New-Item -ItemType:'Directory' -Path:$args[4] -Force -WhatIf:$False | Out-Null
-          ForEach ($Name In $Held) {
-            Set-Content -LiteralPath:(Join-Path $args[4] ($Name + '.xml')) -Value:$global:FakeCollections[$Name] -NoNewline -WhatIf:$False
+          $Written = @($Held | Where-Object { $global:FakeExportOmissions -notcontains $PSItem })
+          ForEach ($Name In $Written) {
+            Set-Content -LiteralPath:(Join-Path $Staged ($Name + '.xml')) `
+              -Value:$global:FakeCollections[$Name] -NoNewline -WhatIf:$False
           }
+          $global:FakeExportBatches.Add([PSCustomObject]@{
+              Exit         = 0
+              FileCount    = $Written.Count
+              Files        = [System.String[]]@($Written | ForEach-Object { $PSItem + '.xml' })
+              Names        = $Names
+              Path         = $Staged
+              WasDirectory = $WasDirectory
+            })
           $global:LASTEXITCODE = 0
         }
         'ImportCollections' {
@@ -218,22 +260,92 @@ Describe 'Set-PdqCollection' {
 
   AfterAll {
     Remove-Variable -Name:'FakeCollections', 'FakeRows', 'FakeNextId', 'FakeIgnored',
-      'FakeUndeletable', 'FakeReferenced', 'FakeCliCalls', 'FakeSqliteCalls',
+      'FakeUndeletable', 'FakeReferenced', 'FakeCliCalls', 'FakeCliArgumentCalls',
+      'FakeExportBatches', 'FakeExportExitCode', 'FakeExportOmissions', 'FakeSqliteCalls',
       'FakeDatabasePath' -Scope:'Global' -Force -ErrorAction:'SilentlyContinue'
   }
 
-  It 'reads every declared collection in one comma-separated ExportCollections launch' {
+  It 'reads multiple names as separate arguments from one file per collection in a directory' {
     $Context = New-AnsibleContext
     & $script:ScriptPath -CliPath:$script:CliPath -BuiltIn:$script:BuiltIn -Definition:@(
       New-CollectionText -Name:$script:Chrome
       New-CollectionText -Name:$script:Firefox
     ) | Out-Null
     $Context.Changed | Should -BeFalse
-    $Exports = @($global:FakeCliCalls -like 'ExportCollections*')
+    $Exports = @($global:FakeCliArgumentCalls | Where-Object {
+        $PSItem.Argument[0] -ceq 'ExportCollections'
+      })
     $Exports.Count | Should -Be 1
-    $Exports[0] | Should -Match ([Regex]::Escape($script:Chrome))
-    $Exports[0] | Should -Match ([Regex]::Escape($script:Firefox))
-    $Exports[0] | Should -Match ','
+    $Exports[0].Argument | Should -Be @(
+      'ExportCollections'
+      '-Name'
+      $script:Chrome
+      $script:Firefox
+      '-Path'
+      $global:FakeExportBatches[0].Path
+      '-Overwrite'
+    )
+    $global:FakeExportBatches[0].WasDirectory | Should -BeTrue
+    $global:FakeExportBatches[0].FileCount | Should -Be 2
+    $global:FakeExportBatches[0].Files | Should -Be @(
+      $script:Chrome + '.xml'
+      $script:Firefox + '.xml'
+    )
+    $global:FakeExportBatches[0].Names | Should -Be @($script:Chrome, $script:Firefox)
+    Test-Path -LiteralPath:$global:FakeExportBatches[0].Path | Should -BeFalse
+  }
+
+  It 'accepts exit 3 when a fresh product holds none of the declared collections' {
+    $global:FakeCollections.Clear()
+    ForEach ($Row In @($global:FakeRows | Where-Object {
+          $PSItem.Name -ceq $script:Chrome -or $PSItem.Name -ceq $script:Firefox
+        })) {
+      $global:FakeRows.Remove($Row)
+    }
+
+    $Context = New-AnsibleContext
+    & $script:ScriptPath -CliPath:$script:CliPath -BuiltIn:$script:BuiltIn -Definition:@(
+      New-CollectionText -Name:$script:Chrome
+      New-CollectionText -Name:$script:Firefox
+    ) | Out-Null
+
+    $Context.Failed | Should -BeFalse
+    $Context.Result.applied | Should -Be @($script:Chrome, $script:Firefox)
+    $global:FakeExportBatches[0].Exit | Should -Be 3
+    $global:FakeExportBatches[0].FileCount | Should -Be 0
+    @($global:FakeCliCalls -like 'ExportCollections*').Count | Should -Be 2
+  }
+
+  It 'fails when ExportCollections returns documented status <Exit>' -TestCases @(
+    @{ Exit = 1; Message = 'one or more requested collections failed to export' }
+    @{ Exit = 2; Message = 'ExportCollections was cancelled' }
+    @{ Exit = 4; Message = 'skipped one or more requested collections because an export file already existed' }
+  ) {
+    Param ($Exit, $Message)
+    $global:FakeExportExitCode = $Exit
+    $Stray = 'Undeclared By Hand'
+    $global:FakeCollections[$Stray] = New-CollectionText -Name:$Stray
+    Add-FakeCollectionRow -Name:$Stray
+
+    {
+      & $script:ScriptPath -CliPath:$script:CliPath -BuiltIn:$script:BuiltIn -Definition:@(
+        New-CollectionText -Name:$script:Chrome
+        New-CollectionText -Name:$script:Firefox
+      )
+    } | Should -Throw ('*{0}*' -f $Message)
+    @($global:FakeCliCalls -like 'ImportCollections*').Count | Should -Be 0
+    @($global:FakeSqliteCalls -like '*DELETE FROM Collections*').Count | Should -Be 0
+  }
+
+  It 'rejects status 0 when the batch does not write one file per requested collection' {
+    $global:FakeExportOmissions = @($script:Firefox)
+
+    {
+      & $script:ScriptPath -CliPath:$script:CliPath -BuiltIn:$script:BuiltIn -Definition:@(
+        New-CollectionText -Name:$script:Chrome
+        New-CollectionText -Name:$script:Firefox
+      )
+    } | Should -Throw '*reported success for 2 requested collection(s) but wrote 1 export file(s)*'
   }
 
   It 'imports only the definition that differs and leaves the second converge unchanged' {

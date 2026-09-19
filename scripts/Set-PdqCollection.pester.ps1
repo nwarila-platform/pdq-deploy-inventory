@@ -37,17 +37,27 @@ BeforeAll {
   Function global:New-CollectionText {
     Param (
       [System.String] $Name,
-      [System.String] $Detail = 'current'
+      [System.String] $Detail = 'current',
+      [System.String] $Created = '',
+      [System.String] $Modified = ''
     )
-    $Lines = @(
-      '<?xml version="1.0" encoding="utf-8"?>'
-      '<AdminArsenal.Export Code="PDQInventory" Name="PDQ Inventory">'
-      '<Collection>'
-      ('<Name>{0}</Name>' -f [System.Security.SecurityElement]::Escape($Name))
-      ('<Description>{0}</Description>' -f [System.Security.SecurityElement]::Escape($Detail))
-      '</Collection>'
-      '</AdminArsenal.Export>'
-    )
+    $Lines = [System.Collections.Generic.List[System.String]]::new()
+    $Lines.Add('<?xml version="1.0" encoding="utf-8"?>')
+    $Lines.Add('<AdminArsenal.Export Code="PDQInventory" Name="PDQ Inventory">')
+    $Lines.Add('<Collection>')
+    $Lines.Add(('<Name>{0}</Name>' -f [System.Security.SecurityElement]::Escape($Name)))
+    $Lines.Add(('<Description>{0}</Description>' -f `
+          [System.Security.SecurityElement]::Escape($Detail)))
+    If ($Created.Length -gt 0) {
+      $Lines.Add(('<Created>{0}</Created>' -f `
+            [System.Security.SecurityElement]::Escape($Created)))
+    }
+    If ($Modified.Length -gt 0) {
+      $Lines.Add(('<Modified>{0}</Modified>' -f `
+            [System.Security.SecurityElement]::Escape($Modified)))
+    }
+    $Lines.Add('</Collection>')
+    $Lines.Add('</AdminArsenal.Export>')
     Return $Lines -join [System.Environment]::NewLine
   }
 
@@ -65,12 +75,16 @@ BeforeAll {
       [System.String] $ADDistinguishedName = ''
     )
     $Existing = @($global:FakeRows | Where-Object {
-        $PSItem.Name -ceq $Name -and $PSItem.Parent -ceq $Parent
+        $PSItem.Name -ceq $Name -and [System.String]$PSItem.Parent -ceq $Parent
       } | Select-Object -First 1)
     If ($Existing.Count -eq 0) {
       $global:FakeRows.Add([PSCustomObject]@{
-          Id                    = [System.String]$global:FakeNextId
-          Parent                = $Parent
+          Id                    = [System.Int64]$global:FakeNextId
+          Parent                = If ($Parent.Length -eq 0) {
+            $Null
+          } Else {
+            [System.Int64]::Parse($Parent)
+          }
           Type                  = $Type
           Name                  = $Name
           ADDistinguishedName   = $ADDistinguishedName
@@ -192,10 +206,22 @@ Describe 'Set-PdqCollection' {
         'ImportCollections' {
           $Text = Get-Content -LiteralPath:$args[2] -Raw
           $Document = [System.Xml.XmlDocument]::new()
+          $Document.PreserveWhitespace = $True
           $Document.LoadXml($Text)
           $Name = $Document.SelectSingleNode('/AdminArsenal.Export/Collection/Name').InnerText
           If ($global:FakeIgnored -notcontains $Name) {
-            $global:FakeCollections[$Name] = $Text
+            ForEach ($Node In @($Document.SelectNodes(
+                  '//Collection/Created | //Collection/Modified'
+                ))) {
+              $Node.InnerText = [System.DateTimeOffset]::Parse(
+                $Node.InnerText,
+                [System.Globalization.CultureInfo]::InvariantCulture
+              ).ToUniversalTime().ToString(
+                'yyyy-MM-ddTHH:mm:ss.fffffffzzz',
+                [System.Globalization.CultureInfo]::InvariantCulture
+              )
+            }
+            $global:FakeCollections[$Name] = $Document.OuterXml
             Add-FakeCollectionRow -Name:$Name
           }
           $global:LASTEXITCODE = 0
@@ -207,7 +233,7 @@ Describe 'Set-PdqCollection' {
         'GetAllCollections' {
           Write-Output 'All Computers'
           ForEach ($Row In @($global:FakeRows | Where-Object {
-                $PSItem.Parent -eq '' -and $PSItem.Type -cne 'LibraryCollection'
+                $Null -eq $PSItem.Parent -and $PSItem.Type -cne 'LibraryCollection'
               })) {
             Write-Output $Row.Name
           }
@@ -231,12 +257,29 @@ Describe 'Set-PdqCollection' {
       } ElseIf ($Sql -like 'SELECT IFNULL(CollectionId*') {
         $global:FakeReferenced | ForEach-Object { Write-Output $PSItem }
       } ElseIf ($Sql -like '*DELETE FROM Collections*') {
-        ForEach ($Match In [Regex]::Matches(
-            $Sql, "CollectionId = ([0-9]+) AND hex\(Name\) = '([0-9A-F]+)'")) {
-          $Id = $Match.Groups[1].Value
-          $Hex = $Match.Groups[2].Value
+        $Pattern = (
+          "CollectionId = (?<Id>[0-9]+) AND hex\(Name\) = '(?<Name>[0-9A-F]+)' AND " +
+          "IFNULL\((?<ParentExpression>CAST\(ParentId AS TEXT\)|ParentId), ''\) = " +
+          "'(?<Parent>[0-9]*)' AND hex\(IFNULL\(Type, ''\)\) = '(?<Type>[0-9A-F]*)' " +
+          "AND hex\(IFNULL\(ADDistinguishedName, ''\)\) = '(?<AD>[0-9A-F]*)'"
+        )
+        ForEach ($Match In [Regex]::Matches($Sql, $Pattern)) {
           $Row = @($global:FakeRows | Where-Object {
-              $PSItem.Id -eq $Id -and (Get-FakeHex -Text:$PSItem.Name) -ceq $Hex
+              $StoredParentMatches = If ($Match.Groups['ParentExpression'].Value -ceq
+                'CAST(ParentId AS TEXT)') {
+                If ($Null -eq $PSItem.Parent) {
+                  $Match.Groups['Parent'].Value.Length -eq 0
+                } Else {
+                  ([System.String]$PSItem.Parent) -ceq $Match.Groups['Parent'].Value
+                }
+              } Else {
+                $Null -eq $PSItem.Parent -and $Match.Groups['Parent'].Value.Length -eq 0
+              }
+              ([System.String]$PSItem.Id) -ceq $Match.Groups['Id'].Value -and
+              (Get-FakeHex -Text:$PSItem.Name) -ceq $Match.Groups['Name'].Value -and
+              $StoredParentMatches -and
+              (Get-FakeHex -Text:$PSItem.Type) -ceq $Match.Groups['Type'].Value -and
+              (Get-FakeHex -Text:$PSItem.ADDistinguishedName) -ceq $Match.Groups['AD'].Value
             } | Select-Object -First 1)
           If ($Row.Count -eq 1 -and $global:FakeUndeletable -notcontains $Row[0].Name) {
             $global:FakeRows.Remove($Row[0])
@@ -369,6 +412,43 @@ Describe 'Set-PdqCollection' {
     @($global:FakeCliCalls -like 'ExportCollections*').Count | Should -Be ($ExportsAfterFirst + 1)
   }
 
+  It 'compares equal when only the timestamp representation differs' {
+    $global:FakeCollections[$script:Chrome] = New-CollectionText -Name:$script:Chrome `
+      -Created:'2026-09-18T04:00:00.0000000+00:00' `
+      -Modified:'2026-09-18T04:00:00.0000000+00:00'
+    $Context = New-AnsibleContext
+    & $script:ScriptPath -CliPath:$script:CliPath -BuiltIn:$script:BuiltIn -Definition:@(
+      New-CollectionText -Name:$script:Chrome `
+        -Created:'2026-09-18T00:00:00.0000000-04:00' `
+        -Modified:'2026-09-18T00:00:00.0000000-04:00'
+      New-CollectionText -Name:$script:Firefox
+    ) | Out-Null
+
+    $Context.Changed | Should -BeFalse
+    @($global:FakeCliCalls -like 'ImportCollections*').Count | Should -Be 0
+  }
+
+  It 'settles after import normalizes the timestamp representation' {
+    $Context = New-AnsibleContext
+    & $script:ScriptPath -CliPath:$script:CliPath -BuiltIn:$script:BuiltIn -Definition:@(
+      New-CollectionText -Name:$script:Chrome -Detail:'new' `
+        -Created:'2026-09-18T00:00:00.0000000-04:00' `
+        -Modified:'2026-09-18T00:00:00.0000000-04:00'
+      New-CollectionText -Name:$script:Firefox
+    ) | Out-Null
+
+    $Context.Failed | Should -BeFalse
+    $Context.Result.applied | Should -Be @($script:Chrome)
+    @($global:FakeCliCalls -like 'ImportCollections*').Count | Should -Be 1
+    @($global:FakeCliCalls -like 'ExportCollections*').Count | Should -Be 2
+    $Stored = [System.Xml.XmlDocument]::new()
+    $Stored.LoadXml($global:FakeCollections[$script:Chrome])
+    $Stored.SelectSingleNode('//Collection/Created').InnerText |
+      Should -BeExactly '2026-09-18T04:00:00.0000000+00:00'
+    $Stored.SelectSingleNode('//Collection/Modified').InnerText |
+      Should -BeExactly '2026-09-18T04:00:00.0000000+00:00'
+  }
+
   It 'removes an undeclared top-level collection and names it in the result' {
     $Stray = 'Undeclared By Hand'
     $global:FakeCollections[$Stray] = New-CollectionText -Name:$Stray
@@ -380,6 +460,34 @@ Describe 'Set-PdqCollection' {
     ) | Out-Null
     $Context.Result.removed | Should -Be @($Stray)
     $global:FakeCollections.Keys | Should -Not -Contain $Stray
+  }
+
+  It 'removes a child whose parent id is stored as an integer' {
+    $Stray = 'Undeclared By Hand'
+    $Child = 'Undeclared Child'
+    Add-FakeCollectionRow -Name:$Stray
+    $RootId = @($global:FakeRows | Where-Object { $PSItem.Name -ceq $Stray })[0].Id
+    Add-FakeCollectionRow -Name:$Child -Parent:$RootId
+    $global:FakeCollections[$Stray] = New-CollectionText -Name:$Stray
+
+    $ChildRow = @($global:FakeRows | Where-Object { $PSItem.Name -ceq $Child })[0]
+    $ChildRow.Parent | Should -BeOfType ([System.Int64])
+
+    $Context = New-AnsibleContext
+    & $script:ScriptPath -CliPath:$script:CliPath -BuiltIn:$script:BuiltIn -Definition:@(
+      New-CollectionText -Name:$script:Chrome
+      New-CollectionText -Name:$script:Firefox
+    ) | Out-Null
+
+    $Context.Failed | Should -BeFalse
+    $Context.Result.removed | Should -Be @($Stray)
+    @($global:FakeRows | ForEach-Object Name) | Should -Not -Contain $Stray
+    @($global:FakeRows | ForEach-Object Name) | Should -Not -Contain $Child
+    $Writes = @($global:FakeSqliteCalls -like '*DELETE FROM Collections*')
+    $Writes.Count | Should -Be 1
+    $Writes[0] | Should -Match ([Regex]::Escape(
+        "IFNULL(CAST(ParentId AS TEXT), '') = '$RootId'"
+      ))
   }
 
   It 'preserves every declared built-in and every Collection Library row' {

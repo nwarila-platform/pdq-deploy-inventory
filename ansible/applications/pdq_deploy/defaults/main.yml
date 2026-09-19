@@ -391,6 +391,8 @@ pdq_deploy_defaults:
   #
   # An install package removes drift, performs any application-specific setup, installs, verifies,
   # and scans as the application requires. Removal may be inline or a nested Uninstall package.
+  # A nested step must set UseNestedPackageConditions false or its own gate is ignored and the
+  # nested package runs unconditionally.
   # Work and the final Applications scan share an IsMember gate, while Verify stays ungated. Repair
   # and Uninstall are deliberate, standalone operations with no collection gate or scan. Scanning
   # after install work makes the NEXT deployment's gate reflect the resulting state; when no work

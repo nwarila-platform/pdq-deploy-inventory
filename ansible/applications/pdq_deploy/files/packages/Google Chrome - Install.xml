@@ -35,7 +35,7 @@
           <TargetPackageId value="null" />
           <TargetPackageName>Google Chrome - Uninstall</TargetPackageName>
           <TargetPackagePath>Google Chrome - Uninstall</TargetPackagePath>
-          <UseNestedPackageConditions value="true" />
+          <UseNestedPackageConditions value="false" />
           <RunAs value="null" />
           <Conditions type="list">
             <PackageStepCondition>

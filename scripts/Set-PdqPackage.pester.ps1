@@ -91,7 +91,7 @@ BeforeAll {
                 [System.Security.SecurityElement]::Escape($NestedTarget)))
           $Lines.Add(('          <TargetPackagePath>{0}</TargetPackagePath>' -f `
                 [System.Security.SecurityElement]::Escape($TargetPath)))
-          $Lines.Add('          <UseNestedPackageConditions value="true" />')
+          $Lines.Add('          <UseNestedPackageConditions value="false" />')
           $Lines.Add(('          <Title>Call: {0}</Title>' -f `
                 [System.Security.SecurityElement]::Escape($NestedTarget)))
           $Lines.Add('          <TypeName>NestedPackage</TypeName>')

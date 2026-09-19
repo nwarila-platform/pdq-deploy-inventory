@@ -269,21 +269,22 @@
     pdq_repository_bucket: "{{ aws_account_id }}-apprepo"
 
 
-    # The pinned application versions, defined ONCE here and handed to BOTH products below (they
-    # share one custom-variable model). The names are the product's own: each is spelled exactly
-    # as the fleet's variable export spells it -- <Publisher>_<Product>, words joined by dashes --
-    # so a name here, a name in a package or collection definition, and a name in the console
-    # are the same string, and each value is the version to pin. The map is the COMPLETE set:
+    # The pinned application values, defined ONCE here and handed to BOTH products below (they
+    # share one custom-variable model). Version names use the fleet's
+    # <Publisher>_<Product> shape, with words joined by dashes; companion identities add a
+    # descriptive suffix. A name here, in a package or collection definition, and in the console
+    # is the same string. Values are repository versions except for Chrome's build ProductCode.
+    # The map is the COMPLETE set:
     # only a name that is absent, or whose value differs, is written, each is proved to read
     # back, and a custom variable this map does not name is removed on the next converge --
     # proven from the product's own export.
     #
-    # A value is the version THE REPOSITORY HOLDS, not the newest a vendor has published. The
-    # application repository is curated to mirror Add/Remove Programs, so one number serves both
-    # readers: a package's install path resolves <publisher>/<application>/<version>/ against the
-    # repository, and a compliance collection compares the same number to what a machine reports.
-    # Pinning a version the repository does not carry breaks the first while looking correct to
-    # the second.
+    # A version value is the version THE REPOSITORY HOLDS, not the newest a vendor has published.
+    # The application repository is curated to mirror Add/Remove Programs, so one number serves
+    # both readers: a package's install path resolves <publisher>/<application>/<version>/ against
+    # the repository, and a compliance collection compares the same number to what a machine
+    # reports. Pinning a version the repository does not carry breaks the first while looking
+    # correct to the second.
     #
     # Reconciled against the bucket 2026-09-09. Five still name a version the repository does not
     # carry -- SSM Agent, Visual C++ v14, Windows Desktop Runtime, Firefox ESR and Git -- because
@@ -301,7 +302,13 @@
       Amazon-Web-Services_aws-cfn-bootstrap: '2.0.40.0'
       Anaconda-Inc_Anaconda3: '2025.12.2.0'
       Devolutions-Inc_Remote-Desktop-Manager: '2026.2.18.0'
-      Google-LLC_Google-Chrome: '152.0.7977.76'
+      # Chrome Extended trails Stable numerically, so its build ProductCode is pinned beside its version.
+      Google-LLC_Google-Chrome: '152.0.7977.130'
+      # Use !Contains rather than "ends with": a nested negation group does not correlate to one
+      # application row, so it misses a rogue registration beside a good one. RegistryPath is
+      # always ...\Uninstall\<keyname>, with ProductCode as the keyname; the forms differ only
+      # in a case Windows does not produce.
+      Google-LLC_Google-Chrome-ProductCode: '{D474047F-C357-3094-9341-F8FE61A4716F}'
       Igor-Pavlov_7-Zip: '26.02.00.0'
       Martin-Prikryl_WinSCP: '6.5.6.0'
       Microsoft-Corporation_Microsoft-Edge: '152.0.4191.53'
@@ -346,7 +353,7 @@
       vars:
         pdq_inventory:
 
-          # The pinned application versions, defined once in the play vars above and shared with
+          # The pinned application values, defined once in the play vars above and shared with
           # pdq_deploy: both products import the SAME map into their own variable stores.
           variables: "{{ pdq_variables }}"
 
@@ -453,7 +460,7 @@
       vars:
         pdq_deploy:
 
-          # The pinned application versions, defined once in the play vars above and shared with
+          # The pinned application values, defined once in the play vars above and shared with
           # pdq_inventory: both products import the SAME map into their own variable stores.
           variables: "{{ pdq_variables }}"
 

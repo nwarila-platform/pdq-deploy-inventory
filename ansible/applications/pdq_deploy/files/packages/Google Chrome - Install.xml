@@ -31,11 +31,45 @@
       <IsDownloadApprovalModeInherited value="true" />
       <ScanAfterDeployment value="false" />
       <Steps type="list">
+        <NestedPackageStep>
+          <TargetPackageId value="null" />
+          <TargetPackageName>Google Chrome - Uninstall</TargetPackageName>
+          <TargetPackagePath>Google Chrome - Uninstall</TargetPackagePath>
+          <UseNestedPackageConditions value="true" />
+          <RunAs value="null" />
+          <Conditions type="list">
+            <PackageStepCondition>
+              <Architecture>Both, ArmAware</Architecture>
+              <Version>All</Version>
+              <TypeName>OperatingSystem</TypeName>
+            </PackageStepCondition>
+            <PackageStepCondition>
+              <IsUserLoggedOn>AlwaysRun</IsUserLoggedOn>
+              <TypeName>LoggedOnUser</TypeName>
+            </PackageStepCondition>
+            <PackageStepCondition>
+              <ConditionMode>IsMember</ConditionMode>
+              <InventoryCollectionId value="null" />
+              <InventoryCollectionName>Required: Google Chrome</InventoryCollectionName>
+              <TypeName>Collection</TypeName>
+            </PackageStepCondition>
+          </Conditions>
+          <ErrorMode>StopDeploymentFail</ErrorMode>
+          <Title>Uninstall: Google Chrome</Title>
+          <TypeName>NestedPackage</TypeName>
+          <IsEnabled value="true" />
+          <IsPostStep value="false" />
+          <IsPreStep value="false" />
+        </NestedPackageStep>
         <PowerShellStep>
           <CustomCommandLine></CustomCommandLine>
-          <Files>$(Repository)\~resources\Start-Uninstaller.ps1</Files>
-          <Script>&amp; ".\Start-Uninstaller.ps1" -DisplayNamePattern 'Google Chrome*' -SilentSwitch '--force-uninstall' -SuccessExitCode @(0, 1641, 3010)
-Exit $LASTEXITCODE</Script>
+          <Files></Files>
+          <Script>$ErrorActionPreference = 'Stop'
+$PolicyPath = 'HKLM:\SOFTWARE\Policies\Google\Update'
+New-Item -Path $PolicyPath -Force | Out-Null
+New-ItemProperty -Path $PolicyPath -Name 'Update{8A69D345-D564-463c-AFF1-A69D9E530F96}' -PropertyType DWord -Value 0 -Force | Out-Null
+New-ItemProperty -Path $PolicyPath -Name 'UpdateDefault' -PropertyType DWord -Value 0 -Force | Out-Null
+Exit 0</Script>
           <SuccessCodes>0</SuccessCodes>
           <RunAs value="null" />
           <Conditions type="list">
@@ -56,7 +90,7 @@ Exit $LASTEXITCODE</Script>
             </PackageStepCondition>
           </Conditions>
           <ErrorMode>StopDeploymentFail</ErrorMode>
-          <Title>Remove: non-MSI Google Chrome</Title>
+          <Title>Disable: Google Chrome vendor updater</Title>
           <TypeName>PowerShell</TypeName>
           <IsEnabled value="true" />
           <IsPostStep value="false" />
@@ -117,6 +151,10 @@ If ($Result.ambiguous) {
 }
 If ($Result.action_required) {
   Write-Error -Message:('Verification failed: Google Chrome is missing or below version @(Google-LLC_Google-Chrome). {0}' -f $Result.msg) -ErrorAction:'Continue'
+  Exit 1
+}
+If ($Result.entries[0].product_id -ine '@(Google-LLC_Google-Chrome-ProductCode)') {
+  Write-Error -Message:('Verification failed: Google Chrome ProductCode {0} does not match @(Google-LLC_Google-Chrome-ProductCode).' -f $Result.entries[0].product_id) -ErrorAction:'Continue'
   Exit 1
 }
 Exit 0</Script>
@@ -181,7 +219,7 @@ Exit 0</Script>
     <CustomVariables type="list">
       <CustomVariable>
         <Name>Google-LLC_Google-Chrome</Name>
-        <Value>152.0.7977.76</Value>
+        <Value>152.0.7977.130</Value>
       </CustomVariable>
     </CustomVariables>
     <PackageDisplaySettings name="DisplaySettings">

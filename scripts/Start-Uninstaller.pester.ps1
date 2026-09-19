@@ -18,6 +18,14 @@ BeforeAll {
   $script:Wow = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
   $script:User = 'HKU:\S-1-5-21\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
   $script:ProductCode = '{23170F69-40C1-2702-2602-000001000000}'
+  $script:WrongProductCode = '{D474047F-C357-3094-9341-F8FE61A4716F}'
+  $script:DefaultProperty = @(
+    'DisplayName'
+    'ParentKey'
+    'QuietUninstallString'
+    'UninstallString'
+    'AppArch'
+  )
   $global:StartUninstallerNative = $script:Native
   $global:StartUninstallerWow = $script:Wow
 
@@ -157,6 +165,10 @@ BeforeAll {
       ForEach ($Root In @($global:StartUninstallerNative, $global:StartUninstallerWow)) {
         $Remaining = [System.Collections.Generic.List[System.Object]]::new()
         $RemovedOne = $False
+        $ProductCodeMatch = [System.Text.RegularExpressions.Regex]::Match(
+          [System.String]($ArgumentList -join ' '),
+          '\{[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}'
+        )
         ForEach ($Registration In @($global:StartUninstallerRegistry[$Root])) {
           $Quiet = If ($Registration.Contains('QuietUninstallString')) {
             [System.String]$Registration.QuietUninstallString
@@ -172,7 +184,11 @@ BeforeAll {
             $Quiet.IndexOf($FilePath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
             $Uninstall.IndexOf($FilePath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
           )
-          If (-not $RemovedOne -and $MatchesExecutable) {
+          $MatchesProductCode = (
+            $ProductCodeMatch.Success -and
+            [System.String]$Registration.PSChildName -ieq $ProductCodeMatch.Value
+          )
+          If (-not $RemovedOne -and ($MatchesExecutable -or $MatchesProductCode)) {
             $RemovedOne = $True
           } Else {
             $Remaining.Add($Registration)
@@ -246,6 +262,36 @@ Describe 'Start-Uninstaller' {
       $Result.removed | Should -HaveCount 0
       $Result.retained | Should -HaveCount 1
       $global:StartUninstallerProcessCalls | Should -HaveCount 0
+    }
+
+    It 'reports NoChange when no registration matches' {
+      $Json = & $script:ScriptPath -DisplayNamePattern 'No Such Product*'
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.changed | Should -BeFalse
+      $Result.matched_count | Should -Be 0
+      $Result.removed | Should -HaveCount 0
+      $Result.retained | Should -HaveCount 0
+      $Result.survived | Should -HaveCount 0
+      $global:StartUninstallerProcessCalls | Should -HaveCount 0
+    }
+
+    It 'removes the only matching registration and reports an empty second read' {
+      $Json = & $script:ScriptPath `
+        -DisplayNamePattern '7-Zip*' `
+        -Exclude @{ ParentKey = 'No matching product code' }
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.changed | Should -BeTrue
+      $Result.matched_count | Should -Be 0
+      $Result.removed | Should -HaveCount 1
+      $Result.retained | Should -HaveCount 0
+      $Result.survived | Should -HaveCount 0
+      $global:StartUninstallerProcessCalls | Should -HaveCount 1
     }
 
     It 'removes quiet and fallback registrations from both roots and retains the MSI' {
@@ -362,6 +408,132 @@ Describe 'Start-Uninstaller' {
     It 'rejects a whitespace family pattern before starting a process' {
       { & $script:ScriptPath -DisplayNamePattern '   ' 2>$Null } |
         Should -Throw '*must contain a non-whitespace wildcard pattern*'
+      $global:StartUninstallerProcessCalls | Should -HaveCount 0
+    }
+
+    It 'retains a conforming registration whose exclusion matches' {
+      $Json = & $script:ScriptPath `
+        -DisplayNamePattern '7-Zip*' `
+        -Exclude @{ ParentKey = $script:ProductCode }
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.changed | Should -BeFalse
+      $Result.removed | Should -HaveCount 0
+      $Result.retained.key_name | Should -Be $script:ProductCode
+      $global:StartUninstallerProcessCalls | Should -HaveCount 0
+    }
+
+    It 'removes a conforming registration whose exclusion does not match' {
+      Add-FakeRegistration -Root $script:Native -Registration @{
+        DisplayName     = '7-Zip 25.01 (x64 edition)'
+        PSChildName     = $script:WrongProductCode
+        UninstallString = 'MsiExec.exe /X{D474047F-C357-3094-9341-F8FE61A4716F}'
+      }
+
+      $Json = & $script:ScriptPath `
+        -DisplayNamePattern '7-Zip*' `
+        -Exclude @{ ParentKey = $script:ProductCode }
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.changed | Should -BeTrue
+      $Result.removed.key_name | Should -Be $script:WrongProductCode
+      $Result.retained.key_name | Should -Be $script:ProductCode
+      $global:StartUninstallerProcessCalls | Should -HaveCount 1
+      $global:StartUninstallerProcessCalls[0].ArgumentList |
+        Should -Be ('/x {0} /qn' -f $script:WrongProductCode)
+    }
+
+    It 'uses an included loaded registry property to narrow the selected registrations' {
+      Add-FakeRegistration -Root $script:Native -Registration @{
+        DisplayName          = '7-Zip selected'
+        PSChildName          = 'Selected7Zip'
+        Publisher            = 'Selected Publisher'
+        QuietUninstallString = 'C:\Selected\uninstall.exe /S'
+      }
+      Add-FakeRegistration -Root $script:Native -Registration @{
+        DisplayName          = '7-Zip retained'
+        PSChildName          = 'Retained7Zip'
+        Publisher            = 'Other Publisher'
+        QuietUninstallString = 'C:\Retained\uninstall.exe /S'
+      }
+
+      $Json = & $script:ScriptPath `
+        -DisplayNamePattern '7-Zip*' `
+        -Property @($script:DefaultProperty + 'Publisher') `
+        -Include @{ Publisher = 'Selected*' }
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.removed.key_name | Should -Be 'Selected7Zip'
+      $Result.retained.key_name | Should -Contain 'Retained7Zip'
+      $global:StartUninstallerProcessCalls | Should -HaveCount 1
+    }
+
+    It 'uses synthesized AppArch as an inclusion filter' {
+      Add-FakeRegistration -Root $script:Native -Registration @{
+        DisplayName          = '7-Zip native'
+        PSChildName          = 'Native7Zip'
+        QuietUninstallString = 'C:\Native\uninstall.exe /S'
+      }
+      Add-FakeRegistration -Root $script:Wow -Registration @{
+        DisplayName          = '7-Zip WOW64'
+        PSChildName          = 'Wow7Zip'
+        QuietUninstallString = 'C:\Wow\uninstall.exe /S'
+      }
+
+      $Json = & $script:ScriptPath `
+        -DisplayNamePattern '7-Zip*' `
+        -Include @{ AppArch = 'x86' }
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.removed.key_name | Should -Be 'Wow7Zip'
+      $Result.retained.key_name | Should -Contain 'Native7Zip'
+      $global:StartUninstallerProcessCalls | Should -HaveCount 1
+    }
+
+    It 'rejects a malformed criterion before starting a process' {
+      {
+        & $script:ScriptPath `
+          -DisplayNamePattern '7-Zip*' `
+          -Exclude @{ ParentKey = '[invalid' } `
+          2>$Null
+      } | Should -Throw '*criterion ParentKey is not a valid wildcard pattern*'
+      $global:StartUninstallerProcessCalls | Should -HaveCount 0
+    }
+
+    It 'rejects a criterion for a property that was not loaded' {
+      {
+        & $script:ScriptPath `
+          -DisplayNamePattern '7-Zip*' `
+          -Exclude @{ ProductCode = $script:ProductCode } `
+          2>$Null
+      } | Should -Throw '*names unloaded property ProductCode*'
+      $global:StartUninstallerProcessCalls | Should -HaveCount 0
+    }
+
+    It 'refuses a selected MSI registration whose uninstall command is not msiexec' {
+      Add-FakeRegistration -Root $script:Native -Registration @{
+        DisplayName     = '7-Zip foreign MSI'
+        PSChildName     = $script:WrongProductCode
+        UninstallString = 'C:\Vendor\uninstall.exe /S'
+      }
+
+      $Json = & $script:ScriptPath `
+        -DisplayNamePattern '7-Zip*' `
+        -Exclude @{ ParentKey = $script:ProductCode }
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 1
+      $Result.failures[0] | Should -Match 'does not record an msiexec uninstall command'
+      $Result.survived.key_name | Should -Be $script:WrongProductCode
       $global:StartUninstallerProcessCalls | Should -HaveCount 0
     }
   }

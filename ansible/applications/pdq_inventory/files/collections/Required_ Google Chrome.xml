@@ -31,7 +31,7 @@
                   <ValueFilter>
                     <Table>Application</Table>
                     <Column>Name</Column>
-                    <Comparison>StartsWith</Comparison>
+                    <Comparison>Equals</Comparison>
                     <Value>Google Chrome</Value>
                   </ValueFilter>
                   <ValueFilter>
@@ -42,9 +42,9 @@
                   </ValueFilter>
                   <ValueFilter>
                     <Table>Application</Table>
-                    <Column>Version</Column>
-                    <Comparison>VersionLowerThan</Comparison>
-                    <Value>@(Google-LLC_Google-Chrome)</Value>
+                    <Column>RegistryPath</Column>
+                    <Comparison>!Contains</Comparison>
+                    <Value>@(Google-LLC_Google-Chrome-ProductCode)</Value>
                   </ValueFilter>
                 </Filters>
               </GroupFilter>
@@ -57,7 +57,7 @@
                       <ValueFilter>
                         <Table>Application</Table>
                         <Column>Name</Column>
-                        <Comparison>StartsWith</Comparison>
+                        <Comparison>Equals</Comparison>
                         <Value>Google Chrome</Value>
                       </ValueFilter>
                       <ValueFilter>
@@ -91,7 +91,7 @@
     <Description></Description>
     <Error></Error>
     <IsEnabled value="true" />
-    <Modified>2026-09-17T04:00:00.0000000+00:00</Modified>
+    <Modified>2026-09-18T04:00:00.0000000+00:00</Modified>
     <Name>Required: Google Chrome</Name>
     <Children type="list" />
   </Collection>

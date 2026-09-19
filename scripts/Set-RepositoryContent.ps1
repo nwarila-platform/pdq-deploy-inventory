@@ -12,12 +12,21 @@
     repository is measured in gigabytes and a deployment runner is the wrong thing to push that
     through.
 
-    The mirror is ADDITIVE. An object missing from the bucket is left on disk, which is what keeps
-    a superseded version available for a rollback, so this script never deletes.
+    The mirror is DETERMINISTIC: after a run, the volume holds what the bucket holds and nothing
+    else. A local file with no object behind it is removed, because the bucket is the only place
+    that decides what the repository contains. Rollback lives in the bucket, where a superseded
+    version stays addressable until it is pruned there -- not in whatever happens to be left on
+    a particular volume.
+
+    That is what makes this repeatable. A volume that accumulated local-only files would drift
+    away from every other host running the same deployment, and the drift would be invisible
+    until something read a file that only existed in one place. The deployment role publishes to
+    the bucket and then runs this, so anything that reaches a target has been through the bucket.
 
     An object is fetched when the local copy is absent, a different size, or older than the object
     -- the comparison the vendor's own sync makes. A converge that finds the repository already
-    current fetches nothing and reports no change, so this can run on every deployment.
+    current fetches nothing, removes nothing, and reports no change, so this can run on every
+    deployment.
 
     Nothing here carries a credential: the host reads the bucket through the instance profile it
     was launched with.
@@ -38,7 +47,7 @@
     The region the bucket lives in.
 
 .OUTPUTS
-    One object carrying changed, check_mode, bucket, path, fetched, present and msg.
+    One object carrying changed, check_mode, bucket, path, fetched, removed, present and msg.
 #>
 
 [CmdletBinding(
@@ -217,7 +226,32 @@ ForEach ($Object In $Content) {
   }
 }
 
-$Changed = [System.Boolean]($Pending.Count -gt 0)
+# Both sides of the comparison below are resolved to a full path first. Get-ChildItem reports
+# one, and $Path arrives however the caller wrote it -- so comparing an unresolved root against a
+# resolved file matches nothing, every file on the volume looks orphaned, and the first run empties
+# the repository. Measured during development, which is why the root is resolved exactly once here.
+$Root = (Get-Item -LiteralPath:$Path -ErrorAction:'Stop').FullName
+
+# Everything the bucket says this volume should hold. Compared case-insensitively because the
+# filesystem is: two keys differing only in case cannot both exist here, and treating them as
+# distinct would delete whichever arrived second on every run.
+$Expected = [System.Collections.Generic.HashSet[System.String]]::new(
+  [System.StringComparer]::OrdinalIgnoreCase
+)
+ForEach ($Object In $Content) {
+  [void]$Expected.Add((Join-Path -Path:$Root -ChildPath:$Object.Key.Replace('/', $PATH_SEPARATOR)))
+}
+
+# Anything on the volume the bucket does not account for. Enumerated before anything is fetched,
+# so a file this run is about to write is never mistaken for one nothing owns.
+$Surplus = [System.Collections.Generic.List[System.String]]::new()
+ForEach ($File In @(Get-ChildItem -File -Force -LiteralPath:$Root -Recurse -ErrorAction:'Stop')) {
+  If (-not $Expected.Contains($File.FullName)) {
+    [void]$Surplus.Add([System.String]$File.FullName)
+  }
+}
+
+$Changed = [System.Boolean](($Pending.Count + $Surplus.Count) -gt 0)
 
 If ($Changed -and -not $Ansible.CheckMode) {
   ForEach ($Fetch In $Pending) {
@@ -226,6 +260,23 @@ If ($Changed -and -not $Ansible.CheckMode) {
       [void](New-Item -Force -ItemType:'Directory' -Path:$Parent)
     }
     Read-S3Object -BucketName:$Bucket -File:$Fetch.Local -Key:$Fetch.Key -Region:$Region | Out-Null
+  }
+
+  ForEach ($Remove In $Surplus) {
+    Remove-Item -Force -LiteralPath:$Remove -ErrorAction:'Stop'
+  }
+
+  # Directories are not objects, so removing the last key under one leaves the folder behind.
+  # Emptied folders are cleared deepest-first, which is what lets a second run report no change
+  # rather than rediscovering the same empty tree. The repository root is never a candidate: it is
+  # the mount point, and removing it would hide an unmounted volume behind a missing directory.
+  ForEach ($Directory In @(
+      Get-ChildItem -Directory -Force -LiteralPath:$Root -Recurse -ErrorAction:'Stop' |
+        Sort-Object -Descending -Property:{ $PSItem.FullName.Length }
+    )) {
+    If (-not @(Get-ChildItem -Force -LiteralPath:$Directory.FullName -ErrorAction:'Stop')) {
+      Remove-Item -Force -LiteralPath:$Directory.FullName -ErrorAction:'Stop'
+    }
   }
 }
 
@@ -240,12 +291,14 @@ $Result = [PSCustomObject]@{
   check_mode = [System.Boolean]$Ansible.CheckMode
   fetched    = [System.String[]]@($Pending | ForEach-Object { $PSItem.Key })
   msg        = If ($Changed) {
-    '{0} of {1} object(s) fetched from {2}' -f $Pending.Count, $Content.Count, $Bucket
+    '{0} of {1} object(s) fetched from {2}, {3} local file(s) removed' -f
+    $Pending.Count, $Content.Count, $Bucket, $Surplus.Count
   } Else {
     '{0} object(s) already current from {1}' -f $Content.Count, $Bucket
   }
   path       = [System.String]$Path
   present    = [System.Int32]$Content.Count
+  removed    = [System.String[]]@($Surplus)
 }
 
 $Ansible.Changed = $Result.changed

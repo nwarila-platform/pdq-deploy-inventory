@@ -117,6 +117,99 @@ Describe 'Set-RepositoryContent' {
     Remove-Variable -Name 'FakeObjects', 'FakeFetched', 'FakeListed' -Scope 'Global' -Force -ErrorAction 'SilentlyContinue'
   }
 
+  Context 'what it removes' {
+
+    It 'removes a local file the bucket no longer carries' {
+      # The bucket is the only place that decides what the repository contains; a superseded
+      # version stays addressable there until it is pruned there.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/2.0/app.exe'))
+      $Stale = Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe'
+      [void](New-Item -ItemType 'Directory' -Path (Split-Path -Path $Stale -Parent) -Force)
+      Set-Content -LiteralPath $Stale -Value 'superseded'
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Stale | Should -Not -Exist
+      $Ctx.Result.removed.Count | Should -Be 1
+      $Ctx.Result.changed | Should -BeTrue
+    }
+
+    It 'removes a file nothing in the bucket ever placed' {
+      # A hand-placed script is exactly the drift this sync exists to remove: it would exist on one
+      # host and no other, and nothing would reveal that until something read it.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Rogue = Join-Path -Path $script:Repository -ChildPath 'hand-placed.ps1'
+      Set-Content -LiteralPath $Rogue -Value 'not from the bucket'
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Rogue | Should -Not -Exist
+    }
+
+    It 'keeps every file the bucket does carry' {
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'), (New-S3Entry 'Vendor/App/1.0/notes.txt'))
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      (Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe') | Should -Exist
+      (Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/notes.txt') | Should -Exist
+    }
+
+    It 'does not mistake a file it is about to fetch for one nothing owns' {
+      # Surplus is enumerated before anything is written. If it were enumerated after, a freshly
+      # fetched object could be deleted by the same run that fetched it.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      (Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe') | Should -Exist
+      $Ctx.Result.removed.Count | Should -Be 0
+    }
+
+    It 'clears a directory its last object left behind' {
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/2.0/app.exe'))
+      $Stale = Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe'
+      [void](New-Item -ItemType 'Directory' -Path (Split-Path -Path $Stale -Parent) -Force)
+      Set-Content -LiteralPath $Stale -Value 'superseded'
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      (Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0') | Should -Not -Exist
+    }
+
+    It 'never removes the repository root, even when the bucket is empty' {
+      # The root is the mount point. Removing it would hide an unmounted volume behind a missing
+      # directory, which is the fault this script checks for before it does anything.
+      $global:FakeObjects = @()
+      $Orphan = Join-Path -Path $script:Repository -ChildPath 'orphan.txt'
+      Set-Content -LiteralPath $Orphan -Value 'x'
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $script:Repository | Should -Exist
+      $Orphan | Should -Not -Exist
+    }
+
+    It 'removes nothing in check mode, and still reports what it would remove' {
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/2.0/app.exe'))
+      $Stale = Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe'
+      [void](New-Item -ItemType 'Directory' -Path (Split-Path -Path $Stale -Parent) -Force)
+      Set-Content -LiteralPath $Stale -Value 'superseded'
+      $Ctx = New-AnsibleContext -CheckMode
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Stale | Should -Exist
+      $Ctx.Result.removed.Count | Should -Be 1
+      $Ctx.Result.changed | Should -BeTrue
+    }
+
+    It 'converges: a second run over the first run''s result removes nothing' {
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/2.0/app.exe'))
+      $Stale = Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe'
+      [void](New-Item -ItemType 'Directory' -Path (Split-Path -Path $Stale -Parent) -Force)
+      Set-Content -LiteralPath $Stale -Value 'superseded'
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Second = New-AnsibleContext
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Second.Result.changed | Should -BeFalse
+      $Second.Result.removed.Count | Should -Be 0
+    }
+  }
+
   Context 'what it fetches' {
 
     It 'fetches every object when the repository is empty' {
@@ -182,14 +275,18 @@ Describe 'Set-RepositoryContent' {
     }
   }
 
-  Context 'what it leaves alone' {
+  Context 'check mode, and what it reports' {
 
-    It 'never deletes a local file the bucket no longer holds' {
+    It 'deletes a local file the bucket no longer holds' {
+      # This assertion is the reverse of the one it replaces. The mirror was additive, on the
+      # reasoning that leaving a superseded version on disk kept it available for a rollback. It
+      # also let every volume drift somewhere different, invisibly. Rollback now lives in the
+      # bucket, which is the only place that decides what the repository contains.
       $Orphan = Set-LocalCopy -Key 'Vendor/App/0.9/old.exe'
       $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
       [void](New-AnsibleContext)
       & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
-      Test-Path -LiteralPath $Orphan | Should -BeTrue
+      Test-Path -LiteralPath $Orphan | Should -BeFalse
     }
 
     It 'fetches nothing in check mode, and still reports the change it would make' {

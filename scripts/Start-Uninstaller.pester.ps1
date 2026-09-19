@@ -18,7 +18,7 @@ BeforeAll {
   $script:Wow = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
   $script:User = 'HKU:\S-1-5-21\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
   $script:ProductCode = '{23170F69-40C1-2702-2602-000001000000}'
-  $script:WrongProductCode = '{D474047F-C357-3094-9341-F8FE61A4716F}'
+  $script:WrongProductCode = '{00000000-0000-0000-0000-000000000000}'
   $script:DefaultProperty = @(
     'DisplayName'
     'ParentKey'
@@ -429,7 +429,7 @@ Describe 'Start-Uninstaller' {
       Add-FakeRegistration -Root $script:Native -Registration @{
         DisplayName     = '7-Zip 25.01 (x64 edition)'
         PSChildName     = $script:WrongProductCode
-        UninstallString = 'MsiExec.exe /X{D474047F-C357-3094-9341-F8FE61A4716F}'
+        UninstallString = 'MsiExec.exe /X{00000000-0000-0000-0000-000000000000}'
       }
 
       $Json = & $script:ScriptPath `
@@ -444,7 +444,7 @@ Describe 'Start-Uninstaller' {
       $Result.retained.key_name | Should -Be $script:ProductCode
       $global:StartUninstallerProcessCalls | Should -HaveCount 1
       $global:StartUninstallerProcessCalls[0].ArgumentList |
-        Should -Be ('/x {0} /qn' -f $script:WrongProductCode)
+        Should -Be ('/x {0} /qn /norestart' -f $script:WrongProductCode)
     }
 
     It 'uses an included loaded registry property to narrow the selected registrations' {

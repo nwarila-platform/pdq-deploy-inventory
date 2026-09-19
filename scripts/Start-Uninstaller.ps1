@@ -76,7 +76,7 @@
         PS> ./Start-Uninstaller.ps1 -DisplayNamePattern '7-Zip*' -SilentSwitch '/S'
 
     .EXAMPLE
-        PS> $Keep = @{ ParentKey = '{D474047F-C357-3094-9341-F8FE61A4716F}' }
+        PS> $Keep = @{ ParentKey = '{00000000-0000-0000-0000-000000000000}' }
         PS> ./Start-Uninstaller.ps1 -DisplayNamePattern 'Google Chrome*' -Exclude $Keep
 
     .OUTPUTS
@@ -123,7 +123,6 @@ Param (
     ValueFromPipeline = $False,
     ValueFromPipelineByPropertyName = $False
   )]
-  [AllowNull()]
   [System.Collections.Hashtable]
   $Exclude,
 
@@ -134,7 +133,6 @@ Param (
     ValueFromPipeline = $False,
     ValueFromPipelineByPropertyName = $False
   )]
-  [AllowNull()]
   [System.Collections.Hashtable]
   $Include,
 
@@ -293,7 +291,6 @@ If ([System.String]::IsNullOrWhiteSpace($NormalizedDisplayNamePattern)) {
   $PSBoundParameters.ContainsKey('Include') -or
   $PSBoundParameters.ContainsKey('Exclude')
 )
-[System.Boolean]$Private:ConsiderConforming = $PSBoundParameters.ContainsKey('Exclude')
 [System.Collections.Generic.HashSet[System.String]]$Private:LoadedPropertyName = (
   [System.Collections.Generic.HashSet[System.String]]::new(
     [System.StringComparer]::OrdinalIgnoreCase
@@ -613,7 +610,7 @@ $Before = @(
 )
 
 ForEach ($Registration In $Before) {
-  If ($Registration.is_conforming -and -not $ConsiderConforming) {
+  If ($Registration.is_conforming -and -not $HasExcludeCriterion) {
     Continue
   }
   If (
@@ -698,7 +695,7 @@ ForEach ($Registration In $Before) {
       Continue
     }
     $Executable = '{0}\System32\msiexec.exe' -f $ENV:WINDIR
-    $Arguments = '/x {0} /qn' -f $Registration.key_name
+    $Arguments = '/x {0} /qn /norestart' -f $Registration.key_name
   } Else {
     $Executable = [System.Environment]::ExpandEnvironmentVariables($Executable)
   }

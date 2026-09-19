@@ -34,9 +34,19 @@
         <PowerShellStep>
           <CustomCommandLine></CustomCommandLine>
           <Files></Files>
-          <Script>&amp; msiexec.exe /fa '@(Google-LLC_Google-Chrome-ProductCode)' /qn /norestart
-Exit $LASTEXITCODE</Script>
-          <SuccessCodes>0,1641,3010</SuccessCodes>
+          <Script>$Process = Start-Process `
+  -FilePath:'msiexec.exe' `
+  -ArgumentList:@(
+    '/fa'
+    '@(Google-LLC_Google-Chrome-ProductCode)'
+    '/qn'
+    '/norestart'
+  ) `
+  -PassThru `
+  -Wait `
+  -ErrorAction:'Stop'
+Exit $Process.ExitCode</Script>
+          <SuccessCodes>0,3010</SuccessCodes>
           <RunAs value="null" />
           <Conditions type="list">
             <PackageStepCondition>

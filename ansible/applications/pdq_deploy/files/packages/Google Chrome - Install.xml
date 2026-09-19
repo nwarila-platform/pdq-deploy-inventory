@@ -150,11 +150,11 @@ If ($Result.ambiguous) {
   Exit 2
 }
 If ($Result.action_required) {
-  Write-Error -Message:('Verification failed: Google Chrome is missing or below version @(Google-LLC_Google-Chrome). {0}' -f $Result.msg) -ErrorAction:'Continue'
+  Write-Error -Message:('Verification failed: Google Chrome is missing or below version {0}. {1}' -f '@(Google-LLC_Google-Chrome)', $Result.msg) -ErrorAction:'Continue'
   Exit 1
 }
 If ($Result.entries[0].product_id -ine '@(Google-LLC_Google-Chrome-ProductCode)') {
-  Write-Error -Message:('Verification failed: Google Chrome ProductCode {0} does not match @(Google-LLC_Google-Chrome-ProductCode).' -f $Result.entries[0].product_id) -ErrorAction:'Continue'
+  Write-Error -Message:('Verification failed: Google Chrome ProductCode {0} does not match {1}.' -f $Result.entries[0].product_id, '@(Google-LLC_Google-Chrome-ProductCode)') -ErrorAction:'Continue'
   Exit 1
 }
 Exit 0</Script>

@@ -123,6 +123,11 @@ Write-Debug -Message:'Entering Stage: Initialization'
 # The module runs this script in check mode because it declares SupportsShouldProcess, and injects
 # -WhatIf when it does. This script decides check mode from $Ansible.CheckMode, so -WhatIf is
 # neutralised here; left on, it would suppress the New-Variable setup below.
+#
+# It is captured first. A person running this directly reaches for -WhatIf expecting it to mean
+# change nothing, and this script deletes files -- so the request is honoured below rather than
+# discarded with the preference.
+$RequestedWhatIf = [System.Boolean]$WhatIfPreference
 $WhatIfPreference = $false
 
 # Log level names, by LogLevel digit position.
@@ -245,6 +250,18 @@ ForEach ($Object In $Content) {
   }
 }
 
+# A reparse point under the repository is refused rather than walked. Windows PowerShell follows
+# directory junctions when it recurses, so a junction here would present files that live on
+# another volume as surplus, and this script would delete them -- outside the repository, with
+# the privileges a deployment runs as. Nothing in this role creates one, so finding one means
+# something this lifecycle did not do, and the honest response is to stop and name it rather
+# than guess which side of the link the operator meant.
+ForEach ($Entry In @(Get-ChildItem -Directory -Force -LiteralPath:$Root -ErrorAction:'Stop')) {
+  If ($Entry.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+    Throw ('The repository holds a reparse point: {0}. Remove it before syncing.' -f $Entry.FullName)
+  }
+}
+
 # Anything on the volume the bucket does not account for. Enumerated before anything is written,
 # so an object this run is about to fetch is never mistaken for one nothing owns.
 $Surplus = [System.Collections.Generic.List[System.String]]::new()
@@ -256,7 +273,10 @@ ForEach ($File In @(Get-ChildItem -File -Force -LiteralPath:$Root -Recurse -Erro
 
 $Changed = [System.Boolean](($Pending.Count + $Surplus.Count) -gt 0)
 
-If (-not $Ansible.CheckMode) {
+# Either source of "change nothing": the module's check mode, or a -WhatIf a person typed.
+$DryRun = [System.Boolean]($Ansible.CheckMode -or $RequestedWhatIf)
+
+If (-not $DryRun) {
   # Removal runs BEFORE the fetch. A surplus file sitting where a key needs a directory otherwise
   # wedges the host: creating the directory over it is a silent no-op, the fetch then fails, and
   # the file that caused it is never reached because the fetch threw first -- so every later run
@@ -298,7 +318,7 @@ Write-Debug -Message:'Entering Stage: Output'
 $Result = [PSCustomObject]@{
   bucket     = [System.String]$Bucket
   changed    = [System.Boolean]$Changed
-  check_mode = [System.Boolean]$Ansible.CheckMode
+  check_mode = [System.Boolean]$DryRun
   fetched    = [System.String[]]@($Pending | ForEach-Object { $PSItem.Key })
   msg        = If ($Changed) {
     '{0} of {1} object(s) fetched from {2}, {3} local file(s) removed' -f

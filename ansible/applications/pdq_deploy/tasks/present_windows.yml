@@ -95,6 +95,12 @@
     # a role whose own files/ did not arrive silently matches another tree's -- measured 2026-08-25,
     # it returned a file from the playbook's files/ directory.
     __package_glob__: "{{ role_path }}/files/packages/*.xml"
+    # The helper scripts a package step calls by path. Named rather than discovered, because the
+    # grant that publishes them names the same two keys: a script added to a package without being
+    # added here, and to that policy, fails at deploy time rather than at converge.
+    __repository_helper_scripts__:
+      - 'Get-InstalledSoftware.ps1'
+      - 'Start-Uninstaller.ps1'
 
   # Begin The 'Process' Block
   block:
@@ -439,6 +445,45 @@
     # The pull is DETERMINISTIC and compares before it copies, so a converge that finds the repository
     # current fetches nothing and reports no change.
 
+    # ----------------------------------------------------------------------------------------- #
+    # The helper scripts a package step calls by path, published to the bucket before the sync
+    # runs. Packages reference them as $(Repository)\~resources\<name>, and the sync is
+    # deterministic -- so a copy placed on a volume by hand is removed on the next converge and the
+    # bucket is the only place these can live.
+    #
+    # Uploaded from the controller, which holds the credentials; the host never receives any reach
+    # into S3. Overwritten every converge rather than written once, because a corrected script
+    # reaching the fleet is the point: the object is identified by name, not by version, and the
+    # grant permits replacing exactly these two keys and nothing else.
+
+    - name: 'PROCESS | Publish The Helper Scripts Packages Call'
+      delegate_to: 'localhost'
+      loop: "{{ __repository_helper_scripts__ }}"
+      loop_control:
+        label: "{{ item }}"
+
+      amazon.aws.s3_object:
+        bucket: "{{ pdq_deploy_running.repository.bucket }}"
+        ceph: false
+        debug_botocore_endpoint_logs: false
+        dualstack: false
+        encrypt: true
+        encryption_mode: 'AES256'
+        ignore_nonexistent_bucket: false
+        mode: 'put'
+        object: "~resources/{{ item }}"
+        overwrite: 'different'
+        permission: [ 'private' ]
+        prefix: ''
+        purge_tags: true
+        region: "{{ pdq_deploy_running.repository.region }}"
+        retries: 0
+        sig_v4: true
+        src: "{{ role_path }}/files/{{ item }}"
+        validate_bucket_name: true
+        validate_certs: true
+
+    # ----------------------------------------------------------------------------------------- #
     - name: 'PROCESS | Fill The Repository From The Application Repository'
       ansible.windows.win_powershell:
         depth: 2

@@ -369,6 +369,40 @@ Describe 'Set-RepositoryContent' {
     }
   }
 
+  Context 'what it refuses to walk' {
+
+    It 'refuses a reparse point rather than deleting through it' {
+      # Windows PowerShell follows directory junctions when it recurses, so a junction here would
+      # present files living on another volume as surplus and this script would delete them --
+      # outside the repository, with the privileges a deployment runs as.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Outside = Join-Path -Path $script:Sandbox -ChildPath 'Outside'
+      [void](New-Item -ItemType 'Directory' -Path $Outside -Force)
+      Set-Content -LiteralPath (Join-Path -Path $Outside -ChildPath 'keep.txt') -Value 'not ours'
+      $Link = Join-Path -Path $script:Repository -ChildPath 'escape'
+      [void](New-Item -ItemType 'SymbolicLink' -Path $Link -Target $Outside -ErrorAction 'SilentlyContinue')
+      if (-not (Test-Path -LiteralPath $Link)) { Set-ItResult -Skipped -Because 'links need privilege here' ; return }
+      [void](New-AnsibleContext)
+      { & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region } |
+        Should -Throw -ExpectedMessage '*reparse point*'
+      (Join-Path -Path $Outside -ChildPath 'keep.txt') | Should -Exist
+    }
+
+    It 'honours -WhatIf, because a person reaching for it expects nothing to change' {
+      # The module injects -WhatIf in check mode and this script decides check mode from
+      # $Ansible.CheckMode instead -- but a person running it directly still expects -WhatIf to
+      # mean change nothing, and this script deletes.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Rogue = Join-Path -Path $script:Repository -ChildPath 'rogue.txt'
+      Set-Content -LiteralPath $Rogue -Value 'hand placed'
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region -WhatIf
+      $Rogue | Should -Exist
+      $global:FakeFetched.Count | Should -Be 0
+      $Ctx.Result.check_mode | Should -BeTrue
+    }
+  }
+
   Context 'what it refuses' {
 
     It 'fails naming the repository directory when the volume holding it is not mounted' {

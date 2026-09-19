@@ -52,9 +52,14 @@ scripts can have. The deploy publishes them, then triggers the sync.
 The grant is two exact keys, and deliberately narrow in three ways:
 
 - **Two named objects, not the prefix.** A third helper script is a change to this policy, not
-  something a run can decide. Verified: `~resources/anything-else.ps1` is an implicit deny.
+  something a run can decide. Simulated 2026-09-18 with `iam simulate-custom-policy`:
+  `~resources/anything-else.ps1` returns an implicit deny.
 - **Write and replace, but not delete.** A script is updated in place when its source changes;
   removing one is not something a deployment should be able to do.
+- **`s3:GetObjectTagging` on the same two keys.** Not decoration: the collection reads an
+  object's tags on every put, before it decides whether tags were even requested, so without
+  this the task fails on every converge once the object exists. Read from the pinned module's
+  source rather than inferred from the error.
 - **No conditional-write requirement**, unlike the artifact publisher's grant. These two keys
   are meant to be overwritten — that is how a corrected script reaches the fleet — whereas an
   installer at a version is written once and never again.

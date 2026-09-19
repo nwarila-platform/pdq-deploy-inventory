@@ -47,7 +47,7 @@
     The region the bucket lives in.
 
 .OUTPUTS
-    One object carrying changed, check_mode, bucket, path, fetched, removed, present and msg.
+    One object carrying changed, check_mode, bucket, path, fetched, removed, swept, present and msg.
 #>
 
 [CmdletBinding(
@@ -217,9 +217,8 @@ $Objects = @(Get-S3Object -BucketName:$Bucket -Region:$Region)
 # directories are made below from the keys that do.
 $Content = @($Objects | Where-Object -FilterScript { -not $PSItem.Key.EndsWith('/') })
 
-# Resolved once, before anything is compared. Get-ChildItem reports fully resolved paths and
-# $Path arrives however the caller wrote it, so comparing an unresolved root against a resolved
-# file matches nothing: every file looks orphaned and the first run empties the repository.
+# Resolved once, so every comparison below is against one spelling of the root. The joined paths
+# are canonicalised individually too; both are needed for a path the caller did not normalise.
 $Root = (Get-Item -LiteralPath:$Path -ErrorAction:'Stop').FullName
 
 # Everything the bucket says this volume should hold. Compared case-insensitively because the
@@ -238,6 +237,15 @@ ForEach ($Object In $Content) {
   $Local = [System.IO.Path]::GetFullPath(
     (Join-Path -Path:$Root -ChildPath:$Object.Key.Replace('/', $PATH_SEPARATOR))
   )
+
+  # Collapsing '/../' can land outside the repository entirely. This script is the one place a
+  # key from the bucket becomes a local path, so containment is checked here or nowhere: a key
+  # that escapes would be written beside the volume, as the account a deployment runs as, and
+  # never seen again by a sync that only looks inside the root.
+  If (-not $Local.StartsWith($Root + $PATH_SEPARATOR, [System.StringComparison]::OrdinalIgnoreCase)) {
+    Throw ('The key {0} resolves outside the repository: {1}' -f $Object.Key, $Local)
+  }
+
   [void]$Expected.Add($Local)
   $Existing = Get-Item -LiteralPath:$Local -ErrorAction:'SilentlyContinue'
   $Current = (
@@ -250,28 +258,49 @@ ForEach ($Object In $Content) {
   }
 }
 
-# A reparse point under the repository is refused rather than walked. Windows PowerShell follows
-# directory junctions when it recurses, so a junction here would present files that live on
-# another volume as surplus, and this script would delete them -- outside the repository, with
-# the privileges a deployment runs as. Nothing in this role creates one, so finding one means
-# something this lifecycle did not do, and the honest response is to stop and name it rather
-# than guess which side of the link the operator meant.
-ForEach ($Entry In @(Get-ChildItem -Directory -Force -LiteralPath:$Root -ErrorAction:'Stop')) {
-  If ($Entry.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
-    Throw ('The repository holds a reparse point: {0}. Remove it before syncing.' -f $Entry.FullName)
-  }
-}
-
-# Anything on the volume the bucket does not account for. Enumerated before anything is written,
-# so an object this run is about to fetch is never mistaken for one nothing owns.
+# One descent, reading each directory before entering it. The guard and the enumeration are the
+# same walk on purpose: separate passes let them disagree, and the first version of this checked
+# only the top level while the enumeration recursed past that into anything deeper.
+#
+# A reparse point is refused rather than walked. Windows PowerShell follows directory junctions
+# when it recurses, so one here would present files living on another volume as surplus and this
+# script would delete them -- outside the repository, as the account a deployment runs as. Nothing
+# in this role creates a junction, so finding one means something this lifecycle did not do, and
+# stopping to name it is more use than guessing which side of the link was meant.
 $Surplus = [System.Collections.Generic.List[System.String]]::new()
-ForEach ($File In @(Get-ChildItem -File -Force -LiteralPath:$Root -Recurse -ErrorAction:'Stop')) {
-  If (-not $Expected.Contains($File.FullName)) {
-    [void]$Surplus.Add([System.String]$File.FullName)
+$Directories = [System.Collections.Generic.List[System.String]]::new()
+$Unvisited = [System.Collections.Generic.Stack[System.String]]::new()
+$Unvisited.Push($Root)
+
+While ($Unvisited.Count -gt 0) {
+  $Current = $Unvisited.Pop()
+  ForEach ($Entry In @(Get-ChildItem -Force -LiteralPath:$Current -ErrorAction:'Stop')) {
+    If ($Entry.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
+      Throw ('The repository holds a reparse point: {0}. Remove it before syncing.' -f $Entry.FullName)
+    }
+    If ($Entry.PSIsContainer) {
+      [void]$Directories.Add([System.String]$Entry.FullName)
+      $Unvisited.Push($Entry.FullName)
+    }
+    ElseIf (-not $Expected.Contains($Entry.FullName)) {
+      [void]$Surplus.Add([System.String]$Entry.FullName)
+    }
   }
 }
 
-$Changed = [System.Boolean](($Pending.Count + $Surplus.Count) -gt 0)
+# Directories emptied by this run or left by an earlier one. Counted into 'changed' because a
+# run that removes one has changed the volume, and reporting otherwise makes the next reader
+# trust a converged result that is not.
+$Removable = [System.Collections.Generic.List[System.String]]::new()
+ForEach ($Directory In @($Directories | Sort-Object -Descending -Property:{ $PSItem.Length })) {
+  $Remaining = @(Get-ChildItem -Force -LiteralPath:$Directory -ErrorAction:'Stop' |
+      Where-Object -FilterScript { $Surplus -notcontains $PSItem.FullName -and $Removable -notcontains $PSItem.FullName })
+  If (-not $Remaining) {
+    [void]$Removable.Add([System.String]$Directory)
+  }
+}
+
+$Changed = [System.Boolean](($Pending.Count + $Surplus.Count + $Removable.Count) -gt 0)
 
 # Either source of "change nothing": the module's check mode, or a -WhatIf a person typed.
 $DryRun = [System.Boolean]($Ansible.CheckMode -or $RequestedWhatIf)
@@ -294,18 +323,18 @@ If (-not $DryRun) {
     Read-S3Object -BucketName:$Bucket -File:$Fetch.Local -Key:$Fetch.Key -Region:$Region | Out-Null
   }
 
-  # Directories are not objects, so removing the last key under one leaves the folder behind.
-  # Swept unconditionally rather than only when something else changed: a directory emptied by a
-  # run that then failed would otherwise persist while every later run reported no change.
-  # Deepest-first so a parent emptied by its own child's removal is cleared in the same pass. The
-  # repository root is never a candidate -- Get-ChildItem -Recurse does not return it, and
-  # removing the mount point would hide an unmounted volume behind a missing directory.
-  ForEach ($Directory In @(
-      Get-ChildItem -Directory -Force -LiteralPath:$Root -Recurse -ErrorAction:'Stop' |
-        Sort-Object -Descending -Property:{ $PSItem.FullName.Length }
-    )) {
-    If (-not @(Get-ChildItem -Force -LiteralPath:$Directory.FullName -ErrorAction:'Stop')) {
-      Remove-Item -Force -LiteralPath:$Directory.FullName -ErrorAction:'Stop'
+  # Deepest-first, so a parent emptied by its own child's removal goes in the same pass. The
+  # repository root is never a candidate: the walk starts inside it, and removing the mount point
+  # would hide an unmounted volume behind the missing directory this script checks for first.
+  #
+  # Emptiness is re-read here rather than taken from the list computed earlier. The fetch runs
+  # between the two, and it recreates directories -- so a folder that was empty when the list
+  # was built can hold a freshly fetched object by the time the sweep reaches it.
+  ForEach ($Directory In @($Removable | Sort-Object -Descending -Property:{ $PSItem.Length })) {
+    If (Test-Path -LiteralPath:$Directory -PathType:'Container') {
+      If (-not @(Get-ChildItem -Force -LiteralPath:$Directory -ErrorAction:'Stop')) {
+        Remove-Item -Force -LiteralPath:$Directory -ErrorAction:'Stop'
+      }
     }
   }
 }
@@ -329,6 +358,7 @@ $Result = [PSCustomObject]@{
   path       = [System.String]$Path
   present    = [System.Int32]$Content.Count
   removed    = [System.String[]]@($Surplus)
+  swept      = [System.String[]]@($Removable)
 }
 
 $Ansible.Changed = $Result.changed

@@ -388,6 +388,46 @@ Describe 'Set-RepositoryContent' {
       (Join-Path -Path $Outside -ChildPath 'keep.txt') | Should -Exist
     }
 
+    It 'refuses a reparse point nested below the top level' {
+      # The first version of this guard checked only the repository's immediate children while the
+      # enumeration recursed past that, so a junction one level down was walked and deleted through.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Outside = Join-Path -Path $script:Sandbox -ChildPath 'Outside'
+      [void](New-Item -ItemType 'Directory' -Path $Outside -Force)
+      Set-Content -LiteralPath (Join-Path -Path $Outside -ChildPath 'keep.txt') -Value 'not ours'
+      $Nested = Join-Path -Path $script:Repository -ChildPath 'Vendor/App'
+      [void](New-Item -ItemType 'Directory' -Path $Nested -Force)
+      $Link = Join-Path -Path $Nested -ChildPath 'escape'
+      [void](New-Item -ItemType 'SymbolicLink' -Path $Link -Target $Outside -ErrorAction 'SilentlyContinue')
+      if (-not (Test-Path -LiteralPath $Link)) { Set-ItResult -Skipped -Because 'links need privilege here' ; return }
+      [void](New-AnsibleContext)
+      { & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region } |
+        Should -Throw -ExpectedMessage '*reparse point*'
+      (Join-Path -Path $Outside -ChildPath 'keep.txt') | Should -Exist
+    }
+
+    It 'refuses a key that resolves outside the repository' {
+      # Canonicalising a key collapses '..', which can land outside the volume entirely. This
+      # script is the one place a key from the bucket becomes a local path, so containment is
+      # checked here or nowhere.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/../../escaped.exe'))
+      [void](New-AnsibleContext)
+      { & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region } |
+        Should -Throw -ExpectedMessage '*outside the repository*'
+      (Join-Path -Path $script:Sandbox -ChildPath 'escaped.exe') | Should -Not -Exist
+    }
+
+    It 'does not sweep a directory the fetch has just refilled' {
+      # The fetch runs between the emptiness check and the sweep, so a folder that was empty when
+      # the list was built can hold a freshly fetched object by the time the sweep reaches it.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Empty = Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0'
+      [void](New-Item -ItemType 'Directory' -Path $Empty -Force)
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      (Join-Path -Path $Empty -ChildPath 'app.exe') | Should -Exist
+    }
+
     It 'honours -WhatIf, because a person reaching for it expects nothing to change' {
       # The module injects -WhatIf in check mode and this script decides check mode from
       # $Ansible.CheckMode instead -- but a person running it directly still expects -WhatIf to

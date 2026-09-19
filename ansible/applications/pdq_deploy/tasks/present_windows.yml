@@ -452,9 +452,9 @@
     # bucket is the only place these can live.
     #
     # Uploaded from the controller, which holds the credentials; the host never receives any reach
-    # into S3. Overwritten every converge rather than written once, because a corrected script
-    # reaching the fleet is the point: the object is identified by name, not by version, and the
-    # grant permits replacing exactly these two keys and nothing else.
+    # into S3. Replaced when the content differs rather than written once, because a corrected
+    # script reaching the fleet is the point: these objects are identified by name and not by
+    # version, and the grant permits replacing exactly these two keys and nothing else.
 
     - name: 'PROCESS | Publish The Helper Scripts Packages Call'
       delegate_to: 'localhost'
@@ -469,11 +469,20 @@
         dualstack: false
         encrypt: true
         encryption_mode: 'AES256'
-        ignore_nonexistent_bucket: false
+        expiry: 600
+        # True for the same reason the installer fetch above sets it: the probe it skips is a
+        # HeadBucket, which needs s3:ListBucket on the whole bucket -- a grant this role is
+        # deliberately not given. Left false, every run dies on the probe rather than on anything
+        # to do with the object.
+        ignore_nonexistent_bucket: true
         mode: 'put'
         object: "~resources/{{ item }}"
         overwrite: 'different'
-        permission: [ 'private' ]
+        # Empty, not 'private'. The bucket enforces bucket-owner ownership, so ACLs are disabled on
+        # it and a PUT carrying any canned ACL is refused outright. The module cannot detect that
+        # here -- reading the ownership setting needs a permission this role does not have, and it
+        # treats the denial as "ACLs are enabled".
+        permission: []
         prefix: ''
         purge_tags: true
         region: "{{ pdq_deploy_running.repository.region }}"

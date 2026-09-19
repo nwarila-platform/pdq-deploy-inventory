@@ -37,6 +37,37 @@ None of the roles carries an inline policy.
   `ec2.amazonaws.com`.
 - **KMS** cryptographic use is conditioned on `kms:ViaService` for EC2 in `us-east-1`.
 
+## Proposed, not yet applied
+
+`…_runner_s3` carries one statement the live account does not have yet:
+**`PublishTheTwoHelperScriptsPackagesRun`**. Everything else in this directory is an export.
+`manifest.json` records the difference; clear that block once the statement is applied and the
+documents are re-exported.
+
+It exists because deploy packages call helper scripts by path — `$(Repository)\~resources\`
+— and nothing puts them there. The repository sync is a deterministic pull from the bucket, so
+a hand-placed copy is removed on the next converge and the bucket is the only home those
+scripts can have. The deploy publishes them, then triggers the sync.
+
+The grant is two exact keys, and deliberately narrow in three ways:
+
+- **Two named objects, not the prefix.** A third helper script is a change to this policy, not
+  something a run can decide. Simulated 2026-09-18 with `iam simulate-custom-policy`:
+  `~resources/anything-else.ps1` returns an implicit deny.
+- **Write and replace, but not delete.** A script is updated in place when its source changes;
+  removing one is not something a deployment should be able to do.
+- **`s3:GetObjectTagging` on the same two keys.** Not decoration: the collection reads an
+  object's tags on every put, before it decides whether tags were even requested, so without
+  this the task fails on every converge once the object exists. Read from the pinned module's
+  source rather than inferred from the error.
+- **No conditional-write requirement**, unlike the artifact publisher's grant. These two keys
+  are meant to be overwritten — that is how a corrected script reaches the fleet — whereas an
+  installer at a version is written once and never again.
+
+Note who does NOT have this. The software-update publisher writes artifacts and denies
+`~resources/*` outright, so the two writers to this bucket have no overlap at all: one
+publishes software, the other publishes the scripts that install it.
+
 ## What the runner reads from S3
 
 From `…_runner_s3`:

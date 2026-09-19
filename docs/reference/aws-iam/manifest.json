@@ -126,5 +126,11 @@
       ],
       "inline": []
     }
+  },
+  "proposed": {
+    "note": "Documents listed here carry a statement that is NOT yet in the live account. Apply, then re-export and clear this block.",
+    "nwarila-platform_pdq-deploy-inventory_runner_s3": [
+      "PublishTheTwoHelperScriptsPackagesRun"
+    ]
   }
 }

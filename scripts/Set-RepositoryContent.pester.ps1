@@ -117,6 +117,99 @@ Describe 'Set-RepositoryContent' {
     Remove-Variable -Name 'FakeObjects', 'FakeFetched', 'FakeListed' -Scope 'Global' -Force -ErrorAction 'SilentlyContinue'
   }
 
+  Context 'what it removes' {
+
+    It 'removes a local file the bucket no longer carries' {
+      # The bucket is the only place that decides what the repository contains; a superseded
+      # version stays addressable there until it is pruned there.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/2.0/app.exe'))
+      $Stale = Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe'
+      [void](New-Item -ItemType 'Directory' -Path (Split-Path -Path $Stale -Parent) -Force)
+      Set-Content -LiteralPath $Stale -Value 'superseded'
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Stale | Should -Not -Exist
+      $Ctx.Result.removed.Count | Should -Be 1
+      $Ctx.Result.changed | Should -BeTrue
+    }
+
+    It 'removes a file nothing in the bucket ever placed' {
+      # A hand-placed script is exactly the drift this sync exists to remove: it would exist on one
+      # host and no other, and nothing would reveal that until something read it.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Rogue = Join-Path -Path $script:Repository -ChildPath 'hand-placed.ps1'
+      Set-Content -LiteralPath $Rogue -Value 'not from the bucket'
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Rogue | Should -Not -Exist
+    }
+
+    It 'keeps every file the bucket does carry' {
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'), (New-S3Entry 'Vendor/App/1.0/notes.txt'))
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      (Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe') | Should -Exist
+      (Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/notes.txt') | Should -Exist
+    }
+
+    It 'does not mistake a file it is about to fetch for one nothing owns' {
+      # Surplus is enumerated before anything is written. If it were enumerated after, a freshly
+      # fetched object could be deleted by the same run that fetched it.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      (Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe') | Should -Exist
+      $Ctx.Result.removed.Count | Should -Be 0
+    }
+
+    It 'clears a directory its last object left behind' {
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/2.0/app.exe'))
+      $Stale = Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe'
+      [void](New-Item -ItemType 'Directory' -Path (Split-Path -Path $Stale -Parent) -Force)
+      Set-Content -LiteralPath $Stale -Value 'superseded'
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      (Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0') | Should -Not -Exist
+    }
+
+    It 'never removes the repository root, even when the bucket is empty' {
+      # The root is the mount point. Removing it would hide an unmounted volume behind a missing
+      # directory, which is the fault this script checks for before it does anything.
+      $global:FakeObjects = @()
+      $Orphan = Join-Path -Path $script:Repository -ChildPath 'orphan.txt'
+      Set-Content -LiteralPath $Orphan -Value 'x'
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $script:Repository | Should -Exist
+      $Orphan | Should -Not -Exist
+    }
+
+    It 'removes nothing in check mode, and still reports what it would remove' {
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/2.0/app.exe'))
+      $Stale = Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe'
+      [void](New-Item -ItemType 'Directory' -Path (Split-Path -Path $Stale -Parent) -Force)
+      Set-Content -LiteralPath $Stale -Value 'superseded'
+      $Ctx = New-AnsibleContext -CheckMode
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Stale | Should -Exist
+      $Ctx.Result.removed.Count | Should -Be 1
+      $Ctx.Result.changed | Should -BeTrue
+    }
+
+    It 'converges: a second run over the first run''s result removes nothing' {
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/2.0/app.exe'))
+      $Stale = Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe'
+      [void](New-Item -ItemType 'Directory' -Path (Split-Path -Path $Stale -Parent) -Force)
+      Set-Content -LiteralPath $Stale -Value 'superseded'
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Second = New-AnsibleContext
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Second.Result.changed | Should -BeFalse
+      $Second.Result.removed.Count | Should -Be 0
+    }
+  }
+
   Context 'what it fetches' {
 
     It 'fetches every object when the repository is empty' {
@@ -182,14 +275,88 @@ Describe 'Set-RepositoryContent' {
     }
   }
 
-  Context 'what it leaves alone' {
+  Context 'what it must never delete' {
 
-    It 'never deletes a local file the bucket no longer holds' {
+    It 'keeps the bucket''s own file when Path is not already canonical' {
+      # Proves the property, not one line of it: a Path the caller did not canonicalise must
+      # still converge and delete nothing. The failure it guards against is severe -- an
+      # unresolved root matches no file, so every file looks orphaned and the first run empties
+      # the repository. Two things now deliver it, resolving the root and canonicalising each
+      # joined path, and this case fails if both are lost.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Awkward = Join-Path -Path $script:Repository -ChildPath '.'
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $Awkward -Region $script:Region
+      (Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe') | Should -Exist
+      $Second = New-AnsibleContext
+      & $script:ScriptPath -Bucket $script:Bucket -Path $Awkward -Region $script:Region
+      $Second.Result.changed | Should -BeFalse
+      $Second.Result.removed.Count | Should -Be 0
+    }
+
+    It 'keeps the bucket''s own file when the key is not already canonical' {
+      # A key carrying '//' names a file the filesystem calls something shorter. Holding the longer
+      # spelling would mark the bucket's own object surplus on the next run: delete, refetch,
+      # never converge, and the installer absent between alternate converges. Interpolated key
+      # building produces exactly this.
+      $global:FakeObjects = @((New-S3Entry 'Vendor//App/1.0/app.exe'))
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Second = New-AnsibleContext
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Second.Result.removed.Count | Should -Be 0
+      $Second.Result.changed | Should -BeFalse
+    }
+
+    It 'converges when a surplus file sits where a key needs a directory' {
+      # Creating a directory over an existing file is a silent no-op, so the fetch then fails --
+      # and the file that caused it is never reached if removal runs second. Every later run fails
+      # the same way and a human has to intervene. Removal runs first.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Blocker = Join-Path -Path $script:Repository -ChildPath 'Vendor/App'
+      [void](New-Item -ItemType 'Directory' -Path (Split-Path -Path $Blocker -Parent) -Force)
+      Set-Content -LiteralPath $Blocker -Value 'in the way'
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      (Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe') | Should -Exist
+    }
+
+    It 'clears a whole chain of directories its objects left behind' {
+      $global:FakeObjects = @((New-S3Entry 'Keep/Me/1.0/app.exe'))
+      $Stale = Join-Path -Path $script:Repository -ChildPath 'Gone/Deep/Deeper/1.0/old.exe'
+      [void](New-Item -ItemType 'Directory' -Path (Split-Path -Path $Stale -Parent) -Force)
+      Set-Content -LiteralPath $Stale -Value 'superseded'
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      (Join-Path -Path $script:Repository -ChildPath 'Gone') | Should -Not -Exist
+    }
+
+    It 'sweeps an empty directory even when nothing else changed' {
+      # Swept unconditionally: a directory emptied by a run that then failed would otherwise
+      # persist while every later run reported no change.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Left = Join-Path -Path $script:Repository -ChildPath 'Left/Behind'
+      [void](New-Item -ItemType 'Directory' -Path $Left -Force)
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Left | Should -Not -Exist
+    }
+  }
+
+  Context 'check mode, and what it reports' {
+
+    It 'deletes a local file the bucket no longer holds' {
+      # This assertion is the reverse of the one it replaces. The mirror was additive, on the
+      # reasoning that leaving a superseded version on disk kept it available for a rollback. It
+      # also let every volume drift somewhere different, invisibly. Rollback now lives in the
+      # bucket, which is the only place that decides what the repository contains.
       $Orphan = Set-LocalCopy -Key 'Vendor/App/0.9/old.exe'
       $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
       [void](New-AnsibleContext)
       & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
-      Test-Path -LiteralPath $Orphan | Should -BeTrue
+      Test-Path -LiteralPath $Orphan | Should -BeFalse
     }
 
     It 'fetches nothing in check mode, and still reports the change it would make' {
@@ -198,6 +365,80 @@ Describe 'Set-RepositoryContent' {
       & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
       $global:FakeFetched.Count | Should -Be 0
       $Ctx.Changed | Should -BeTrue
+      $Ctx.Result.check_mode | Should -BeTrue
+    }
+  }
+
+  Context 'what it refuses to walk' {
+
+    It 'refuses a reparse point rather than deleting through it' {
+      # Windows PowerShell follows directory junctions when it recurses, so a junction here would
+      # present files living on another volume as surplus and this script would delete them --
+      # outside the repository, with the privileges a deployment runs as.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Outside = Join-Path -Path $script:Sandbox -ChildPath 'Outside'
+      [void](New-Item -ItemType 'Directory' -Path $Outside -Force)
+      Set-Content -LiteralPath (Join-Path -Path $Outside -ChildPath 'keep.txt') -Value 'not ours'
+      $Link = Join-Path -Path $script:Repository -ChildPath 'escape'
+      [void](New-Item -ItemType 'SymbolicLink' -Path $Link -Target $Outside -ErrorAction 'SilentlyContinue')
+      if (-not (Test-Path -LiteralPath $Link)) { Set-ItResult -Skipped -Because 'links need privilege here' ; return }
+      [void](New-AnsibleContext)
+      { & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region } |
+        Should -Throw -ExpectedMessage '*reparse point*'
+      (Join-Path -Path $Outside -ChildPath 'keep.txt') | Should -Exist
+    }
+
+    It 'refuses a reparse point nested below the top level' {
+      # The first version of this guard checked only the repository's immediate children while the
+      # enumeration recursed past that, so a junction one level down was walked and deleted through.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Outside = Join-Path -Path $script:Sandbox -ChildPath 'Outside'
+      [void](New-Item -ItemType 'Directory' -Path $Outside -Force)
+      Set-Content -LiteralPath (Join-Path -Path $Outside -ChildPath 'keep.txt') -Value 'not ours'
+      $Nested = Join-Path -Path $script:Repository -ChildPath 'Vendor/App'
+      [void](New-Item -ItemType 'Directory' -Path $Nested -Force)
+      $Link = Join-Path -Path $Nested -ChildPath 'escape'
+      [void](New-Item -ItemType 'SymbolicLink' -Path $Link -Target $Outside -ErrorAction 'SilentlyContinue')
+      if (-not (Test-Path -LiteralPath $Link)) { Set-ItResult -Skipped -Because 'links need privilege here' ; return }
+      [void](New-AnsibleContext)
+      { & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region } |
+        Should -Throw -ExpectedMessage '*reparse point*'
+      (Join-Path -Path $Outside -ChildPath 'keep.txt') | Should -Exist
+    }
+
+    It 'refuses a key that resolves outside the repository' {
+      # Canonicalising a key collapses '..', which can land outside the volume entirely. This
+      # script is the one place a key from the bucket becomes a local path, so containment is
+      # checked here or nowhere.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/../../escaped.exe'))
+      [void](New-AnsibleContext)
+      { & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region } |
+        Should -Throw -ExpectedMessage '*outside the repository*'
+      (Join-Path -Path $script:Sandbox -ChildPath 'escaped.exe') | Should -Not -Exist
+    }
+
+    It 'does not sweep a directory the fetch has just refilled' {
+      # The fetch runs between the emptiness check and the sweep, so a folder that was empty when
+      # the list was built can hold a freshly fetched object by the time the sweep reaches it.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Empty = Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0'
+      [void](New-Item -ItemType 'Directory' -Path $Empty -Force)
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      (Join-Path -Path $Empty -ChildPath 'app.exe') | Should -Exist
+    }
+
+    It 'honours -WhatIf, because a person reaching for it expects nothing to change' {
+      # The module injects -WhatIf in check mode and this script decides check mode from
+      # $Ansible.CheckMode instead -- but a person running it directly still expects -WhatIf to
+      # mean change nothing, and this script deletes.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Rogue = Join-Path -Path $script:Repository -ChildPath 'rogue.txt'
+      Set-Content -LiteralPath $Rogue -Value 'hand placed'
+      $Ctx = New-AnsibleContext
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region -WhatIf
+      $Rogue | Should -Exist
+      $global:FakeFetched.Count | Should -Be 0
       $Ctx.Result.check_mode | Should -BeTrue
     }
   }

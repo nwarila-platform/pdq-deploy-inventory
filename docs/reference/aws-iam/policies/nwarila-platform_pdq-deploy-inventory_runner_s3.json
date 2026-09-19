@@ -39,6 +39,18 @@
       "Sid": "ReadAppRepoByExactPathOnlyNoListing"
     },
     {
+      "Action": [
+        "s3:GetObjectTagging",
+        "s3:PutObject"
+      ],
+      "Effect": "Allow",
+      "Resource": [
+        "arn:aws:s3:::<account-id>-apprepo/~resources/Get-InstalledSoftware.ps1",
+        "arn:aws:s3:::<account-id>-apprepo/~resources/Start-Uninstaller.ps1"
+      ],
+      "Sid": "PublishTheTwoHelperScriptsPackagesRun"
+    },
+    {
       "Action": "s3:GetObject",
       "Condition": {
         "StringEquals": {

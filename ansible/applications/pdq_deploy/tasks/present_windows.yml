@@ -436,7 +436,7 @@
     # repository is measured in gigabytes, and handing every byte through the deployment runner
     # would be the wrong shape for content the host is already entitled to read.
     #
-    # The pull is ADDITIVE and compares before it copies, so a converge that finds the repository
+    # The pull is DETERMINISTIC and compares before it copies, so a converge that finds the repository
     # current fetches nothing and reports no change.
 
     - name: 'PROCESS | Fill The Repository From The Application Repository'

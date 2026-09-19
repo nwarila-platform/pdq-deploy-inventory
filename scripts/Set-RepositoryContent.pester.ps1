@@ -275,6 +275,76 @@ Describe 'Set-RepositoryContent' {
     }
   }
 
+  Context 'what it must never delete' {
+
+    It 'keeps the bucket''s own file when Path is not already canonical' {
+      # Proves the property, not one line of it: a Path the caller did not canonicalise must
+      # still converge and delete nothing. The failure it guards against is severe -- an
+      # unresolved root matches no file, so every file looks orphaned and the first run empties
+      # the repository. Two things now deliver it, resolving the root and canonicalising each
+      # joined path, and this case fails if both are lost.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Awkward = Join-Path -Path $script:Repository -ChildPath '.'
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $Awkward -Region $script:Region
+      (Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe') | Should -Exist
+      $Second = New-AnsibleContext
+      & $script:ScriptPath -Bucket $script:Bucket -Path $Awkward -Region $script:Region
+      $Second.Result.changed | Should -BeFalse
+      $Second.Result.removed.Count | Should -Be 0
+    }
+
+    It 'keeps the bucket''s own file when the key is not already canonical' {
+      # A key carrying '//' names a file the filesystem calls something shorter. Holding the longer
+      # spelling would mark the bucket's own object surplus on the next run: delete, refetch,
+      # never converge, and the installer absent between alternate converges. Interpolated key
+      # building produces exactly this.
+      $global:FakeObjects = @((New-S3Entry 'Vendor//App/1.0/app.exe'))
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Second = New-AnsibleContext
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Second.Result.removed.Count | Should -Be 0
+      $Second.Result.changed | Should -BeFalse
+    }
+
+    It 'converges when a surplus file sits where a key needs a directory' {
+      # Creating a directory over an existing file is a silent no-op, so the fetch then fails --
+      # and the file that caused it is never reached if removal runs second. Every later run fails
+      # the same way and a human has to intervene. Removal runs first.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      $Blocker = Join-Path -Path $script:Repository -ChildPath 'Vendor/App'
+      [void](New-Item -ItemType 'Directory' -Path (Split-Path -Path $Blocker -Parent) -Force)
+      Set-Content -LiteralPath $Blocker -Value 'in the way'
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      (Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0/app.exe') | Should -Exist
+    }
+
+    It 'clears a whole chain of directories its objects left behind' {
+      $global:FakeObjects = @((New-S3Entry 'Keep/Me/1.0/app.exe'))
+      $Stale = Join-Path -Path $script:Repository -ChildPath 'Gone/Deep/Deeper/1.0/old.exe'
+      [void](New-Item -ItemType 'Directory' -Path (Split-Path -Path $Stale -Parent) -Force)
+      Set-Content -LiteralPath $Stale -Value 'superseded'
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      (Join-Path -Path $script:Repository -ChildPath 'Gone') | Should -Not -Exist
+    }
+
+    It 'sweeps an empty directory even when nothing else changed' {
+      # Swept unconditionally: a directory emptied by a run that then failed would otherwise
+      # persist while every later run reported no change.
+      $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Left = Join-Path -Path $script:Repository -ChildPath 'Left/Behind'
+      [void](New-Item -ItemType 'Directory' -Path $Left -Force)
+      [void](New-AnsibleContext)
+      & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
+      $Left | Should -Not -Exist
+    }
+  }
+
   Context 'check mode, and what it reports' {
 
     It 'deletes a local file the bucket no longer holds' {

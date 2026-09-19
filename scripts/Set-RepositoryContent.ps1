@@ -212,9 +212,28 @@ $Objects = @(Get-S3Object -BucketName:$Bucket -Region:$Region)
 # directories are made below from the keys that do.
 $Content = @($Objects | Where-Object -FilterScript { -not $PSItem.Key.EndsWith('/') })
 
+# Resolved once, before anything is compared. Get-ChildItem reports fully resolved paths and
+# $Path arrives however the caller wrote it, so comparing an unresolved root against a resolved
+# file matches nothing: every file looks orphaned and the first run empties the repository.
+$Root = (Get-Item -LiteralPath:$Path -ErrorAction:'Stop').FullName
+
+# Everything the bucket says this volume should hold. Compared case-insensitively because the
+# filesystem is: two keys differing only in case cannot both exist here, and treating them as
+# distinct would delete whichever arrived second on every run.
+$Expected = [System.Collections.Generic.HashSet[System.String]]::new(
+  [System.StringComparer]::OrdinalIgnoreCase
+)
+
 $Pending = [System.Collections.Generic.List[System.Object]]::new()
 ForEach ($Object In $Content) {
-  $Local = Join-Path -Path:$Path -ChildPath:$Object.Key.Replace('/', $PATH_SEPARATOR)
+  # GetFullPath collapses what the filesystem collapses. A key carrying '//', '/./' or '/../'
+  # names a file the filesystem will call something shorter, and holding the longer spelling here
+  # would mark the bucket's own object surplus on the next run -- deleting it, refetching it, and
+  # never converging. Key-building code that interpolates a prefix produces exactly that.
+  $Local = [System.IO.Path]::GetFullPath(
+    (Join-Path -Path:$Root -ChildPath:$Object.Key.Replace('/', $PATH_SEPARATOR))
+  )
+  [void]$Expected.Add($Local)
   $Existing = Get-Item -LiteralPath:$Local -ErrorAction:'SilentlyContinue'
   $Current = (
     $Null -ne $Existing -and
@@ -226,24 +245,8 @@ ForEach ($Object In $Content) {
   }
 }
 
-# Both sides of the comparison below are resolved to a full path first. Get-ChildItem reports
-# one, and $Path arrives however the caller wrote it -- so comparing an unresolved root against a
-# resolved file matches nothing, every file on the volume looks orphaned, and the first run empties
-# the repository. Measured during development, which is why the root is resolved exactly once here.
-$Root = (Get-Item -LiteralPath:$Path -ErrorAction:'Stop').FullName
-
-# Everything the bucket says this volume should hold. Compared case-insensitively because the
-# filesystem is: two keys differing only in case cannot both exist here, and treating them as
-# distinct would delete whichever arrived second on every run.
-$Expected = [System.Collections.Generic.HashSet[System.String]]::new(
-  [System.StringComparer]::OrdinalIgnoreCase
-)
-ForEach ($Object In $Content) {
-  [void]$Expected.Add((Join-Path -Path:$Root -ChildPath:$Object.Key.Replace('/', $PATH_SEPARATOR)))
-}
-
-# Anything on the volume the bucket does not account for. Enumerated before anything is fetched,
-# so a file this run is about to write is never mistaken for one nothing owns.
+# Anything on the volume the bucket does not account for. Enumerated before anything is written,
+# so an object this run is about to fetch is never mistaken for one nothing owns.
 $Surplus = [System.Collections.Generic.List[System.String]]::new()
 ForEach ($File In @(Get-ChildItem -File -Force -LiteralPath:$Root -Recurse -ErrorAction:'Stop')) {
   If (-not $Expected.Contains($File.FullName)) {
@@ -253,7 +256,16 @@ ForEach ($File In @(Get-ChildItem -File -Force -LiteralPath:$Root -Recurse -Erro
 
 $Changed = [System.Boolean](($Pending.Count + $Surplus.Count) -gt 0)
 
-If ($Changed -and -not $Ansible.CheckMode) {
+If (-not $Ansible.CheckMode) {
+  # Removal runs BEFORE the fetch. A surplus file sitting where a key needs a directory otherwise
+  # wedges the host: creating the directory over it is a silent no-op, the fetch then fails, and
+  # the file that caused it is never reached because the fetch threw first -- so every later run
+  # fails the same way. Surplus and expected are disjoint by construction, so removing first is
+  # equally safe, and it frees the volume of superseded installers before new ones arrive.
+  ForEach ($Remove In $Surplus) {
+    Remove-Item -Force -LiteralPath:$Remove -ErrorAction:'Stop'
+  }
+
   ForEach ($Fetch In $Pending) {
     $Parent = Split-Path -Path:$Fetch.Local -Parent
     If (-not (Test-Path -LiteralPath:$Parent -PathType:'Container')) {
@@ -262,14 +274,12 @@ If ($Changed -and -not $Ansible.CheckMode) {
     Read-S3Object -BucketName:$Bucket -File:$Fetch.Local -Key:$Fetch.Key -Region:$Region | Out-Null
   }
 
-  ForEach ($Remove In $Surplus) {
-    Remove-Item -Force -LiteralPath:$Remove -ErrorAction:'Stop'
-  }
-
   # Directories are not objects, so removing the last key under one leaves the folder behind.
-  # Emptied folders are cleared deepest-first, which is what lets a second run report no change
-  # rather than rediscovering the same empty tree. The repository root is never a candidate: it is
-  # the mount point, and removing it would hide an unmounted volume behind a missing directory.
+  # Swept unconditionally rather than only when something else changed: a directory emptied by a
+  # run that then failed would otherwise persist while every later run reported no change.
+  # Deepest-first so a parent emptied by its own child's removal is cleared in the same pass. The
+  # repository root is never a candidate -- Get-ChildItem -Recurse does not return it, and
+  # removing the mount point would hide an unmounted volume behind a missing directory.
   ForEach ($Directory In @(
       Get-ChildItem -Directory -Force -LiteralPath:$Root -Recurse -ErrorAction:'Stop' |
         Sort-Object -Descending -Property:{ $PSItem.FullName.Length }

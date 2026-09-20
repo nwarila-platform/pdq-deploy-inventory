@@ -34,7 +34,14 @@
         <PowerShellStep>
           <CustomCommandLine></CustomCommandLine>
           <Files>$(Repository)\~resources\Start-Uninstaller.ps1</Files>
-          <Script>&amp; ".\Start-Uninstaller.ps1" -DisplayNamePattern 'Google Chrome*' -Exclude @{ ParentKey = '@(Google-LLC_Google-Chrome-ProductCode)' } -SilentSwitch '--force-uninstall' -SuccessExitCode @(0, 1641, 3010)
+          <Script>&amp; ".\Start-Uninstaller.ps1" `
+  -DebugLevel '103' `
+  -DisplayNamePattern 'Google Chrome' `
+  -LogLevel '002223' `
+  -Property @('DisplayName', 'ParentKey', 'QuietUninstallString', 'UninstallString', 'AppArch') `
+  -RemoveConforming `
+  -SilentSwitch '--force-uninstall' `
+  -SuccessExitCode @(0, 1641, 3010)
 Exit $LASTEXITCODE</Script>
           <SuccessCodes>0</SuccessCodes>
           <RunAs value="null" />

@@ -9,16 +9,13 @@
     .DESCRIPTION
         Reads both machine uninstall roots, loads the requested registry
         properties by name, and synthesizes ParentKey and AppArch. The
-        DisplayName wildcard remains the product-family matcher; Include and
-        Exclude criteria select registrations from that family by wildcard
-        matching against the loaded properties.
+        DisplayName wildcard remains the product-family matcher. Conforming MSI
+        registrations are retained unless RemoveConforming is supplied. Include
+        narrows the selection, and Exclude retains registrations by wildcard
+        matching loaded properties.
 
-        With no criteria, a registration whose uninstall subkey is a braced
-        GUID is retained as conforming, exactly as in the legacy default path.
-        Supplying Exclude opts into considering conforming registrations for
-        removal; matching exclusions are retained and every other selected
-        registration is removed. Include alone narrows the non-conforming
-        registrations considered by the default path.
+        Include and Exclude can be combined; a registration must match every
+        inclusion and must not match every exclusion to be selected.
 
         A selected MSI registration is removed through msiexec with its
         synthesized ParentKey. Other selected registrations use their recorded
@@ -46,8 +43,7 @@
     .PARAMETER Exclude
         Property names and wildcard values that retain a registration when all
         entries match. Every named property must be present in Property and
-        every value must be a non-empty string. Supplying Exclude opts into
-        considering conforming MSI registrations; without it, they are retained.
+        every value must be a non-empty string.
 
     .PARAMETER Include
         Property names and wildcard values that select a registration when all
@@ -57,6 +53,10 @@
     .PARAMETER LogLevel
         Six-digit control string mapping Verbose, Debug, Information, Warning,
         Error, and Fatal streams to ActionPreference values.
+
+    .PARAMETER RemoveConforming
+        Also select conforming MSI registrations for removal. Without this
+        switch, conforming MSI registrations are retained.
 
     .PARAMETER Property
         Registry value names to load for every family registration. ParentKey
@@ -154,6 +154,16 @@ Param (
     ValueFromPipeline = $False,
     ValueFromPipelineByPropertyName = $False
   )]
+  [System.Management.Automation.SwitchParameter]
+  $RemoveConforming = $False,
+
+  [Parameter(
+    DontShow = $False,
+    Mandatory = $False,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
   [ValidateNotNullOrEmpty()]
   [System.String[]]
   $Property = @(
@@ -191,11 +201,11 @@ Param (
 
 #region ------ [ Messages ] ------------------------------------------------------------------ #
 [System.Collections.Hashtable]$Script:Message = @{
-  'Start-Uninstaller.CheckMode'       = 'Check mode: would process {0} non-conforming registration(s) matching {1}; {2} unsafe command(s) were refused.'
+  'Start-Uninstaller.CheckMode'       = 'Check mode: would process {0} selected registration(s) matching {1}; {2} unsafe command(s) were refused.'
   'Start-Uninstaller.CheckModeFilter' = 'Check mode: would process {0} selected registration(s) matching {1}; {2} unsafe command(s) were refused.'
-  'Start-Uninstaller.Converged'       = 'Removed {0} non-conforming registration(s) matching {1}; retained {2} conforming registration(s).'
+  'Start-Uninstaller.Converged'       = 'Removed {0} selected registration(s) matching {1}; retained {2} registration(s) outside the selection.'
   'Start-Uninstaller.ConvergedFilter' = 'Removed {0} selected registration(s) matching {1}; retained {2} registration(s) outside the selection.'
-  'Start-Uninstaller.Failed'          = 'Removal did not converge for {0}: {1} non-conforming registration(s) survived and {2} command failure(s) were recorded.'
+  'Start-Uninstaller.Failed'          = 'Removal did not converge for {0}: {1} selected registration(s) survived and {2} command failure(s) were recorded.'
   'Start-Uninstaller.FailedFilter'    = 'Removal did not converge for {0}: {1} selected registration(s) survived and {2} command failure(s) were recorded.'
   'Start-Uninstaller.InvalidCommand'  = '{0}: the recorded uninstall command does not identify an executable.'
   'Start-Uninstaller.NoCommand'       = '{0}: no QuietUninstallString or UninstallString is recorded; refusing to invent an uninstall command.'
@@ -557,6 +567,101 @@ Function Test-RegistrationCriterion {
   $True
 }
 
+Function Test-RegistrationSelected {
+  [CmdletBinding(
+    ConfirmImpact = 'None',
+    DefaultParameterSetName = 'default',
+    HelpUri = '',
+    PositionalBinding = $False,
+    SupportsPaging = $False,
+    SupportsShouldProcess = $False
+  )]
+  [OutputType([System.Boolean])]
+  Param (
+    [Parameter(
+      DontShow = $False,
+      Mandatory = $True,
+      ParameterSetName = 'default',
+      ValueFromPipeline = $False,
+      ValueFromPipelineByPropertyName = $False
+    )]
+    [AllowNull()]
+    [System.Collections.Hashtable]
+    $Exclude,
+
+    [Parameter(
+      DontShow = $False,
+      Mandatory = $True,
+      ParameterSetName = 'default',
+      ValueFromPipeline = $False,
+      ValueFromPipelineByPropertyName = $False
+    )]
+    [System.Boolean]
+    $HasExcludeCriterion,
+
+    [Parameter(
+      DontShow = $False,
+      Mandatory = $True,
+      ParameterSetName = 'default',
+      ValueFromPipeline = $False,
+      ValueFromPipelineByPropertyName = $False
+    )]
+    [System.Boolean]
+    $HasIncludeCriterion,
+
+    [Parameter(
+      DontShow = $False,
+      Mandatory = $True,
+      ParameterSetName = 'default',
+      ValueFromPipeline = $False,
+      ValueFromPipelineByPropertyName = $False
+    )]
+    [AllowNull()]
+    [System.Collections.Hashtable]
+    $Include,
+
+    [Parameter(
+      DontShow = $False,
+      Mandatory = $True,
+      ParameterSetName = 'default',
+      ValueFromPipeline = $False,
+      ValueFromPipelineByPropertyName = $False
+    )]
+    [System.Boolean]
+    $RemoveConforming,
+
+    [Parameter(
+      DontShow = $False,
+      Mandatory = $True,
+      ParameterSetName = 'default',
+      ValueFromPipeline = $False,
+      ValueFromPipelineByPropertyName = $False
+    )]
+    [PSCustomObject]
+    $Registration
+  )
+  Write-Debug -Message:'[Test-RegistrationSelected] Entering'
+
+  If ($Registration.is_conforming -and -not $RemoveConforming) {
+    Return $False
+  }
+  If (
+    $HasIncludeCriterion -and
+    -not (Test-RegistrationCriterion -Criterion:$Include -Registration:$Registration)
+  ) {
+    Return $False
+  }
+  If (
+    $HasExcludeCriterion -and
+    (Test-RegistrationCriterion -Criterion:$Exclude -Registration:$Registration)
+  ) {
+    Return $False
+  }
+
+  Write-Debug -Message:'[Test-RegistrationSelected] Exiting'
+  $True
+}
+
 [PSCustomObject[]]$Private:After = @()
 [System.Collections.Generic.HashSet[System.String]]$Private:AfterPath = (
   [System.Collections.Generic.HashSet[System.String]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -577,6 +682,7 @@ Function Test-RegistrationCriterion {
 [System.Boolean]$Private:Failed = $False
 [System.Boolean]$Private:HasExcludeCriterion = $PSBoundParameters.ContainsKey('Exclude')
 [System.Boolean]$Private:HasIncludeCriterion = $PSBoundParameters.ContainsKey('Include')
+[System.Boolean]$Private:IsSelected = $False
 [System.String]$Private:OutcomeMessage = [System.String]::Empty
 [System.String]$Private:OutcomeMessageKey = [System.String]::Empty
 [System.Object]$Private:Process = $Null
@@ -610,19 +716,14 @@ $Before = @(
 )
 
 ForEach ($Registration In $Before) {
-  If ($Registration.is_conforming -and -not $HasExcludeCriterion) {
-    Continue
-  }
-  If (
-    $HasIncludeCriterion -and
-    -not (Test-RegistrationCriterion -Criterion:$Include -Registration:$Registration)
-  ) {
-    Continue
-  }
-  If (
-    $HasExcludeCriterion -and
-    (Test-RegistrationCriterion -Criterion:$Exclude -Registration:$Registration)
-  ) {
+  $IsSelected = Test-RegistrationSelected `
+    -Exclude:$Exclude `
+    -HasExcludeCriterion:$HasExcludeCriterion `
+    -HasIncludeCriterion:$HasIncludeCriterion `
+    -Include:$Include `
+    -RemoveConforming:$RemoveConforming.IsPresent `
+    -Registration:$Registration
+  If (-not $IsSelected) {
     Continue
   }
 
@@ -754,7 +855,14 @@ ForEach ($Registration In $After) {
     key_name      = $Registration.key_name
     registry_path = $Registration.registry_path
   }
-  If ($SelectedPath.Contains($Registration.registry_path)) {
+  $IsSelected = Test-RegistrationSelected `
+    -Exclude:$Exclude `
+    -HasExcludeCriterion:$HasExcludeCriterion `
+    -HasIncludeCriterion:$HasIncludeCriterion `
+    -Include:$Include `
+    -RemoveConforming:$RemoveConforming.IsPresent `
+    -Registration:$Registration
+  If ($IsSelected) {
     $Survived.Add($PublicRegistration)
   } Else {
     $Retained.Add($PublicRegistration)

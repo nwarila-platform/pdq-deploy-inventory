@@ -196,6 +196,12 @@ BeforeAll {
         }
         $global:StartUninstallerRegistry[$Root] = $Remaining.ToArray()
       }
+      If ($Null -ne $global:StartUninstallerReplacementRegistration) {
+        Add-FakeRegistration `
+          -Root $global:StartUninstallerNative `
+          -Registration $global:StartUninstallerReplacementRegistration
+        $global:StartUninstallerReplacementRegistration = $Null
+      }
     }
 
     [PSCustomObject]@{ ExitCode = $global:StartUninstallerExitCode }
@@ -211,6 +217,7 @@ AfterAll {
     'StartUninstallerProcessCalls'
     'StartUninstallerReadRoots'
     'StartUninstallerRegistry'
+    'StartUninstallerReplacementRegistration'
     'StartUninstallerRemovalExitCode'
     'StartUninstallerWow'
   ) -Scope 'Global' -Force -ErrorAction 'SilentlyContinue'
@@ -244,6 +251,7 @@ Describe 'Start-Uninstaller' {
     $global:StartUninstallerPersistRegistration = $False
     $global:StartUninstallerProcessCalls = [System.Collections.Generic.List[System.Object]]::new()
     $global:StartUninstallerReadRoots = [System.Collections.Generic.List[System.String]]::new()
+    $global:StartUninstallerReplacementRegistration = $Null
     $global:StartUninstallerRemovalExitCode = @(0, 1641, 3010)
   }
 
@@ -264,6 +272,20 @@ Describe 'Start-Uninstaller' {
       $global:StartUninstallerProcessCalls | Should -HaveCount 0
     }
 
+    It 'removes a conforming MSI registration when no exclusion is supplied' {
+      $Json = & $script:ScriptPath `
+        -DisplayNamePattern '7-Zip*' `
+        -RemoveConforming
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.changed | Should -BeTrue
+      $Result.removed.key_name | Should -Be $script:ProductCode
+      $Result.retained | Should -HaveCount 0
+      $global:StartUninstallerProcessCalls | Should -HaveCount 1
+    }
+
     It 'reports NoChange when no registration matches' {
       $Json = & $script:ScriptPath -DisplayNamePattern 'No Such Product*'
       $ExitCode = $LASTEXITCODE
@@ -281,7 +303,8 @@ Describe 'Start-Uninstaller' {
     It 'removes the only matching registration and reports an empty second read' {
       $Json = & $script:ScriptPath `
         -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = 'No matching product code' }
+        -Exclude @{ ParentKey = 'No matching product code' } `
+        -RemoveConforming
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -306,7 +329,10 @@ Describe 'Start-Uninstaller' {
         UninstallString = 'C:\Legacy\uninstall.exe /remove'
       }
 
-      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*' -SilentSwitch '/S'
+      $Json = & $script:ScriptPath `
+        -DisplayNamePattern '7-Zip*' `
+        -Exclude @{ ParentKey = $script:ProductCode } `
+        -SilentSwitch '/S'
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -334,7 +360,9 @@ Describe 'Start-Uninstaller' {
         UninstallString = '"C:\Program Files\7-Zip\Uninstall.exe"'
       }
 
-      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
+      $Json = & $script:ScriptPath `
+        -DisplayNamePattern '7-Zip*' `
+        -Exclude @{ ParentKey = $script:ProductCode }
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -352,7 +380,9 @@ Describe 'Start-Uninstaller' {
         QuietUninstallString = '"C:\Program Files\7-Zip\Uninstall.exe" /S'
       }
 
-      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
+      $Json = & $script:ScriptPath `
+        -DisplayNamePattern '7-Zip*' `
+        -Exclude @{ ParentKey = $script:ProductCode }
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -369,7 +399,9 @@ Describe 'Start-Uninstaller' {
       }
       $global:StartUninstallerExitCode = 5
 
-      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
+      $Json = & $script:ScriptPath `
+        -DisplayNamePattern '7-Zip*' `
+        -Exclude @{ ParentKey = $script:ProductCode }
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -386,7 +418,9 @@ Describe 'Start-Uninstaller' {
       }
       $global:StartUninstallerPersistRegistration = $True
 
-      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
+      $Json = & $script:ScriptPath `
+        -DisplayNamePattern '7-Zip*' `
+        -Exclude @{ ParentKey = $script:ProductCode }
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -394,6 +428,27 @@ Describe 'Start-Uninstaller' {
       $Result.changed | Should -BeFalse
       $Result.failures | Should -HaveCount 0
       $Result.survived | Should -HaveCount 1
+      $Result.msg | Should -Match 'did not converge'
+    }
+
+    It 'fails when a selected registration is replaced under a new key before verification' {
+      $global:StartUninstallerReplacementRegistration = @{
+        DisplayName          = '7-Zip 26.02 replacement'
+        PSChildName          = 'Replacement7Zip'
+        QuietUninstallString = 'C:\Replacement\uninstall.exe /S'
+      }
+
+      $Json = & $script:ScriptPath `
+        -DisplayNamePattern '7-Zip*' `
+        -Exclude @{ ParentKey = 'No matching product code' } `
+        -RemoveConforming
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 1
+      $Result.removed.key_name | Should -Be $script:ProductCode
+      $Result.retained | Should -HaveCount 0
+      $Result.survived.key_name | Should -Be 'Replacement7Zip'
       $Result.msg | Should -Match 'did not converge'
     }
 
@@ -414,7 +469,8 @@ Describe 'Start-Uninstaller' {
     It 'retains a conforming registration whose exclusion matches' {
       $Json = & $script:ScriptPath `
         -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = $script:ProductCode }
+        -Exclude @{ ParentKey = $script:ProductCode } `
+        -RemoveConforming
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -434,7 +490,8 @@ Describe 'Start-Uninstaller' {
 
       $Json = & $script:ScriptPath `
         -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = $script:ProductCode }
+        -Exclude @{ ParentKey = $script:ProductCode } `
+        -RemoveConforming
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -527,7 +584,8 @@ Describe 'Start-Uninstaller' {
 
       $Json = & $script:ScriptPath `
         -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = $script:ProductCode }
+        -Exclude @{ ParentKey = $script:ProductCode } `
+        -RemoveConforming
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -547,7 +605,9 @@ Describe 'Start-Uninstaller' {
       }
       $Context = New-AnsibleContext -CheckMode
 
-      $Emitted = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
+      $Emitted = & $script:ScriptPath `
+        -DisplayNamePattern '7-Zip*' `
+        -Exclude @{ ParentKey = $script:ProductCode }
 
       $Emitted | Should -BeNullOrEmpty
       $Context.Changed | Should -BeTrue
@@ -565,7 +625,9 @@ Describe 'Start-Uninstaller' {
       }
       $Context = New-AnsibleContext
 
-      $Emitted = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
+      $Emitted = & $script:ScriptPath `
+        -DisplayNamePattern '7-Zip*' `
+        -Exclude @{ ParentKey = $script:ProductCode }
 
       $Emitted | Should -BeNullOrEmpty
       $Context.Changed | Should -BeTrue

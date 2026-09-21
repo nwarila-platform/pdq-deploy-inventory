@@ -451,8 +451,8 @@
     # deterministic -- so a copy placed on a volume by hand is removed on the next converge and the
     # bucket is the only place these can live.
     #
-    # Uploaded from the controller, which holds the credentials; the host never receives any reach
-    # into S3. Replaced when the content differs rather than written once, because a corrected
+    # Uploaded from the controller, which holds the write grant; the host's own access to the
+    # bucket is read-only. Replaced when the content differs rather than written once, because a corrected
     # script reaching the fleet is the point: these objects are identified by name and not by
     # version, and the grant permits replacing exactly these two keys and nothing else.
 

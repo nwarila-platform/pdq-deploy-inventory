@@ -193,6 +193,7 @@ Describe 'Set-RepositoryContent' {
       & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
       $Stale | Should -Exist
       $Ctx.Result.removed.Count | Should -Be 1
+      $Ctx.Result.swept.Count | Should -Be 1
       $Ctx.Result.changed | Should -BeTrue
     }
 
@@ -423,9 +424,10 @@ Describe 'Set-RepositoryContent' {
       $global:FakeObjects = @((New-S3Entry 'Vendor/App/1.0/app.exe'))
       $Empty = Join-Path -Path $script:Repository -ChildPath 'Vendor/App/1.0'
       [void](New-Item -ItemType 'Directory' -Path $Empty -Force)
-      [void](New-AnsibleContext)
+      $Ctx = New-AnsibleContext
       & $script:ScriptPath -Bucket $script:Bucket -Path $script:Repository -Region $script:Region
       (Join-Path -Path $Empty -ChildPath 'app.exe') | Should -Exist
+      $Ctx.Result.swept | Should -Not -Contain $Empty
     }
 
     It 'honours -WhatIf, because a person reaching for it expects nothing to change' {

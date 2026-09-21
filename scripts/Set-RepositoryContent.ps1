@@ -289,12 +289,15 @@ While ($Unvisited.Count -gt 0) {
 
 # Directories emptied by this run or left by an earlier one. Counted into 'changed' because a
 # run that removes one has changed the volume, and reporting otherwise makes the next reader
-# trust a converged result that is not.
+# trust a converged result that is not. A directory the fetch is about to fill is not one.
 $Removable = [System.Collections.Generic.List[System.String]]::new()
 ForEach ($Directory In @($Directories | Sort-Object -Descending -Property:'Length')) {
   $Remaining = @(Get-ChildItem -Force -LiteralPath:$Directory -ErrorAction:'Stop' |
       Where-Object -FilterScript { $Surplus -notcontains $PSItem.FullName -and $Removable -notcontains $PSItem.FullName })
-  If (-not $Remaining) {
+  $Refilled = @($Pending | Where-Object -FilterScript {
+      $PSItem.Local.StartsWith($Directory + $PATH_SEPARATOR, [System.StringComparison]::OrdinalIgnoreCase)
+    })
+  If (-not $Remaining -and -not $Refilled) {
     [void]$Removable.Add([System.String]$Directory)
   }
 }
@@ -325,16 +328,8 @@ If (-not $DryRun) {
   # Deepest-first, so a parent emptied by its own child's removal goes in the same pass. The
   # repository root is never a candidate: the walk starts inside it, and removing the mount point
   # would hide an unmounted volume behind the missing directory this script checks for first.
-  #
-  # Emptiness is re-read here rather than taken from the list computed earlier. The fetch runs
-  # between the two, and it recreates directories -- so a folder that was empty when the list
-  # was built can hold a freshly fetched object by the time the sweep reaches it.
   ForEach ($Directory In @($Removable | Sort-Object -Descending -Property:'Length')) {
-    If (Test-Path -LiteralPath:$Directory -PathType:'Container') {
-      If (-not @(Get-ChildItem -Force -LiteralPath:$Directory -ErrorAction:'Stop')) {
-        Remove-Item -Force -LiteralPath:$Directory -ErrorAction:'Stop'
-      }
-    }
+    Remove-Item -Force -LiteralPath:$Directory -ErrorAction:'Stop'
   }
 }
 

@@ -370,10 +370,7 @@ Describe 'Start-Uninstaller' {
         UninstallString = 'C:\Legacy\uninstall.exe /remove'
       }
 
-      $Json = & $script:ScriptPath `
-        -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = $script:ProductCode } `
-        -SilentSwitch '/S'
+      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*' -SilentSwitch '/S'
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -456,9 +453,7 @@ Describe 'Start-Uninstaller' {
         UninstallString = '"C:\Program Files\7-Zip\Uninstall.exe"'
       }
 
-      $Json = & $script:ScriptPath `
-        -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = $script:ProductCode }
+      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -476,9 +471,7 @@ Describe 'Start-Uninstaller' {
         QuietUninstallString = '"C:\Program Files\7-Zip\Uninstall.exe" /S'
       }
 
-      $Json = & $script:ScriptPath `
-        -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = $script:ProductCode }
+      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -495,9 +488,7 @@ Describe 'Start-Uninstaller' {
       }
       $global:StartUninstallerExitCode = 5
 
-      $Json = & $script:ScriptPath `
-        -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = $script:ProductCode }
+      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -514,9 +505,7 @@ Describe 'Start-Uninstaller' {
       }
       $global:StartUninstallerPersistRegistration = $True
 
-      $Json = & $script:ScriptPath `
-        -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = $script:ProductCode }
+      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -750,9 +739,7 @@ Describe 'Start-Uninstaller' {
       }
       $Context = New-AnsibleContext -CheckMode
 
-      $Emitted = & $script:ScriptPath `
-        -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = $script:ProductCode }
+      $Emitted = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
 
       $Emitted | Should -BeNullOrEmpty
       $Context.Changed | Should -BeTrue
@@ -770,9 +757,7 @@ Describe 'Start-Uninstaller' {
       }
       $Context = New-AnsibleContext
 
-      $Emitted = & $script:ScriptPath `
-        -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = $script:ProductCode }
+      $Emitted = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
 
       $Emitted | Should -BeNullOrEmpty
       $Context.Changed | Should -BeTrue

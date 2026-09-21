@@ -37,7 +37,7 @@
           <Script>$ErrorActionPreference = 'Stop'
 $PolicyPath = 'HKLM:\SOFTWARE\Policies\Google\Update'
 If (-not (Test-Path -Path $PolicyPath)) {
-  New-Item -Path $PolicyPath | Out-Null
+  New-Item -Path $PolicyPath -Force | Out-Null
 }
 New-ItemProperty -Path $PolicyPath -Name 'Update{8A69D345-D564-463c-AFF1-A69D9E530F96}' -PropertyType DWord -Value 0 -Force | Out-Null
 Exit 0</Script>

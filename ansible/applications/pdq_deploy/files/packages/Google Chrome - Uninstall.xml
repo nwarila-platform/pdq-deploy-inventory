@@ -74,6 +74,59 @@ Exit $LASTEXITCODE</Script>
           <IsPostStep value="false" />
           <IsPreStep value="false" />
         </PowerShellStep>
+        <PowerShellStep>
+          <CustomCommandLine></CustomCommandLine>
+          <Files></Files>
+          <Script>$UpdaterRoot = '{0}\Google\GoogleUpdater\' -f ${env:ProgramFiles(x86)}
+$TimeoutSeconds = 120
+$Deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+
+Do {
+  $UpdaterProcesses = Get-Process -Name 'updater' -ErrorAction 'SilentlyContinue' |
+    Where-Object -FilterScript {
+      Try {
+        $ProcessPath = $PSItem.Path
+        $Null -ne $ProcessPath -and $ProcessPath.StartsWith($UpdaterRoot, [StringComparison]::OrdinalIgnoreCase)
+      } Catch {
+        $False
+      }
+    }
+
+  If ($Null -eq $UpdaterProcesses) {
+    Exit 0
+  }
+  If ([DateTime]::UtcNow -ge $Deadline) {
+    Write-Warning -Message ('Timed out after {0} seconds waiting for updater self-removal.' -f $TimeoutSeconds)
+    Exit 0
+  }
+  Start-Sleep -Seconds 1
+} While ($True)</Script>
+          <SuccessCodes>0</SuccessCodes>
+          <RunAs value="null" />
+          <Conditions type="list">
+            <PackageStepCondition>
+              <Architecture>Both, ArmAware</Architecture>
+              <Version>All</Version>
+              <TypeName>OperatingSystem</TypeName>
+            </PackageStepCondition>
+            <PackageStepCondition>
+              <IsUserLoggedOn>AlwaysRun</IsUserLoggedOn>
+              <TypeName>LoggedOnUser</TypeName>
+            </PackageStepCondition>
+            <PackageStepCondition>
+              <ConditionMode>None</ConditionMode>
+              <InventoryCollectionId value="null" />
+              <InventoryCollectionName></InventoryCollectionName>
+              <TypeName>Collection</TypeName>
+            </PackageStepCondition>
+          </Conditions>
+          <ErrorMode>StopDeploymentFail</ErrorMode>
+          <Title>Settle: Google updater self-removal</Title>
+          <TypeName>PowerShell</TypeName>
+          <IsEnabled value="true" />
+          <IsPostStep value="false" />
+          <IsPreStep value="false" />
+        </PowerShellStep>
       </Steps>
       <Timeout value="60" />
       <UseCustomTimeout value="false" />

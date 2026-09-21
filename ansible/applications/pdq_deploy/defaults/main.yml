@@ -95,14 +95,15 @@ pdq_deploy_defaults:
   # reason the two paths above are.
   inventory_cli_path: 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
 
-  # The pinned custom variables to import, keyed by each application's Add/Remove Programs identity
-  # (<Publisher>_<DisplayName>, Title Case, special characters spelled out) with the value being its
-  # version. Supplied by the playbook, which hands the SAME map to both products. The declaration
-  # is COMPLETE: the import task creates or updates what differs and proves each reads back, and
-  # the removal task deletes every custom variable this map does not name, proving each removal
-  # from a fresh export. Empty -- the default -- declares that the product holds NO custom
-  # variables, which on a fresh install is already true, so the disk role plus this role alone
-  # still converges.
+  # The pinned custom variables to import. Most entries use each application's Add/Remove Programs
+  # identity (<Publisher>_<DisplayName>, Title Case, special characters spelled out) as the key and
+  # its version as the value. An application gated on the identity of its pinned build rather than
+  # its version also carries a -ProductCode companion holding that build's MSI ProductCode. Supplied
+  # by the playbook, which hands the SAME map to both products. The declaration is COMPLETE: the
+  # import task creates or updates what differs and proves each reads back, and the removal task
+  # deletes every custom variable this map does not name, proving each removal from a fresh export.
+  # Empty -- the default -- declares that the product holds NO custom variables, which on a fresh
+  # install is already true, so the disk role plus this role alone still converges.
   variables: {}
 
   # Every preference the console shows, organised exactly as its Preferences window is: a map

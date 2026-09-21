@@ -811,6 +811,9 @@ ForEach ($Registration In $Before) {
     )) {
     Continue
   }
+  If (-not (Test-Path -LiteralPath:$Registration.registry_path)) {
+    Continue
+  }
 
   Try {
     If ([System.String]::IsNullOrWhiteSpace($Arguments)) {

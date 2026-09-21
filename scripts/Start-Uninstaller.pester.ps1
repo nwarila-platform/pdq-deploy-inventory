@@ -198,8 +198,17 @@ BeforeAll {
             $ProductCodeMatch.Success -and
             [System.String]$Registration.PSChildName -ieq $ProductCodeMatch.Value
           )
-          If (-not $RemovedOne -and ($MatchesExecutable -or $MatchesProductCode)) {
-            $RemovedOne = $True
+          $RemovesCollateral = (
+            $global:StartUninstallerCollateralRemoval -contains
+            [System.String]$Registration.PSChildName
+          )
+          If (
+            (-not $RemovedOne -and ($MatchesExecutable -or $MatchesProductCode)) -or
+            $RemovesCollateral
+          ) {
+            If ($MatchesExecutable -or $MatchesProductCode) {
+              $RemovedOne = $True
+            }
           } Else {
             $Remaining.Add($Registration)
           }
@@ -239,6 +248,7 @@ BeforeAll {
 AfterAll {
   Remove-Variable -Name @(
     'StartUninstallerDeniedRoot'
+    'StartUninstallerCollateralRemoval'
     'StartUninstallerExitCode'
     'StartUninstallerNative'
     'StartUninstallerPersistRegistration'
@@ -276,6 +286,7 @@ Describe 'Start-Uninstaller' {
       )
     }
     $global:StartUninstallerDeniedRoot = [System.String]::Empty
+    $global:StartUninstallerCollateralRemoval = @()
     $global:StartUninstallerExitCode = 0
     $global:StartUninstallerPersistRegistration = $False
     $global:StartUninstallerProcessCalls = [System.Collections.Generic.List[System.Object]]::new()
@@ -381,6 +392,32 @@ Describe 'Start-Uninstaller' {
       @($global:StartUninstallerRegistry[$script:Native]).DisplayName | Should -Contain 'Unrelated Product'
       @($global:StartUninstallerRegistry[$script:User]) | Should -HaveCount 1
       $global:StartUninstallerReadRoots | Should -Not -Contain $script:User
+    }
+
+    It 'reports both selected registrations removed after the first launch removes both' {
+      Add-FakeRegistration -Root $script:Native -Registration @{
+        DisplayName          = 'Duplicate Product native'
+        PSChildName          = 'DuplicateProductNative'
+        QuietUninstallString = 'C:\Duplicate\Native\uninstall.exe /S'
+      }
+      Add-FakeRegistration -Root $script:Native -Registration @{
+        DisplayName          = 'Duplicate Product sibling'
+        PSChildName          = 'DuplicateProductSibling'
+        QuietUninstallString = 'C:\Duplicate\Sibling\uninstall.exe /S'
+      }
+      $global:StartUninstallerCollateralRemoval = @('DuplicateProductSibling')
+
+      $Json = & $script:ScriptPath -DisplayNamePattern 'Duplicate Product*'
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.changed | Should -BeTrue
+      $Result.removed | Should -HaveCount 2
+      $Result.removed.key_name | Should -Contain 'DuplicateProductNative'
+      $Result.removed.key_name | Should -Contain 'DuplicateProductSibling'
+      $Result.survived | Should -HaveCount 0
+      $global:StartUninstallerProcessCalls | Should -HaveCount 1
     }
 
     It 'refuses a bare interactive uninstall string when no silent switch is supplied' {

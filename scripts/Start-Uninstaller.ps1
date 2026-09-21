@@ -78,7 +78,7 @@
 
     .EXAMPLE
         PS> $Keep = @{ ParentKey = '{00000000-0000-0000-0000-000000000000}' }
-        PS> ./Start-Uninstaller.ps1 -DisplayNamePattern 'Google Chrome*' -Exclude $Keep
+        PS> ./Start-Uninstaller.ps1 -DisplayNamePattern 'Google Chrome' -Exclude $Keep -RemoveConforming
 
     .OUTPUTS
         One JSON result object when run standalone; the same object through
@@ -730,6 +730,9 @@ ForEach ($Registration In $Before) {
 
   $SelectedCount++
   $Null = $SelectedPath.Add($Registration.registry_path)
+  If (-not (Test-Path -LiteralPath:$Registration.registry_path)) {
+    Continue
+  }
   $CommandLine = [System.String]::Empty
   If ($Registration.is_conforming) {
     If ([System.String]::IsNullOrWhiteSpace($Registration.uninstall_string)) {
@@ -809,9 +812,6 @@ ForEach ($Registration In $Before) {
       $Registration.display_name,
       $Script:Message['Start-Uninstaller.ShouldProcess']
     )) {
-    Continue
-  }
-  If (-not (Test-Path -LiteralPath:$Registration.registry_path)) {
     Continue
   }
 

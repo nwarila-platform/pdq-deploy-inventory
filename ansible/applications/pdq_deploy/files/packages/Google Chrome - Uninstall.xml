@@ -34,7 +34,8 @@
         <PowerShellStep>
           <CustomCommandLine></CustomCommandLine>
           <Files>$(Repository)\~resources\Start-Uninstaller.ps1</Files>
-          <Script>&amp; ".\Start-Uninstaller.ps1" `
+          <Script>Try {
+  &amp; ".\Start-Uninstaller.ps1" `
   -DebugLevel '103' `
   -DisplayNamePattern 'Google Chrome' `
   -LogLevel '002223' `
@@ -42,6 +43,10 @@
   -RemoveConforming `
   -SilentSwitch '--force-uninstall' `
   -SuccessExitCode @(0, 1641, 3010)
+} Catch {
+  Write-Error -Message:('Start-Uninstaller.ps1 failed: {0}' -f $PSItem.Exception.Message) -ErrorAction:'Continue'
+  Exit 3
+}
 Exit $LASTEXITCODE</Script>
           <SuccessCodes>0</SuccessCodes>
           <RunAs value="null" />

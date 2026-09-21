@@ -420,6 +420,35 @@ Describe 'Start-Uninstaller' {
       $global:StartUninstallerProcessCalls | Should -HaveCount 1
     }
 
+    It 'skips validation for a selected registration removed by an earlier launch' {
+      Add-FakeRegistration -Root $script:Native -Registration @{
+        DisplayName          = 'Collateral Product primary'
+        PSChildName          = 'CollateralProductPrimary'
+        QuietUninstallString = 'C:\Collateral\Primary\uninstall.exe /S'
+      }
+      Add-FakeRegistration -Root $script:Native -Registration @{
+        DisplayName     = 'Collateral Product sibling'
+        PSChildName     = $script:WrongProductCode
+        UninstallString = 'C:\Collateral\Sibling\uninstall.exe /S'
+      }
+      $global:StartUninstallerCollateralRemoval = @($script:WrongProductCode)
+
+      $Json = & $script:ScriptPath `
+        -DisplayNamePattern 'Collateral Product*' `
+        -RemoveConforming
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.changed | Should -BeTrue
+      $Result.failures | Should -HaveCount 0
+      $Result.removed | Should -HaveCount 2
+      $Result.removed.key_name | Should -Contain 'CollateralProductPrimary'
+      $Result.removed.key_name | Should -Contain $script:WrongProductCode
+      $Result.survived | Should -HaveCount 0
+      $global:StartUninstallerProcessCalls | Should -HaveCount 1
+    }
+
     It 'refuses a bare interactive uninstall string when no silent switch is supplied' {
       Add-FakeRegistration -Root $script:Native -Registration @{
         DisplayName     = '7-Zip 26.02 (x64)'

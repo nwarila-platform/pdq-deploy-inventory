@@ -34,11 +34,12 @@
         <PowerShellStep>
           <CustomCommandLine></CustomCommandLine>
           <Files></Files>
-          <Script>$Process = Start-Process `
+          <Script>$ProductCode = '@(Google-LLC_Google-Chrome-ProductCode)'
+$Process = Start-Process `
   -FilePath:'msiexec.exe' `
   -ArgumentList:@(
     '/fa'
-    '@(Google-LLC_Google-Chrome-ProductCode)'
+    $ProductCode
     '/qn'
     '/norestart'
   ) `
@@ -75,8 +76,9 @@ Exit $Process.ExitCode</Script>
         <PowerShellStep>
           <CustomCommandLine></CustomCommandLine>
           <Files>$(Repository)\~resources\Get-InstalledSoftware.ps1</Files>
-          <Script>Try {
-  $Result = &amp; ".\Get-InstalledSoftware.ps1" -DisplayName 'Google Chrome' -Version '@(Google-LLC_Google-Chrome)' | ConvertFrom-Json -ErrorAction:'Stop'
+          <Script>$PinnedVersion = '@(Google-LLC_Google-Chrome)'
+Try {
+  $Result = &amp; ".\Get-InstalledSoftware.ps1" -DisplayName 'Google Chrome' -Version $PinnedVersion | ConvertFrom-Json -ErrorAction:'Stop'
 } Catch {
   Write-Error -Message:('Verification failed: {0}' -f $PSItem.Exception.Message) -ErrorAction:'Continue'
   Exit 3
@@ -90,11 +92,15 @@ If ($Result.ambiguous) {
   Exit 2
 }
 If ($Result.action_required) {
-  Write-Error -Message:('Verification failed: Google Chrome is missing or below version {0}. {1}' -f '@(Google-LLC_Google-Chrome)', $Result.msg) -ErrorAction:'Continue'
+  Write-Error -Message:('Verification failed: Google Chrome is missing or below version {0}. {1}' -f $PinnedVersion, $Result.msg) -ErrorAction:'Continue'
   Exit 1
 }
 If ($Result.entries[0].product_id -ine '@(Google-LLC_Google-Chrome-ProductCode)') {
   Write-Error -Message:('Verification failed: Google Chrome ProductCode {0} does not match {1}.' -f $Result.entries[0].product_id, '@(Google-LLC_Google-Chrome-ProductCode)') -ErrorAction:'Continue'
+  Exit 1
+}
+If ($Result.installed_version -ine $PinnedVersion) {
+  Write-Error -Message:('Verification failed: Google Chrome installed version {0} does not match pinned version {1}.' -f $Result.installed_version, $PinnedVersion) -ErrorAction:'Continue'
   Exit 1
 }
 Exit 0</Script>

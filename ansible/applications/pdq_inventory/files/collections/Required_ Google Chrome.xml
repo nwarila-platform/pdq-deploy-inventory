@@ -49,6 +49,29 @@
                 </Filters>
               </GroupFilter>
               <GroupFilter>
+                <Comparison>All</Comparison>
+                <Filters type="list">
+                  <ValueFilter>
+                    <Table>Application</Table>
+                    <Column>Name</Column>
+                    <Comparison>Equals</Comparison>
+                    <Value>Google Chrome</Value>
+                  </ValueFilter>
+                  <ValueFilter>
+                    <Table>Application</Table>
+                    <Column>RegistryHive</Column>
+                    <Comparison>Equals</Comparison>
+                    <Value>HKEY_LOCAL_MACHINE</Value>
+                  </ValueFilter>
+                  <ValueFilter>
+                    <Table>Application</Table>
+                    <Column>Version</Column>
+                    <Comparison>VersionHigherThan</Comparison>
+                    <Value>@(Google-LLC_Google-Chrome)</Value>
+                  </ValueFilter>
+                </Filters>
+              </GroupFilter>
+              <GroupFilter>
                 <Comparison>NotAny</Comparison>
                 <Filters type="list">
                   <GroupFilter>

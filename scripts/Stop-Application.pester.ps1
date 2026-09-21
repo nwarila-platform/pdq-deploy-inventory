@@ -483,6 +483,17 @@ Describe 'Stop-Application' {
       $Kills[0].Unsettled | Should -Be 0
     }
 
+    It 'never reports a service it did not ask to stop, even one already Stopped' {
+      Add-FakeService -Name 'Idle' -HostId 0 -State 'Stopped'
+      Add-FakeProcess -Id 100 -Path 'C:\App\svc.exe'
+      Add-FakeService -Name 'AppSvc' -HostId 100
+
+      $Run = Invoke-StopApplication -Root 'C:\App'
+
+      $Run.ExitCode | Should -Be 0
+      $Run.Result.stopped_services | Should -Be @('AppSvc')
+    }
+
     It 'reports a stop only once it is confirmed' {
       Add-FakeProcess -Id 100 -Path 'C:\App\svc.exe'
       Add-FakeService -Name 'AppSvc' -HostId 100
@@ -632,9 +643,9 @@ Describe 'Stop-Application' {
     }
 
     It 'treats <State> as settled: its host is known and never killed' -ForEach @(
-      @{ State = 'Paused'; Stops = 1 }
-      @{ State = 'Pause Pending'; Stops = 0 }
-      @{ State = 'Continue Pending'; Stops = 0 }
+      @{ State = 'Paused'; Stops = 1; Field = 'stopped_services' }
+      @{ State = 'Pause Pending'; Stops = 0; Field = 'survivors' }
+      @{ State = 'Continue Pending'; Stops = 0; Field = 'survivors' }
     ) {
       Add-FakeProcess -Id 100 -Path 'C:\App\svc.exe'
       Add-FakeService -Name 'AppSvc' -HostId 100 -State $State
@@ -643,7 +654,11 @@ Describe 'Stop-Application' {
 
       @($global:StopApplicationCalls | Where-Object Kind -EQ 'process') | Should -HaveCount 0
       @($global:StopApplicationCalls | Where-Object Kind -EQ 'service') | Should -HaveCount $Stops
-      @($Run.Result.survivors.name) + @($Run.Result.stopped_services) | Should -Contain 'AppSvc'
+      If ($Field -eq 'survivors') {
+        @($Run.Result.survivors | ForEach-Object { $PSItem.name }) | Should -Contain 'AppSvc'
+      } Else {
+        $Run.Result.stopped_services | Should -Be @('AppSvc')
+      }
     }
 
     It 'counts a <Type> service as a process service' -ForEach @(

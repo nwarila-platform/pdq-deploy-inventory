@@ -155,7 +155,6 @@ Write-Debug -Message:'Entering Stage: Main'
 [System.Collections.Generic.HashSet[System.UInt32]]$Private:HostIds = (
   [System.Collections.Generic.HashSet[System.UInt32]]::new()
 )
-[System.Int32]$Private:MaxAttempts = 30
 [System.Collections.Generic.Dictionary[System.UInt32, PSCustomObject]]$Private:KillRequested = (
   [System.Collections.Generic.Dictionary[System.UInt32, PSCustomObject]]::new()
 )
@@ -165,6 +164,7 @@ Write-Debug -Message:'Entering Stage: Main'
 [System.Collections.Generic.List[System.Object]]$Private:MatchedServices = (
   [System.Collections.Generic.List[System.Object]]::new()
 )
+[System.Int32]$Private:MaxAttempts = 30
 [System.Collections.Generic.List[System.String]]$Private:MissingRoots = (
   [System.Collections.Generic.List[System.String]]::new()
 )
@@ -179,6 +179,7 @@ Write-Debug -Message:'Entering Stage: Main'
   [System.Collections.Generic.List[System.String]]::new()
 )
 [System.Object[]]$Private:Services = @()
+[System.String[]]$Private:SettledStates = @('Continue Pending', 'Pause Pending', 'Paused', 'Running')
 [System.Collections.Generic.List[System.String]]$Private:SharedParents = (
   [System.Collections.Generic.List[System.String]]::new()
 )
@@ -187,25 +188,23 @@ Write-Debug -Message:'Entering Stage: Main'
     [System.StringComparer]::OrdinalIgnoreCase
   )
 )
-[System.Collections.Generic.HashSet[System.String]]$Private:StopRequested = (
-  [System.Collections.Generic.HashSet[System.String]]::new([System.StringComparer]::OrdinalIgnoreCase)
-)
 [System.Collections.Generic.List[System.String]]$Private:StoppedServices = (
   [System.Collections.Generic.List[System.String]]::new()
+)
+[System.Collections.Generic.HashSet[System.String]]$Private:StopRequested = (
+  [System.Collections.Generic.HashSet[System.String]]::new([System.StringComparer]::OrdinalIgnoreCase)
 )
 [System.Collections.Generic.List[PSCustomObject]]$Private:Survivors = (
   [System.Collections.Generic.List[PSCustomObject]]::new()
 )
 [System.String]$Private:SystemRoot = [System.String]::Empty
-[System.String[]]$Private:SettledStates = @('Continue Pending', 'Pause Pending', 'Paused', 'Running')
-[System.Int32]$Private:Unreadable = 0
 [System.Collections.Generic.List[System.Object]]$Private:UnknownHosts = (
   [System.Collections.Generic.List[System.Object]]::new()
 )
+[System.Int32]$Private:Unreadable = 0
 [System.Collections.Generic.List[System.String]]$Private:WouldStop = (
   [System.Collections.Generic.List[System.String]]::new()
 )
-
 
 # String logic, not System.IO.Path: the test runner is Linux, where C:\App is not rooted.
 ForEach ($Parent In @(
@@ -272,8 +271,8 @@ For ($Attempt = 1; $Attempt -le $MaxAttempts; $Attempt++) {
     }
   }
 
-  # Windows guarantees a service's ProcessId only in the settled states. Any other process-type
-  # service that is not Stopped names no trustworthy host, so it is an unknown host.
+  # A ProcessId is trusted only in the settled states. Any other process-type service that is
+  # not Stopped is an unknown host: nothing it reports is used to match or exclude a process.
   $HostIds.Clear()
   $MatchedServices.Clear()
   $UnknownHosts.Clear()
@@ -418,12 +417,12 @@ If (-not $Converged) {
   }
   ForEach ($Process In $MatchedProcesses) {
     $Survivors.Add([PSCustomObject]@{
-        error = $(If ($StopError.ContainsKey([System.String]$Process.ProcessId)) {
+        error           = $(If ($StopError.ContainsKey([System.String]$Process.ProcessId)) {
             $StopError[[System.String]$Process.ProcessId]
           })
-        kind  = 'process'
-        name  = '{0} ({1})' -f @($Process.Name, $Process.ProcessId)
-        state = [System.String]$Process.ExecutablePath
+        executable_path = [System.String]$Process.ExecutablePath
+        kind            = 'process'
+        name            = '{0} ({1})' -f @($Process.Name, $Process.ProcessId)
       })
   }
 }

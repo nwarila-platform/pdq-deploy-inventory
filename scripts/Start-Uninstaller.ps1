@@ -26,7 +26,8 @@
         no silent switch are available, the registration is refused and the
         script fails. An MSI registration whose UninstallString does not name
         msiexec is also refused. After all attempts, the uninstall roots are
-        read again; any surviving selected registration fails the script.
+        read again. Any path selected by the first read that still exists, or
+        any registration selected by the second read, fails the script.
 
         The result reports registration identities and outcomes, never the
         recorded command lines. The script does not remove anything outside the
@@ -855,13 +856,15 @@ ForEach ($Registration In $After) {
     key_name      = $Registration.key_name
     registry_path = $Registration.registry_path
   }
-  $IsSelected = Test-RegistrationSelected `
-    -Exclude:$Exclude `
-    -HasExcludeCriterion:$HasExcludeCriterion `
-    -HasIncludeCriterion:$HasIncludeCriterion `
-    -Include:$Include `
-    -RemoveConforming:$RemoveConforming.IsPresent `
-    -Registration:$Registration
+  $IsSelected = $SelectedPath.Contains($Registration.registry_path) -or (
+    Test-RegistrationSelected `
+      -Exclude:$Exclude `
+      -HasExcludeCriterion:$HasExcludeCriterion `
+      -HasIncludeCriterion:$HasIncludeCriterion `
+      -Include:$Include `
+      -RemoveConforming:$RemoveConforming.IsPresent `
+      -Registration:$Registration
+  )
   If ($IsSelected) {
     $Survived.Add($PublicRegistration)
   } Else {
@@ -870,11 +873,17 @@ ForEach ($Registration In $After) {
 }
 
 ForEach ($Registration In $Before) {
-  If (
-    $SelectedPath.Contains($Registration.registry_path) -and
-    -not $AfterPath.Contains($Registration.registry_path)
-  ) {
+  If (-not $SelectedPath.Contains($Registration.registry_path)) {
+    Continue
+  }
+  If (-not (Test-Path -LiteralPath:$Registration.registry_path)) {
     $Removed.Add([PSCustomObject]@{
+        display_name  = $Registration.display_name
+        key_name      = $Registration.key_name
+        registry_path = $Registration.registry_path
+      })
+  } ElseIf (-not $AfterPath.Contains($Registration.registry_path)) {
+    $Survived.Add([PSCustomObject]@{
         display_name  = $Registration.display_name
         key_name      = $Registration.key_name
         registry_path = $Registration.registry_path

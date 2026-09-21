@@ -281,8 +281,7 @@ While ($Unvisited.Count -gt 0) {
     If ($Entry.PSIsContainer) {
       [void]$Directories.Add([System.String]$Entry.FullName)
       $Unvisited.Push($Entry.FullName)
-    }
-    ElseIf (-not $Expected.Contains($Entry.FullName)) {
+    } ElseIf (-not $Expected.Contains($Entry.FullName)) {
       [void]$Surplus.Add([System.String]$Entry.FullName)
     }
   }
@@ -292,7 +291,7 @@ While ($Unvisited.Count -gt 0) {
 # run that removes one has changed the volume, and reporting otherwise makes the next reader
 # trust a converged result that is not.
 $Removable = [System.Collections.Generic.List[System.String]]::new()
-ForEach ($Directory In @($Directories | Sort-Object -Descending -Property:{ $PSItem.Length })) {
+ForEach ($Directory In @($Directories | Sort-Object -Descending -Property:'Length')) {
   $Remaining = @(Get-ChildItem -Force -LiteralPath:$Directory -ErrorAction:'Stop' |
       Where-Object -FilterScript { $Surplus -notcontains $PSItem.FullName -and $Removable -notcontains $PSItem.FullName })
   If (-not $Remaining) {
@@ -330,7 +329,7 @@ If (-not $DryRun) {
   # Emptiness is re-read here rather than taken from the list computed earlier. The fetch runs
   # between the two, and it recreates directories -- so a folder that was empty when the list
   # was built can hold a freshly fetched object by the time the sweep reaches it.
-  ForEach ($Directory In @($Removable | Sort-Object -Descending -Property:{ $PSItem.Length })) {
+  ForEach ($Directory In @($Removable | Sort-Object -Descending -Property:'Length')) {
     If (Test-Path -LiteralPath:$Directory -PathType:'Container') {
       If (-not @(Get-ChildItem -Force -LiteralPath:$Directory -ErrorAction:'Stop')) {
         Remove-Item -Force -LiteralPath:$Directory -ErrorAction:'Stop'

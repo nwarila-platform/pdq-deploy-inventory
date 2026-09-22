@@ -18,8 +18,10 @@
         converged host pays for one batched export and writes nothing.
 
         Comparison uses that first package and ignores the byte-order mark, line-ending style,
-        trailing whitespace, export MinimumVersion, console filing and console-derived values.
-        The remaining XML is otherwise what was imported (measured 2026-08-25 against PDQ Deploy
+        trailing whitespace, export MinimumVersion, placement fields and console-derived values.
+        Placement is reconciled separately from the declaration's Path because a fresh import
+        always lands at the root while an overwrite keeps the package's current folder. The
+        remaining XML is otherwise what was imported (measured 2026-08-25 against PDQ Deploy
         20.1.8.0), so any difference is a real difference in the package. Reading the definition
         through Ansible strips trailing whitespace on the way in, which is why the product's copy
         is trimmed to match rather than compared to the byte.
@@ -39,9 +41,10 @@
         quietly and then fails every deployment before its first step.
 
         A nested step's target id and name are also console output; its target path declares the
-        package it means. Every target must name another declaration, dependencies are imported
-        before the packages that nest them, and a cycle stops the run before mutation. After an
-        import, the export must prove that each declared nested reference survived the write.
+        package it means. Every target path must be the canonical prefixless path of another
+        declaration. Dependencies are imported and filed before the packages that nest them, and
+        a cycle stops the run before mutation. After an import, the export must prove that each
+        declared nested reference survived the write.
 
         A package that a declared definition refers to by name cannot be pruned accidentally. The
         command line's forced delete bypasses its own nested-step prompt, so an undeclared but
@@ -87,8 +90,8 @@
         .\Set-PdqPackage.ps1 -Definition @((Get-Content -Raw '.\Google Chrome - Install.xml')) -ScanProfile @{} -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe' -InventoryCliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
 
     .OUTPUTS
-        One object carrying applied, repaired, removed, unchanged, ignored, survivors, changed,
-        check_mode and msg.
+        One object carrying applied, filed, repaired, removed, unchanged, ignored, survivors,
+        changed, check_mode and msg.
 #>
 
 [CmdletBinding(
@@ -189,11 +192,9 @@ New-Variable -Force -Name:'NAME_PATTERN' -Option:('Private', 'ReadOnly') -Value:
   [System.Text.RegularExpressions.Regex]::new('^[^*?,]+$')
 )
 
-# Where a console FILED a package is a fact about that console, not about the package. A product
-# that has never seen the folder tree stores an imported package at the root and exports it back
-# saying so, so these three never survive a round trip: compared, they would report a change on
-# every converge and then fail the verification that follows it. Measured on a fresh target
-# 2026-08-25 -- FolderId 4 -> null, and Path 'Packages\Google LLC\...' -> the bare name.
+# Path declares where the package is filed, but a fresh import does not honor it and FolderId is
+# local to the console. Placement is therefore reconciled separately; these fields stay outside
+# definition comparison so a correct filed package does not request an overwrite on every run.
 #
 # CustomVariables is different in kind but equally derived: the export EMBEDS a snapshot of every
 # referenced custom variable's CURRENT value. The variable store is the source of truth for those
@@ -568,6 +569,12 @@ Function ConvertFrom-HexText {
   Return [System.Text.Encoding]::UTF8.GetString($Bytes)
 }
 
+Function ConvertTo-HexText {
+  Param ([System.String] $Text)
+  Return -join ([System.Text.Encoding]::UTF8.GetBytes($Text) |
+      ForEach-Object { $PSItem.ToString('X2') })
+}
+
 # Which part of a package a reference belongs to, said the way the console says it. A condition
 # sits either under the step it gates or under the package's own condition list.
 Function Get-StepLabel {
@@ -632,6 +639,123 @@ Function Get-DatabasePath {
     Throw ('The {0} database is not at ''{1}''' -f $Product, $Database)
   }
   Return $Database
+}
+
+Function Read-PackagePlacement {
+  $Rows = [System.Collections.Generic.Dictionary[System.String, System.Object]]::new(
+    [System.StringComparer]::Ordinal
+  )
+  $Statement = (
+    "SELECT p.PackageId, hex(p.Name), IFNULL(CAST(p.FolderId AS TEXT), ''), " +
+    "hex(p.Path), hex(IFNULL(f.Path, '')), " +
+    "IFNULL(CAST(f.ConsoleUsersInfoId AS TEXT), '') " +
+    'FROM Packages p LEFT JOIN Folders f ON f.FolderId = p.FolderId;'
+  )
+  ForEach ($Line In (Invoke-NativeCommand -FilePath:$Sqlite `
+        -Operation:'Reading the package placement' -Argument:@($Database, $Statement)).Output) {
+    $Parts = ([System.String]$Line).Split('|')
+    If ($Parts.Count -ne 6 -or $Parts[0] -notmatch '^[0-9]+$' -or
+      $Parts[1] -notmatch '^([0-9A-Fa-f]{2})+$' -or $Parts[2] -notmatch '^[0-9]*$' -or
+      $Parts[3] -notmatch '^([0-9A-Fa-f]{2})+$' -or
+      $Parts[4] -notmatch '^([0-9A-Fa-f]{2})*$' -or $Parts[5] -notmatch '^[0-9]*$') {
+      Throw ('The package placement did not read back as package, name, folder, path, folder path and console user: {0}' -f $Line)
+    }
+    $Name = ConvertFrom-HexText -Hex:$Parts[1]
+    $Rows.Add($Name, [PSCustomObject]@{
+        ConsoleUser = $Parts[5]
+        Folder      = $Parts[2]
+        FolderPath  = ConvertFrom-HexText -Hex:$Parts[4]
+        Id          = $Parts[0]
+        NameHex     = $Parts[1].ToUpperInvariant()
+        Path        = ConvertFrom-HexText -Hex:$Parts[3]
+        PathHex     = $Parts[3].ToUpperInvariant()
+      })
+  }
+  Return , $Rows
+}
+
+Function Test-PackagePlacement {
+  Param ([System.Object] $Current, [System.Object] $DeclaredPlacement)
+  If ($Null -eq $Current -or $Current.Path -cne $DeclaredPlacement.Path) {
+    Return $False
+  }
+  If ($DeclaredPlacement.Chain.Count -eq 0) {
+    Return $Current.Folder.Length -eq 0
+  }
+  Return (
+    $Current.Folder.Length -gt 0 -and
+    $Current.FolderPath -ceq $DeclaredPlacement.FolderPath -and
+    $Current.ConsoleUser.Length -eq 0
+  )
+}
+
+Function Set-PackagePlacement {
+  Param (
+    [System.String] $Name,
+    [System.Object] $DeclaredPlacement,
+    [System.Object] $Current
+  )
+  $Statements = [System.Collections.Generic.List[System.String]]::new()
+  $Statements.Add('PRAGMA busy_timeout = 5000;')
+  $Statements.Add('BEGIN IMMEDIATE;')
+  $ParentPath = [System.String]::Empty
+  ForEach ($FolderName In $DeclaredPlacement.Chain) {
+    $FolderPath = If ($ParentPath.Length -eq 0) {
+      $FolderName
+    } Else {
+      '{0}\{1}' -f $ParentPath, $FolderName
+    }
+    $NameHex = ConvertTo-HexText -Text:$FolderName
+    $PathHex = ConvertTo-HexText -Text:$FolderPath
+    $ParentId = If ($ParentPath.Length -eq 0) {
+      'NULL'
+    } Else {
+      $ParentHex = ConvertTo-HexText -Text:$ParentPath
+      "(SELECT FolderId FROM Folders WHERE ConsoleUsersInfoId IS NULL AND hex(Path) = '{0}')" -f $ParentHex
+    }
+    $Statements.Add((
+        'INSERT INTO Folders (Name, ParentId, Path, ConsoleUsersInfoId) ' +
+        "SELECT CAST(X'{0}' AS TEXT), {1}, CAST(X'{2}' AS TEXT), NULL " +
+        "WHERE NOT EXISTS (SELECT 1 FROM Folders WHERE ConsoleUsersInfoId IS NULL AND hex(Path) = '{2}');"
+      ) -f @($NameHex, $ParentId, $PathHex))
+    $ParentPath = $FolderPath
+  }
+
+  $FolderId = If ($DeclaredPlacement.Chain.Count -eq 0) {
+    'NULL'
+  } Else {
+    $FolderHex = ConvertTo-HexText -Text:$DeclaredPlacement.FolderPath
+    "(SELECT FolderId FROM Folders WHERE ConsoleUsersInfoId IS NULL AND hex(Path) = '{0}')" -f $FolderHex
+  }
+  $Statements.Add((
+      "UPDATE Packages SET FolderId = {0}, Path = CAST(X'{1}' AS TEXT) " +
+      "WHERE PackageId = {2} AND hex(Name) = '{3}' " +
+      "AND IFNULL(CAST(FolderId AS TEXT), '') = '{4}' AND hex(Path) = '{5}';"
+    ) -f @(
+      $FolderId
+      (ConvertTo-HexText -Text:$DeclaredPlacement.Path)
+      $Current.Id
+      $Current.NameHex
+      $Current.Folder
+      $Current.PathHex
+    ))
+  $Statements.Add('COMMIT;')
+  $Null = Invoke-NativeCommand -FilePath:$Sqlite `
+    -Operation:('Filing the package ''{0}'' at ''{1}''' -f $Name, $DeclaredPlacement.Path) `
+    -Argument:@($Database, ($Statements -join ' '))
+
+  $After = Read-PackagePlacement
+  $Stored = If ($After.ContainsKey($Name)) {
+    Test-PackagePlacement -Current:$After[$Name] -DeclaredPlacement:$DeclaredPlacement
+  } Else {
+    $False
+  }
+  If (-not $Stored) {
+    Throw ('The package ''{0}'' was not filed at ''{1}'' after the placement transaction' -f @(
+        $Name, $DeclaredPlacement.Path
+      ))
+  }
+  Return $After[$Name]
 }
 
 # One of the product's own name-to-id tables. A name the table holds twice is recorded rather than
@@ -703,6 +827,12 @@ $Declared = [System.Collections.Generic.Dictionary[System.String, System.String]
 $DeclaredKey = [System.Collections.Generic.Dictionary[System.String, System.String]]::new(
   [System.StringComparer]::Ordinal
 )
+$DeclaredPlacement = [System.Collections.Generic.Dictionary[System.String, System.Object]]::new(
+  [System.StringComparer]::Ordinal
+)
+$DeclaredPath = [System.Collections.Generic.Dictionary[System.String, System.String]]::new(
+  [System.StringComparer]::Ordinal
+)
 $DeclaredName = [System.Collections.Generic.List[System.String]]::new()
 $Referenced = [System.Collections.Generic.HashSet[System.String]]::new(
   [System.StringComparer]::Ordinal
@@ -732,8 +862,36 @@ ForEach ($Text In $Definition) {
   If ($Declared.ContainsKey($Name)) {
     Throw ('{0} is declared more than once; two definitions cannot own one name' -f $Name)
   }
+
+  $PathNode = $Document.SelectSingleNode('/AdminArsenal.Export/Package/Path')
+  If ($Null -eq $PathNode -or [System.String]::IsNullOrWhiteSpace($PathNode.InnerText)) {
+    Throw ('{0} does not declare a package Path' -f $Name)
+  }
+  $Segments = [System.Collections.Generic.List[System.String]]::new()
+  $Segments.AddRange([System.String[]]$PathNode.InnerText.Split([System.Char]'\'))
+  If ($Segments.Count -gt 0 -and $Segments[0] -ceq 'Packages') {
+    $Segments.RemoveAt(0)
+  }
+  If ($Segments.Count -eq 0 -or $Segments[$Segments.Count - 1] -cne $Name) {
+    Throw ('{0} declares the path ''{1}'', whose last segment is not the package name' -f @(
+        $Name, $PathNode.InnerText
+      ))
+  }
+  [System.String[]]$Chain = @()
+  If ($Segments.Count -gt 1) {
+    $Chain = $Segments.GetRange(0, $Segments.Count - 1).ToArray()
+  }
+  $CanonicalPath = [System.String]::Join('\', $Segments)
+  $Placement = [PSCustomObject]@{
+    Chain      = $Chain
+    FolderPath = [System.String]::Join('\', $Chain)
+    Path       = $CanonicalPath
+  }
+
   $Declared.Add($Name, $Normal)
   $DeclaredKey.Add($Name, (ConvertTo-ComparablePackage -Text:$Normal))
+  $DeclaredPlacement.Add($Name, $Placement)
+  $DeclaredPath.Add($CanonicalPath, $Name)
   $DeclaredName.Add($Name)
 
   # What this definition points at that only THIS console can name. A condition carries the
@@ -795,14 +953,25 @@ If ($Orphan.Count -gt 0) {
 $DeclaredSet = [System.Collections.Generic.HashSet[System.String]]::new(
   $DeclaredName, [System.StringComparer]::Ordinal
 )
-# TargetPackagePath resolves against bare names only while imports discard FolderId and
-# Packages\ paths.
 ForEach ($Reference In $NestedReference) {
-  If (-not $DeclaredSet.Contains($Reference.Target)) {
-    Throw ('{0} carries {1}, which nests ''{2}'', but no declaration names that target' -f @(
-        $Reference.Package, $Reference.Step, $Reference.Target
+  $TargetPath = $Reference.Target
+  $CanonicalTarget = If ($TargetPath.StartsWith('Packages\', [System.StringComparison]::Ordinal)) {
+    $TargetPath.Substring('Packages\'.Length)
+  } Else {
+    $TargetPath
+  }
+  If ($TargetPath.StartsWith('Packages\', [System.StringComparison]::Ordinal)) {
+    Throw ('{0} carries {1} with TargetPackagePath ''{2}''; use the canonical path ''{3}''' -f @(
+        $Reference.Package, $Reference.Step, $TargetPath, $CanonicalTarget
       ))
   }
+  If (-not $DeclaredPath.ContainsKey($CanonicalTarget)) {
+    Throw ('{0} carries {1}, which nests the path ''{2}'', but no declaration owns that path' -f @(
+        $Reference.Package, $Reference.Step, $TargetPath
+      ))
+  }
+  $Reference | Add-Member -MemberType:'NoteProperty' -Name:'Path' -Value:$CanonicalTarget
+  $Reference.Target = $DeclaredPath[$CanonicalTarget]
 }
 
 $Dependency = [System.Collections.Generic.Dictionary[System.String, System.Object]]::new(
@@ -871,12 +1040,41 @@ ForEach ($Name In $DeclaredName) {
   $Localized.Add($Name, $Declared[$Name])
 }
 
-If ($CollectionReference.Count -gt 0 -or $ScanReference.Count -gt 0) {
+If ($Declared.Count -gt 0) {
   $Sqlite = Join-Path -Path:(Split-Path -Path:$CliPath -Parent) -ChildPath:'sqlite3.exe'
   If (-not (Test-Path -LiteralPath:$Sqlite -PathType:'Leaf')) {
     Throw ('The product database tool is not at ''{0}''' -f $Sqlite)
   }
   $Database = Get-DatabasePath -Path:$CliPath -Product:'PDQ Deploy'
+}
+
+$InitialPlacement = If ($Declared.Count -gt 0) {
+  Read-PackagePlacement
+} Else {
+  [System.Collections.Generic.Dictionary[System.String, System.Object]]::new(
+    [System.StringComparer]::Ordinal
+  )
+}
+$ToFile = [System.Collections.Generic.List[System.String]]::new()
+ForEach ($Name In $DependencyOrder) {
+  If ($Initial.ContainsKey($Name)) {
+    If (-not $InitialPlacement.ContainsKey($Name)) {
+      Throw ('The product exported {0}, but its package row could not be read for placement' -f $Name)
+    }
+    $Correct = Test-PackagePlacement -Current:$InitialPlacement[$Name] `
+      -DeclaredPlacement:$DeclaredPlacement[$Name]
+    If (-not $Correct) {
+      $ToFile.Add($Name)
+    }
+  } ElseIf ($DeclaredPlacement[$Name].Chain.Count -gt 0) {
+    $ToFile.Add($Name)
+  }
+}
+$InitiallyCorrect = [System.Collections.Generic.List[System.String]]::new()
+ForEach ($Name In $InitiallyUnchanged) {
+  If (-not $ToFile.Contains($Name)) {
+    $InitiallyCorrect.Add($Name)
+  }
 }
 
 If ($CollectionReference.Count -gt 0) {
@@ -935,17 +1133,19 @@ If ($ScanReference.Count -gt 0) {
 }
 
 $Applied = [System.Collections.Generic.List[System.String]]::new()
+$Filed = [System.Collections.Generic.List[System.String]]::new()
 $Repaired = [System.Collections.Generic.List[System.String]]::new()
 $Removed = [System.Collections.Generic.List[System.String]]::new()
 $Unchanged = [System.Collections.Generic.List[System.String]]::new()
 $Ignored = [System.Collections.Generic.List[System.String]]::new()
 $Survivors = [System.Collections.Generic.List[System.String]]::new()
-$Changed = $ToImport.Count -gt 0 -or $Extra.Count -gt 0
+$Changed = $ToImport.Count -gt 0 -or $ToFile.Count -gt 0 -or $Extra.Count -gt 0
 
 If ($Ansible.CheckMode) {
   $Applied.AddRange($ToImport.ToArray())
+  $Filed.AddRange($ToFile.ToArray())
   $Removed.AddRange($Extra)
-  $Unchanged.AddRange($InitiallyUnchanged.ToArray())
+  $Unchanged.AddRange($InitiallyCorrect.ToArray())
   If ($CollectionReference.Count -gt 0) {
     $RepairSet = [System.Collections.Generic.HashSet[System.String]]::new(
       [System.StringComparer]::Ordinal
@@ -968,21 +1168,38 @@ If ($Ansible.CheckMode) {
     }
   }
 } Else {
-  ForEach ($Name In $ToImport) {
-    $Staged = Join-Path -Path:$Ansible.Tmpdir -ChildPath:'pdq-package-import.xml'
-    Try {
+  $CurrentPlacement = $InitialPlacement
+  ForEach ($Name In $DependencyOrder) {
+    If ($NeedsImport.Contains($Name)) {
+      $Staged = Join-Path -Path:$Ansible.Tmpdir -ChildPath:'pdq-package-import.xml'
       Try {
-        Set-Content -LiteralPath:$Staged -Value:$Localized[$Name] -Encoding:'utf8' -NoNewline
-      } Catch {
-        Throw ('Importing the package ''{0}'': it could not be staged at ''{1}'' ({2})' -f @(
-            $Name, $Staged, $PSItem.Exception.Message
+        Try {
+          Set-Content -LiteralPath:$Staged -Value:$Localized[$Name] -Encoding:'utf8' -NoNewline
+        } Catch {
+          Throw ('Importing the package ''{0}'': it could not be staged at ''{1}'' ({2})' -f @(
+              $Name, $Staged, $PSItem.Exception.Message
+            ))
+        }
+        $Null = Invoke-NativeCommand -FilePath:$CliPath `
+          -Operation:('Importing the package ''{0}''' -f $Name) `
+          -Argument:@('ImportPackages', '-Path', $Staged, '-Overwrite')
+      } Finally {
+        Remove-Item -LiteralPath:$Staged -Force -ErrorAction:'SilentlyContinue'
+      }
+    }
+
+    If ($ToFile.Contains($Name)) {
+      If (-not $CurrentPlacement.ContainsKey($Name)) {
+        $CurrentPlacement = Read-PackagePlacement
+      }
+      If (-not $CurrentPlacement.ContainsKey($Name)) {
+        Throw ('The package ''{0}'' has no package row to file at ''{1}''' -f @(
+            $Name, $DeclaredPlacement[$Name].Path
           ))
       }
-      $Null = Invoke-NativeCommand -FilePath:$CliPath `
-        -Operation:('Importing the package ''{0}''' -f $Name) `
-        -Argument:@('ImportPackages', '-Path', $Staged, '-Overwrite')
-    } Finally {
-      Remove-Item -LiteralPath:$Staged -Force -ErrorAction:'SilentlyContinue'
+      $CurrentPlacement[$Name] = Set-PackagePlacement -Name:$Name `
+        -DeclaredPlacement:$DeclaredPlacement[$Name] -Current:$CurrentPlacement[$Name]
+      $Filed.Add($Name)
     }
   }
 
@@ -1038,6 +1255,11 @@ If ($Ansible.CheckMode) {
   $RemainingSet = [System.Collections.Generic.HashSet[System.String]]::new(
     [System.String[]]$Remaining, [System.StringComparer]::Ordinal
   )
+  $FinalPlacement = If ($Declared.Count -gt 0 -and $Changed) {
+    Read-PackagePlacement
+  } Else {
+    $InitialPlacement
+  }
 
   # An unresolved target is accepted on import and silently removed, so only the read-back proves
   # that the declared nested reference survived the write.
@@ -1050,7 +1272,7 @@ If ($Ansible.CheckMode) {
     $DeclaredCount = @($NestedReference | Where-Object {
         $PSItem.Package -ceq $Reference.Package -and
         $PSItem.Step -ceq $Reference.Step -and
-        $PSItem.Target -ceq $Reference.Target
+        $PSItem.Path -ceq $Reference.Path
       }).Count
     $Resolved = @($Package.SelectNodes(".//NestedPackageStep[TypeName='NestedPackage']") |
         Where-Object {
@@ -1059,21 +1281,24 @@ If ($Ansible.CheckMode) {
           -not [System.String]::IsNullOrWhiteSpace(
             $PSItem.SelectSingleNode('TargetPackagePath').InnerText
           ) -and
-          $PSItem.SelectSingleNode('TargetPackagePath').InnerText -ceq $Reference.Target
+          $PSItem.SelectSingleNode('TargetPackagePath').InnerText -ceq $Reference.Path
         })
     If ($Resolved.Count -lt $DeclaredCount) {
       Throw ('{0} does not carry {1} targeting ''{2}'' after the import' -f @(
-          $Reference.Package, $Reference.Step, $Reference.Target
+          $Reference.Package, $Reference.Step, $Reference.Path
         ))
     }
   }
 
   ForEach ($Name In $DeclaredName) {
     If ($RemainingSet.Contains($Name) -and $Final.ContainsKey($Name) -and
-      (ConvertTo-ComparablePackage -Text:$Final[$Name]) -ceq $DeclaredKey[$Name]) {
+      (ConvertTo-ComparablePackage -Text:$Final[$Name]) -ceq $DeclaredKey[$Name] -and
+      $FinalPlacement.ContainsKey($Name) -and
+      (Test-PackagePlacement -Current:$FinalPlacement[$Name] `
+        -DeclaredPlacement:$DeclaredPlacement[$Name])) {
       If ($ToImport.Contains($Name)) {
         $Applied.Add($Name)
-      } Else {
+      } ElseIf (-not $Filed.Contains($Name)) {
         $Unchanged.Add($Name)
       }
     } Else {
@@ -1096,7 +1321,8 @@ If ($Ansible.CheckMode) {
   # of the product carrying this console's own profile id. A package the product did not settle on
   # is already named in the result, so its references are left to that.
   $Settled = [System.Collections.Generic.HashSet[System.String]]::new(
-    [System.String[]]@($Applied.ToArray() + $Unchanged.ToArray()), [System.StringComparer]::Ordinal
+    [System.String[]]@($Applied.ToArray() + $Filed.ToArray() + $Unchanged.ToArray()),
+    [System.StringComparer]::Ordinal
   )
 
   If (($ToImport.Count -gt 0 -or $ConditionChanged) -and $CollectionReference.Count -gt 0) {
@@ -1164,28 +1390,32 @@ $Result = [PSCustomObject]@{
   changed    = [System.Boolean]$Changed
   check_mode = [System.Boolean]$Ansible.CheckMode
   declared   = [System.Int32]$Declared.Count
+  filed      = [System.String[]]$Filed
   ignored    = [System.String[]]$Ignored
   msg        = If ($Ansible.CheckMode) {
-    'Would apply: {0}; would remove: {1}; would repair references: {2}; already correct: {3}' -f @(
-      ($Applied -join ', '), ($Removed -join ', '), ($Repaired -join ', '), $Unchanged.Count
+    'Would apply: {0}; would file: {1}; would remove: {2}; would repair references: {3}; already correct: {4}' -f @(
+      ($Applied -join ', '), ($Filed -join ', '), ($Removed -join ', '),
+      ($Repaired -join ', '), $Unchanged.Count
     )
   } ElseIf ($Ignored.Count -gt 0 -or $Survivors.Count -gt 0) {
-    'The declared package set did not settle (missing or different: {0}; undeclared still held: {1})' -f @(
-      ($Ignored -join ', '), ($Survivors -join ', ')
+    'The declared package set did not settle (missing or different: {0}; undeclared still held: {1}; filed: {2})' -f @(
+      ($Ignored -join ', '), ($Survivors -join ', '), ($Filed -join ', ')
     )
   } ElseIf (-not $Changed) {
     'No package changes; {0} already correct' -f $Unchanged.Count
-  } ElseIf ($Applied.Count -eq 0 -and $Removed.Count -eq 0 -and $Repaired.Count -gt 0) {
+  } ElseIf ($Applied.Count -eq 0 -and $Filed.Count -eq 0 -and $Removed.Count -eq 0 -and
+    $Repaired.Count -gt 0) {
     'Repaired references: {0}; already correct: {1}' -f @(
       ($Repaired -join ', '), $Unchanged.Count
     )
   } ElseIf ($Repaired.Count -gt 0) {
-    'Applied: {0}; removed: {1}; repaired references: {2}; already correct: {3}' -f @(
-      ($Applied -join ', '), ($Removed -join ', '), ($Repaired -join ', '), $Unchanged.Count
+    'Applied: {0}; filed: {1}; removed: {2}; repaired references: {3}; already correct: {4}' -f @(
+      ($Applied -join ', '), ($Filed -join ', '), ($Removed -join ', '),
+      ($Repaired -join ', '), $Unchanged.Count
     )
   } Else {
-    'Applied: {0}; removed: {1}; already correct: {2}' -f @(
-      ($Applied -join ', '), ($Removed -join ', '), $Unchanged.Count
+    'Applied: {0}; filed: {1}; removed: {2}; already correct: {3}' -f @(
+      ($Applied -join ', '), ($Filed -join ', '), ($Removed -join ', '), $Unchanged.Count
     )
   }
   repaired   = [System.String[]]$Repaired

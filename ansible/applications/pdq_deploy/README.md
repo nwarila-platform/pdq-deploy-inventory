@@ -93,8 +93,10 @@ on the bucket. It reports which of the two is missing rather than failing on the
 ## Declared packages
 
 `files/packages/` is the complete declaration: the product ends every converge holding exactly the
-packages declared there and nothing else. Each `*.xml` is a package exported from the console and
-committed unchanged, so the repository states the package rather than describing it.
+packages declared there and nothing else. A package's `<Path>` declares where it is filed. Each
+`*.xml` starts with the console's export, so the repository states the package rather than
+describing it; a nested target path is hand-written in the canonical spelling without the leading
+`Packages\` that the export uses.
 
 A definition is imported only when the product does not hold it or holds it differently, and the
 import is proved by exporting the package again, so a converged host writes nothing. Install steps

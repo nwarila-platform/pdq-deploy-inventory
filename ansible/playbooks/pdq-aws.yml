@@ -72,6 +72,21 @@
 - name: 'PLAY | Configure The Guest (ephemeral AWS)'
   hosts: 'pdq_servers'
   any_errors_fatal: true
+  # Declared once here and reused by the two later plays.
+  vars: &domain_directory
+    # Every OU in every play is written relative to this directory base.
+    domain_base_dn: 'DC=tcn,DC=trinitytechnicalservices,DC=com'
+
+    # The same directory by its DNS name, which addresses joins and directory binds.
+    domain_realm: 'tcn.trinitytechnicalservices.com'
+
+    # The join password is resolved on the controller at use and verified against its digest, so a
+    # replaced object fails at the read rather than at the join.
+    domain_join_user: "svc-domainjoin@{{ domain_realm }}"
+    domain_join_password: >-
+      {{ lookup('secret',
+                's3://' ~ aws_account_id ~ '-ansible/host_roles/domain_member/svc-domainjoin-password.txt',
+                '07493ed779c2962bff0b5e19cfa00b8cdb95defcf477f6b5bac36ddef55087ae') }}
 
   #region ------ [ Roles ] -------------------------------------------------------------------- #
   roles:
@@ -158,6 +173,7 @@
 - name: 'PLAY | Configure The Target (ephemeral AWS)'
   hosts: 'domain_workstations'
   any_errors_fatal: true
+  vars: *domain_directory
 
   #region ------ [ Roles ] -------------------------------------------------------------------- #
   roles:
@@ -256,6 +272,7 @@
   # what is under test is the ground the products stand on rather than the products.
   tags: ['products']
   vars:
+    <<: *domain_directory
     # Deploy's repository volume, named ONCE here because both products need it: Deploy fills it
     # from the application repository, and Inventory reads the .NET installer back out of it.
     pdq_repository_directory: 'PDQ Repository'

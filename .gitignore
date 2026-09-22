@@ -189,6 +189,8 @@
 !/scripts/Get-InstalledSoftware.ps1
 !/scripts/Start-Uninstaller.pester.ps1
 !/scripts/Start-Uninstaller.ps1
+!/scripts/Stop-Application.pester.ps1
+!/scripts/Stop-Application.ps1
 !/scripts/Set-RepositoryAcl.pester.ps1
 !/scripts/Set-RepositoryAcl.ps1
 !/scripts/Set-PdqSetting.pester.ps1

@@ -34,7 +34,7 @@
         <PowerShellStep>
           <CustomCommandLine></CustomCommandLine>
           <Files></Files>
-          <Script>$ProductCode = '@(Google-LLC_Google-Chrome-ProductCode)'
+          <Script>$ProductCode = '{D474047F-C357-3094-9341-F8FE61A4716F}'
 $Process = Start-Process `
   -FilePath:'msiexec.exe' `
   -ArgumentList:@(
@@ -95,8 +95,8 @@ If ($Result.action_required) {
   Write-Error -Message:('Verification failed: Google Chrome is missing or below version {0}. {1}' -f $PinnedVersion, $Result.msg) -ErrorAction:'Continue'
   Exit 1
 }
-If ($Result.entries[0].product_id -ine '@(Google-LLC_Google-Chrome-ProductCode)') {
-  Write-Error -Message:('Verification failed: Google Chrome ProductCode {0} does not match {1}.' -f $Result.entries[0].product_id, '@(Google-LLC_Google-Chrome-ProductCode)') -ErrorAction:'Continue'
+If ($Result.entries[0].product_id -ine '{D474047F-C357-3094-9341-F8FE61A4716F}') {
+  Write-Error -Message:('Verification failed: Google Chrome ProductCode {0} does not match {1}.' -f $Result.entries[0].product_id, '{D474047F-C357-3094-9341-F8FE61A4716F}') -ErrorAction:'Continue'
   Exit 1
 }
 If ($Result.installed_version -ine $PinnedVersion) {
@@ -149,10 +149,6 @@ Exit 0</Script>
       <CustomVariable>
         <Name>Google-LLC_Google-Chrome</Name>
         <Value>152.0.7977.130</Value>
-      </CustomVariable>
-      <CustomVariable>
-        <Name>Google-LLC_Google-Chrome-ProductCode</Name>
-        <Value>{D474047F-C357-3094-9341-F8FE61A4716F}</Value>
       </CustomVariable>
     </CustomVariables>
     <PackageDisplaySettings name="DisplaySettings">

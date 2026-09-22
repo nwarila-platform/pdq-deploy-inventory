@@ -319,13 +319,11 @@
       Amazon-Web-Services_aws-cfn-bootstrap: '2.0.40.0'
       Anaconda-Inc_Anaconda3: '2025.12.2.0'
       Devolutions-Inc_Remote-Desktop-Manager: '2026.2.18.0'
-      # Chrome Extended trails Stable numerically, so its build ProductCode is pinned beside its version.
+      # Chrome Extended trails Stable numerically. Its pinned build's MSI ProductCode is INLINE
+      # in the collection and the Install and Repair packages; move all three with the version.
+      # The collection uses !Contains, not "ends with": nested negation does not correlate to one
+      # application row and would miss a rogue registration beside a good one.
       Google-LLC_Google-Chrome: '152.0.7977.130'
-      # Use !Contains rather than "ends with": a nested negation group does not correlate to one
-      # application row, so it misses a rogue registration beside a good one. RegistryPath is
-      # always ...\Uninstall\<keyname>, with ProductCode as the keyname; the forms differ only
-      # in a case Windows does not produce.
-      Google-LLC_Google-Chrome-ProductCode: '{D474047F-C357-3094-9341-F8FE61A4716F}'
       Igor-Pavlov_7-Zip: '26.02.00.0'
       Martin-Prikryl_WinSCP: '6.5.6.0'
       Microsoft-Corporation_Microsoft-Edge: '152.0.4191.53'

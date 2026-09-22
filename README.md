@@ -73,8 +73,8 @@ Every Inventory credential is written the same way: the account, the password th
 for its local fallback — `is_default`. A bind anywhere in the directory sync is a *name* into that
 list, never a password. The declaration is complete, so an undeclared row is removed and an empty
 list empties the product's credential store. Nothing under `ansible/applications/` names this
-directory, these accounts, or this cloud account; every such fact lives in the playbook or
-`ansible/inventory/group_vars/`, stated once.
+directory, these accounts, or this cloud account; every such fact lives in the playbook, stated
+once.
 
 ## What it deploys
 
@@ -124,7 +124,6 @@ the rebuilt host with the data preserved.
 | `ansible/playbooks/ad-config.yml` | The directory objects PDQ depends on, declared once and run by an operator |
 | `ansible/inventory/aws_ec2.yml` | Dynamic AWS inventory (filters this run's instances by tag) |
 | `ansible/inventory/directory.yml` | The domain controller `ad-config.yml` runs against |
-| `ansible/inventory/group_vars/all.yml` | What every play must agree on: the directory's base DN |
 | `terraform/aws.tfvars` | Data-only input to the pinned aws-terraform-framework (no `.tf` files here) |
 | `scripts/` | Composition, script materialization, and the products' PowerShell utilities |
 | `docs/ansible-style-guide.md` | Ansible design and authoring rules |

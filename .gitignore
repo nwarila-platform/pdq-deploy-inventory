@@ -57,8 +57,6 @@
 !/ansible/applications/pdq_ad_config/vars/windows.yml
 !/ansible/playbooks/ad-config.yml
 !/ansible/inventory/directory.yml
-!/ansible/inventory/group_vars/
-!/ansible/inventory/group_vars/all.yml
 !/ansible/inventory/
 !/ansible/playbooks/
 !/docs/

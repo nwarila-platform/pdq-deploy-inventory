@@ -556,7 +556,9 @@ Describe 'Set-PdqPackage' {
       } ElseIf ($Sql -like '*UPDATE Packages SET FolderId*') {
         $FolderPattern = (
           "INSERT INTO Folders \(Name, ParentId, Path, ConsoleUsersInfoId\) " +
-          "SELECT CAST\(X'(?<Name>[0-9A-F]*)' AS TEXT\), .*?, " +
+          "SELECT CAST\(X'(?<Name>[0-9A-F]*)' AS TEXT\), " +
+          "(?<Parent>NULL|\(SELECT FolderId FROM Folders WHERE ConsoleUsersInfoId IS NULL " +
+          "AND hex\(Path\) = '(?<ParentPath>[0-9A-F]*)'\)), " +
           "CAST\(X'(?<Path>[0-9A-F]*)' AS TEXT\), NULL WHERE"
         )
         ForEach ($Match In [Regex]::Matches(
@@ -566,18 +568,13 @@ Describe 'Set-PdqPackage' {
               $Null -eq $PSItem.ConsoleUser -and $PSItem.Path -ceq $FolderPath
             })
           If ($Existing.Count -eq 0) {
-            $Separator = $FolderPath.LastIndexOf('\')
-            $ParentPath = If ($Separator -ge 0) {
-              $FolderPath.Substring(0, $Separator)
+            $Parent = If ($Match.Groups['Parent'].Value -ceq 'NULL') {
+              $Null
             } Else {
-              ''
-            }
-            $Parent = If ($ParentPath.Length -gt 0) {
+              $ParentPath = Get-FakeText -Hex:$Match.Groups['ParentPath'].Value
               @($global:FakeFolders | Where-Object {
                   $Null -eq $PSItem.ConsoleUser -and $PSItem.Path -ceq $ParentPath
                 } | Select-Object -First 1)[0]
-            } Else {
-              $Null
             }
             $global:FakeFolders.Add([PSCustomObject]@{
                 ConsoleUser = $Null
@@ -591,9 +588,12 @@ Describe 'Set-PdqPackage' {
         }
 
         $UpdatePattern = (
-          "UPDATE Packages SET FolderId = .*?, Path = CAST\(X'(?<Path>[0-9A-F]*)' AS TEXT\) " +
+          "UPDATE Packages SET FolderId = " +
+          "(?<NewFolder>NULL|\(SELECT FolderId FROM Folders WHERE ConsoleUsersInfoId IS NULL " +
+          "AND hex\(Path\) = '(?<NewFolderPath>[0-9A-F]*)'\)), " +
+          "Path = CAST\(X'(?<Path>[0-9A-F]*)' AS TEXT\) " +
           "WHERE PackageId = (?<Id>[0-9]+) AND hex\(Name\) = '(?<Name>[0-9A-F]+)' " +
-          "AND IFNULL\(CAST\(FolderId AS TEXT\), ''\) = '(?<Folder>[0-9]*)' " +
+          "AND IFNULL\(CAST\(FolderId AS TEXT\), ''\) = '(?<OldFolder>[0-9]*)' " +
           "AND hex\(Path\) = '(?<OldPath>[0-9A-F]+)'"
         )
         $Update = [Regex]::Match(
@@ -604,22 +604,17 @@ Describe 'Set-PdqPackage' {
           $Row = $global:FakePackageRows[$Name]
           $CurrentFolder = If ($Null -eq $Row.Folder) { '' } Else { $Row.Folder.Id }
           If ($Row.Id -ceq $Update.Groups['Id'].Value -and
-            $CurrentFolder -ceq $Update.Groups['Folder'].Value -and
+            $CurrentFolder -ceq $Update.Groups['OldFolder'].Value -and
             (Get-FakeHex -Text:$Row.Path) -ceq $Update.Groups['OldPath'].Value -and
             $global:FakeUnwritablePlacement -notcontains $Name) {
             $Row.Path = Get-FakeText -Hex:$Update.Groups['Path'].Value
-            $Separator = $Row.Path.LastIndexOf('\')
-            $FolderPath = If ($Separator -ge 0) {
-              $Row.Path.Substring(0, $Separator)
+            $Row.Folder = If ($Update.Groups['NewFolder'].Value -ceq 'NULL') {
+              $Null
             } Else {
-              ''
-            }
-            $Row.Folder = If ($FolderPath.Length -gt 0) {
+              $FolderPath = Get-FakeText -Hex:$Update.Groups['NewFolderPath'].Value
               @($global:FakeFolders | Where-Object {
                   $Null -eq $PSItem.ConsoleUser -and $PSItem.Path -ceq $FolderPath
                 } | Select-Object -First 1)[0]
-            } Else {
-              $Null
             }
             $global:FakeEvent.Add('File:{0}' -f $Name)
           }
@@ -952,6 +947,7 @@ Describe 'Set-PdqPackage' {
       $Context.Changed | Should -BeTrue
       $Context.Result.filed | Should -Be @($script:Chrome)
       $global:FakePackageRows[$script:Chrome].Path | Should -Be $script:ChromePath
+      $global:FakePackageRows[$script:Chrome].Folder.Id | Should -Be $global:FakeFolders[1].Id
       $global:FakePackageRows[$script:Chrome].Folder.Path | Should -Be $script:ChromeFolder
     }
 

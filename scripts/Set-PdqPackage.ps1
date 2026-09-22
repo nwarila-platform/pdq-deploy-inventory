@@ -1032,7 +1032,7 @@ ForEach ($Name In $DependencyOrder) {
 # Resolve every reference before anything is written. A package gated on a collection this console
 # does not hold is broken on arrival, and saying so costs one read, where importing it costs a
 # deployment that fails before its first step. A declaration that refers to neither a collection
-# nor a scan profile reads no database at all.
+# nor a scan profile still reads the Deploy database for placement.
 $Localized = [System.Collections.Generic.Dictionary[System.String, System.String]]::new(
   [System.StringComparer]::Ordinal
 )

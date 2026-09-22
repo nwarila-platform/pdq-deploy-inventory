@@ -95,14 +95,15 @@ pdq_deploy_defaults:
   # reason the two paths above are.
   inventory_cli_path: 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
 
-  # The pinned custom variables to import, keyed by each application's Add/Remove Programs identity
-  # (<Publisher>_<DisplayName>, Title Case, special characters spelled out) with the value being its
-  # version. Supplied by the playbook, which hands the SAME map to both products. The declaration
-  # is COMPLETE: the import task creates or updates what differs and proves each reads back, and
-  # the removal task deletes every custom variable this map does not name, proving each removal
-  # from a fresh export. Empty -- the default -- declares that the product holds NO custom
-  # variables, which on a fresh install is already true, so the disk role plus this role alone
-  # still converges.
+  # The pinned custom variables to import. Most entries use each application's Add/Remove Programs
+  # identity (<Publisher>_<DisplayName>, Title Case, special characters spelled out) as the key and
+  # its version as the value. An application gated on the identity of its pinned build rather than
+  # its version also carries a -ProductCode companion holding that build's MSI ProductCode. Supplied
+  # by the playbook, which hands the SAME map to both products. The declaration is COMPLETE: the
+  # import task creates or updates what differs and proves each reads back, and the removal task
+  # deletes every custom variable this map does not name, proving each removal from a fresh export.
+  # Empty -- the default -- declares that the product holds NO custom variables, which on a fresh
+  # install is already true, so the disk role plus this role alone still converges.
   variables: {}
 
   # Every preference the console shows, organised exactly as its Preferences window is: a map
@@ -389,17 +390,23 @@ pdq_deploy_defaults:
   # An EMPTY list has the full blast radius of that promise: after the presence assertion confirms
   # files/packages/ is also empty, the reconcile removes EVERY package the product holds.
   #
-  # Each package orders its steps Remove, Install, Verify, Scan. The work and final Applications
-  # scan share an IsMember gate, while Verify stays ungated. Scanning after work makes the NEXT
-  # deployment's gate reflect the resulting state; when no work ran, a scan would add no value and
-  # is skipped. The package's native post-deployment scan is disabled because it cannot share that
-  # gate. A package carries TWO console-specific ids: a collection condition's
-  # InventoryCollectionId and a Scan step's InventoryScanProfileId. Set-PdqPackage.ps1 resolves
-  # both from NAME to the local console's id at import; ids embedded in exported definitions are
-  # not portable.
+  # An install package removes drift, performs any application-specific setup, installs, verifies,
+  # and scans as the application requires. Removal may be inline or a nested Uninstall package.
+  # A nested step must set UseNestedPackageConditions false or its own gate is ignored and the
+  # nested package runs unconditionally.
+  # Work and the final Applications scan share an IsMember gate, while Verify stays ungated. Repair
+  # and Uninstall are deliberate, standalone operations with no collection gate or scan. Scanning
+  # after install work makes the NEXT deployment's gate reflect the resulting state; when no work
+  # ran, a scan would add no value and is skipped. The package's native post-deployment scan is
+  # disabled because it cannot share that gate. An install package carries TWO console-specific
+  # ids: a collection condition's InventoryCollectionId and a Scan step's InventoryScanProfileId.
+  # Set-PdqPackage.ps1 resolves both from NAME to the local console's id at import; ids embedded in
+  # exported definitions are not portable.
   packages:
     - '7-Zip - Install.xml'
     - 'Google Chrome - Install.xml'
+    - 'Google Chrome - Repair.xml'
+    - 'Google Chrome - Uninstall.xml'
 
   # The scan profile every scan step in a package runs, by PACKAGE name -- the product's own
   # identity for it, which is what the definition carries and the list above only spells as a file.

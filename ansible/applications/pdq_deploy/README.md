@@ -80,8 +80,11 @@ region and repository path, so an administrator runs it without knowing any of t
 level above the directory it fills so that it is neither an object the sync can act on nor a file
 inside the network share.
 
-The sync is additive — `aws s3 sync` without `--delete` — because the repository layout carries the
-version in the path precisely so older versions stay on disk for a rollback.
+The sync is deterministic: afterwards the volume holds what the bucket holds and nothing else.
+The repository layout carries the version in the path so older versions stay addressable for a
+rollback — in the bucket, which is the one place that decides what the repository contains. A file
+the bucket does not carry is removed, including one placed here by hand, because a volume that
+kept local-only files would drift away from every other host running the same deployment.
 
 The script is generated unconditionally; whether it can complete is a property of the host, not of
 this role. It needs the AWS CLI installed, and it needs the host's instance profile to allow reads

@@ -70,7 +70,7 @@ Exit 0</Script>
         <NestedPackageStep>
           <TargetPackageId value="null" />
           <TargetPackageName>Google Chrome - Uninstall</TargetPackageName>
-          <TargetPackagePath>Google Chrome - Uninstall</TargetPackagePath>
+          <TargetPackagePath>Google LLC\Google Chrome\Google Chrome - Uninstall</TargetPackagePath>
           <UseNestedPackageConditions value="false" />
           <RunAs value="null" />
           <Conditions type="list">

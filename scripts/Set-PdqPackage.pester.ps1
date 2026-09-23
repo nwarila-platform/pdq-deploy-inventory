@@ -57,6 +57,7 @@ BeforeAll {
       [System.String] $NestedTarget = '',
       [System.String] $NestedPath = '',
       [System.Int32] $NestedCount = 1,
+      [System.String] $Path = '',
       [System.String] $MinimumVersion = '15.0'
     )
     $Lines = [System.Collections.Generic.List[System.String]]::new()
@@ -68,6 +69,10 @@ BeforeAll {
     $Lines.Add(('    <Name>{0}</Name>' -f [System.Security.SecurityElement]::Escape($Name)))
     $Lines.Add(('    <Description>{0}</Description>' -f `
           [System.Security.SecurityElement]::Escape($Detail)))
+    $Lines.Add('    <FolderId value="null" />')
+    $Lines.Add(('    <Path>{0}</Path>' -f [System.Security.SecurityElement]::Escape(
+          $(If ($Path.Length -gt 0) { $Path } Else { $Name })
+        )))
     If ($Dependency.Length -gt 0) {
       $Lines.Add('    <PackageStep>')
       $Lines.Add(('      <PackageName>{0}</PackageName>' -f `
@@ -134,6 +139,37 @@ BeforeAll {
     Return -join ([System.Text.Encoding]::UTF8.GetBytes($Text) |
         ForEach-Object { $PSItem.ToString('X2') })
   }
+
+  Function global:Get-FakeText {
+    Param ([System.String] $Hex)
+    $Bytes = [System.Byte[]]::new($Hex.Length / 2)
+    For ($Index = 0; $Index -lt $Bytes.Length; $Index++) {
+      $Bytes[$Index] = [System.Convert]::ToByte($Hex.Substring($Index * 2, 2), 16)
+    }
+    Return [System.Text.Encoding]::UTF8.GetString($Bytes)
+  }
+
+  Function global:Add-FakeFolder {
+    Param ([System.String] $Path)
+    $Separator = $Path.LastIndexOf('\')
+    $ParentPath = If ($Separator -ge 0) { $Path.Substring(0, $Separator) } Else { '' }
+    $Parent = If ($ParentPath.Length -gt 0) {
+      @($global:FakeFolders | Where-Object { $PSItem.Path -ceq $ParentPath } |
+          Select-Object -First 1)[0]
+    } Else {
+      $Null
+    }
+    $Folder = [PSCustomObject]@{
+      ConsoleUser = $Null
+      Id          = [System.String]$global:FakeNextFolderId
+      Name        = If ($Separator -ge 0) { $Path.Substring($Separator + 1) } Else { $Path }
+      Parent      = $Parent
+      Path        = $Path
+    }
+    $global:FakeFolders.Add($Folder)
+    $global:FakeNextFolderId++
+    Return $Folder
+  }
 }
 
 Describe 'Set-PdqPackage' {
@@ -175,6 +211,18 @@ Describe 'Set-PdqPackage' {
     )
     $global:FakePackages.Add($script:Chrome, (New-PackageText -Name:$script:Chrome))
     $global:FakePackages.Add($script:Firefox, (New-PackageText -Name:$script:Firefox))
+    $global:FakePackageRows = [System.Collections.Generic.Dictionary[System.String, System.Object]]::new(
+      [System.StringComparer]::Ordinal
+    )
+    $global:FakePackageRows.Add($script:Chrome, [PSCustomObject]@{
+        Folder = $Null; Id = '101'; Path = $script:Chrome
+      })
+    $global:FakePackageRows.Add($script:Firefox, [PSCustomObject]@{
+        Folder = $Null; Id = '102'; Path = $script:Firefox
+      })
+    $global:FakeNextPackageId = 103
+    $global:FakeFolders = [System.Collections.Generic.List[System.Object]]::new()
+    $global:FakeNextFolderId = 1
     $global:FakeIgnored = @()
     $global:FakeUndeletable = @()
     $global:FakeImportExit = 0
@@ -197,7 +245,9 @@ Describe 'Set-PdqPackage' {
     $global:FakeConditionRows = [System.Collections.Generic.List[System.Object]]::new()
     $global:FakeNextConditionRow = 1
     $global:FakeUnwritableCondition = @()
+    $global:FakeUnwritablePlacement = @()
     $global:FakeSqliteCalls = [System.Collections.Generic.List[System.String]]::new()
+    $global:FakeEvent = [System.Collections.Generic.List[System.String]]::new()
     $global:LASTEXITCODE = 0
     Remove-AnsibleContext
 
@@ -274,16 +324,31 @@ Describe 'Set-PdqPackage' {
               $ExportDocument = [System.Xml.XmlDocument]::new()
               $ExportDocument.PreserveWhitespace = $True
               $ExportDocument.LoadXml($Text.TrimStart([System.Char]0xFEFF))
+              If ($global:FakePackageRows.ContainsKey($Name)) {
+                $Placement = $global:FakePackageRows[$Name]
+                $Package = $ExportDocument.SelectSingleNode('/AdminArsenal.Export/Package')
+                $Package.SelectSingleNode('FolderId').SetAttribute(
+                  'value', $(If ($Null -eq $Placement.Folder) { 'null' } Else { $Placement.Folder.Id })
+                )
+                $Package.SelectSingleNode('Path').InnerText = If ($Null -eq $Placement.Folder) {
+                  $Placement.Path
+                } Else {
+                  'Packages\{0}' -f $Placement.Path
+                }
+              }
               $Included = [System.Collections.Generic.HashSet[System.String]]::new(
                 [System.StringComparer]::Ordinal
               )
               ForEach ($Target In $ExportDocument.SelectNodes(
                   '/AdminArsenal.Export/Package[1]//NestedPackageStep/TargetPackagePath')) {
-                If ($global:FakePackages.ContainsKey($Target.InnerText) -and
+                $TargetName = @($global:FakePackageRows.Keys | Where-Object {
+                    $global:FakePackageRows[$PSItem].Path -ceq $Target.InnerText
+                  } | Select-Object -First 1)
+                If ($TargetName.Count -eq 1 -and
                   $Included.Add($Target.InnerText)) {
                   $DependencyDocument = [System.Xml.XmlDocument]::new()
                   $DependencyDocument.LoadXml(
-                    $global:FakePackages[$Target.InnerText].TrimStart([System.Char]0xFEFF)
+                    $global:FakePackages[$TargetName[0]].TrimStart([System.Char]0xFEFF)
                   )
                   $DependencyPackage = $DependencyDocument.SelectSingleNode(
                     '/AdminArsenal.Export/Package'
@@ -338,24 +403,36 @@ Describe 'Set-PdqPackage' {
           $Document.LoadXml($Text.TrimStart([System.Char]0xFEFF))
           $Name = $Document.SelectSingleNode('/AdminArsenal.Export/Package/Name').InnerText
           $global:FakeImportedNames.Add($Name)
+          $global:FakeEvent.Add('Import:{0}' -f $Name)
           If ($global:FakeImportExit -eq 0 -and $global:FakeIgnored -notcontains $Name) {
             $Nested = 0
             ForEach ($Node In @($Document.SelectNodes(
                   "//NestedPackageStep[TypeName='NestedPackage']"))) {
               $Target = $Node.SelectSingleNode('TargetPackagePath')
+              $TargetName = @($global:FakePackageRows.Keys | Where-Object {
+                  $global:FakePackageRows[$PSItem].Path -ceq $Target.InnerText
+                } | Select-Object -First 1)
               If ($global:FakeDropNestedReference -contains $Name -or
                 ($global:FakeKeepOneNestedReference -contains $Name -and $Nested -gt 0) -or
                 $Null -eq $Target -or
-                -not $global:FakePackages.ContainsKey($Target.InnerText)) {
+                $TargetName.Count -ne 1) {
                 $Null = $Node.ParentNode.RemoveChild($Node)
               } Else {
                 $Node.SelectSingleNode('TargetPackageId').SetAttribute('value', '900')
-                $Node.SelectSingleNode('TargetPackageName').InnerText = $Target.InnerText
+                $Node.SelectSingleNode('TargetPackageName').InnerText = $TargetName[0]
               }
               $Nested++
             }
             $Text = $Document.OuterXml
             $global:FakePackages[$Name] = $Text
+            If (-not $global:FakePackageRows.ContainsKey($Name)) {
+              $global:FakePackageRows.Add($Name, [PSCustomObject]@{
+                  Folder = $Null
+                  Id     = [System.String]$global:FakeNextPackageId
+                  Path   = $Name
+                })
+              $global:FakeNextPackageId++
+            }
             # Measured: the import keeps the condition's collection NAME and leaves its id null.
             ForEach ($Stale In @($global:FakeConditionRows | Where-Object {
                   $PSItem.Package -ceq $Name
@@ -386,6 +463,7 @@ Describe 'Set-PdqPackage' {
           If ($global:FakeDeleteExit -eq 0 -and
             $global:FakeUndeletable -notcontains $Argument[2]) {
             $Null = $global:FakePackages.Remove($Argument[2])
+            $Null = $global:FakePackageRows.Remove($Argument[2])
           }
           $global:LASTEXITCODE = $global:FakeDeleteExit
         }
@@ -407,7 +485,26 @@ Describe 'Set-PdqPackage' {
       $Database = [System.String]$args[0]
       $Sql = [System.String]$args[1]
       $global:FakeSqliteCalls.Add($Sql)
-      If ($Sql -like 'SELECT CollectionId*') {
+      If ($Sql -like 'SELECT p.PackageId*') {
+        If ($Database -cne $global:FakeDeployDatabase) {
+          Throw ('the package placement was read from {0}' -f $Database)
+        }
+        ForEach ($Name In $global:FakePackageRows.Keys) {
+          $Row = $global:FakePackageRows[$Name]
+          Write-Output ('{0}|{1}|{2}|{3}|{4}|{5}' -f @(
+              $Row.Id
+              (Get-FakeHex -Text:$Name)
+              $(If ($Null -eq $Row.Folder) { '' } Else { $Row.Folder.Id })
+              (Get-FakeHex -Text:$Row.Path)
+              $(If ($Null -eq $Row.Folder) { '' } Else { Get-FakeHex -Text:$Row.Folder.Path })
+              $(If ($Null -eq $Row.Folder -or $Null -eq $Row.Folder.ConsoleUser) {
+                  ''
+                } Else {
+                  $Row.Folder.ConsoleUser
+                })
+            ))
+        }
+      } ElseIf ($Sql -like 'SELECT CollectionId*') {
         If ($Database -cne $global:FakeInventoryDatabase) {
           Throw ('the collections were read from {0}' -f $Database)
         }
@@ -456,6 +553,72 @@ Describe 'Set-PdqPackage' {
             $Row[0].Id = [System.Int64]$Match.Groups['New'].Value
           }
         }
+      } ElseIf ($Sql -like '*UPDATE Packages SET FolderId*') {
+        $FolderPattern = (
+          "INSERT INTO Folders \(Name, ParentId, Path, ConsoleUsersInfoId\) " +
+          "SELECT CAST\(X'(?<Name>[0-9A-F]*)' AS TEXT\), " +
+          "(?<Parent>NULL|\(SELECT FolderId FROM Folders WHERE ConsoleUsersInfoId IS NULL " +
+          "AND hex\(Path\) = '(?<ParentPath>[0-9A-F]*)'\)), " +
+          "CAST\(X'(?<Path>[0-9A-F]*)' AS TEXT\), NULL WHERE"
+        )
+        ForEach ($Match In [Regex]::Matches(
+            $Sql, $FolderPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)) {
+          $FolderPath = Get-FakeText -Hex:$Match.Groups['Path'].Value
+          $Existing = @($global:FakeFolders | Where-Object {
+              $Null -eq $PSItem.ConsoleUser -and $PSItem.Path -ceq $FolderPath
+            })
+          If ($Existing.Count -eq 0) {
+            $Parent = If ($Match.Groups['Parent'].Value -ceq 'NULL') {
+              $Null
+            } Else {
+              $ParentPath = Get-FakeText -Hex:$Match.Groups['ParentPath'].Value
+              @($global:FakeFolders | Where-Object {
+                  $Null -eq $PSItem.ConsoleUser -and $PSItem.Path -ceq $ParentPath
+                } | Select-Object -First 1)[0]
+            }
+            $global:FakeFolders.Add([PSCustomObject]@{
+                ConsoleUser = $Null
+                Id          = [System.String]$global:FakeNextFolderId
+                Name        = Get-FakeText -Hex:$Match.Groups['Name'].Value
+                Parent      = $Parent
+                Path        = $FolderPath
+              })
+            $global:FakeNextFolderId++
+          }
+        }
+
+        $UpdatePattern = (
+          "UPDATE Packages SET FolderId = " +
+          "(?<NewFolder>NULL|\(SELECT FolderId FROM Folders WHERE ConsoleUsersInfoId IS NULL " +
+          "AND hex\(Path\) = '(?<NewFolderPath>[0-9A-F]*)'\)), " +
+          "Path = CAST\(X'(?<Path>[0-9A-F]*)' AS TEXT\) " +
+          "WHERE PackageId = (?<Id>[0-9]+) AND hex\(Name\) = '(?<Name>[0-9A-F]+)' " +
+          "AND IFNULL\(CAST\(FolderId AS TEXT\), ''\) = '(?<OldFolder>[0-9]*)' " +
+          "AND hex\(Path\) = '(?<OldPath>[0-9A-F]+)'"
+        )
+        $Update = [Regex]::Match(
+          $Sql, $UpdatePattern, [System.Text.RegularExpressions.RegexOptions]::Singleline
+        )
+        If ($Update.Success) {
+          $Name = Get-FakeText -Hex:$Update.Groups['Name'].Value
+          $Row = $global:FakePackageRows[$Name]
+          $CurrentFolder = If ($Null -eq $Row.Folder) { '' } Else { $Row.Folder.Id }
+          If ($Row.Id -ceq $Update.Groups['Id'].Value -and
+            $CurrentFolder -ceq $Update.Groups['OldFolder'].Value -and
+            (Get-FakeHex -Text:$Row.Path) -ceq $Update.Groups['OldPath'].Value -and
+            $global:FakeUnwritablePlacement -notcontains $Name) {
+            $Row.Path = Get-FakeText -Hex:$Update.Groups['Path'].Value
+            $Row.Folder = If ($Update.Groups['NewFolder'].Value -ceq 'NULL') {
+              $Null
+            } Else {
+              $FolderPath = Get-FakeText -Hex:$Update.Groups['NewFolderPath'].Value
+              @($global:FakeFolders | Where-Object {
+                  $Null -eq $PSItem.ConsoleUser -and $PSItem.Path -ceq $FolderPath
+                } | Select-Object -First 1)[0]
+            }
+            $global:FakeEvent.Add('File:{0}' -f $Name)
+          }
+        }
       } Else {
         Throw ('unexpected statement: {0}' -f $Sql)
       }
@@ -482,7 +645,9 @@ Describe 'Set-PdqPackage' {
       'FakeKeepOneNestedReference', 'FakeCliCalls', 'FakeCliArgumentCalls',
       'FakeExportBatches', 'FakeImportedNames', 'FakeDeployDatabase',
       'FakeInventoryDatabase', 'FakeCollectionIds', 'FakeScanProfileIds', 'FakeConditionRows',
-      'FakeNextConditionRow', 'FakeUnwritableCondition', 'FakeSqliteCalls' -Scope:'Global' `
+      'FakeNextConditionRow', 'FakeUnwritableCondition', 'FakeUnwritablePlacement',
+      'FakePackageRows', 'FakeNextPackageId', 'FakeFolders', 'FakeNextFolderId',
+      'FakeSqliteCalls', 'FakeEvent' -Scope:'Global' `
       -Force -ErrorAction:'SilentlyContinue'
   }
 
@@ -519,6 +684,27 @@ Describe 'Set-PdqPackage' {
       }
       $global:FakeCliCalls.Count | Should -Be 0
     }
+
+    It 'parses an empty folder chain with and without the optional Packages prefix' {
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:@(
+        New-PackageText -Name:$script:Chrome -Path:$script:Chrome
+        New-PackageText -Name:$script:Firefox -Path:('Packages\{0}' -f $script:Firefox)
+      ) | Out-Null
+
+      $Context.Changed | Should -BeFalse
+      $Context.Result.unchanged | Should -Be @($script:Chrome, $script:Firefox)
+      @($global:FakeSqliteCalls -like '*UPDATE Packages SET FolderId*').Count | Should -Be 0
+    }
+
+    It 'refuses a declared path whose last segment is not the package name' {
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -Path:'Packages\Browsers\Wrong Name'
+        )
+      } | Should -Throw "*$($script:Chrome) declares the path*last segment is not the package name*"
+      $global:FakeCliCalls.Count | Should -Be 0
+    }
   }
 
   Context 'nested package references' {
@@ -542,7 +728,33 @@ Describe 'Set-PdqPackage' {
           New-PackageText -Name:$script:Chrome -NestedTarget:$Target
         )
       } | Should -Throw ("*$($script:Chrome) carries the step 'Call: $Target', which nests " +
-        "'$Target', but no declaration names that target*")
+        "the path '$Target', but no declaration owns that path*")
+      $global:FakeCliCalls.Count | Should -Be 0
+    }
+
+    It 'resolves a full target path to its declared package name' {
+      $TargetPath = 'Mozilla Corporation\Mozilla Firefox\Mozilla Firefox - Install'
+      $Context = New-AnsibleContext -CheckMode
+      Invoke-Reconcile -Definition:@(
+        New-PackageText -Name:$script:Chrome -NestedTarget:$script:Firefox `
+          -NestedPath:$TargetPath
+        New-PackageText -Name:$script:Firefox -Path:('Packages\{0}' -f $TargetPath)
+      ) | Out-Null
+
+      $Context.Failed | Should -BeFalse
+      $Context.Result.applied | Should -Be @($script:Chrome)
+      $Context.Result.filed | Should -Be @($script:Firefox)
+    }
+
+    It 'refuses a prefixed target path and names its canonical spelling' {
+      $TargetPath = 'Mozilla Corporation\Mozilla Firefox\Mozilla Firefox - Install'
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -NestedTarget:$script:Firefox `
+            -NestedPath:('Packages\{0}' -f $TargetPath)
+          New-PackageText -Name:$script:Firefox -Path:('Packages\{0}' -f $TargetPath)
+        )
+      } | Should -Throw "*use the canonical path '$TargetPath'*"
       $global:FakeCliCalls.Count | Should -Be 0
     }
 
@@ -558,6 +770,7 @@ Describe 'Set-PdqPackage' {
 
     It 'imports a target before the package that nests it' {
       $global:FakePackages.Clear()
+      $global:FakePackageRows.Clear()
       $Context = New-AnsibleContext
       Invoke-Reconcile -Definition:@(
         New-PackageText -Name:$script:Chrome -NestedTarget:$script:Firefox
@@ -567,6 +780,27 @@ Describe 'Set-PdqPackage' {
       $Context.Failed | Should -BeFalse
       $global:FakeImportedNames | Should -Be @($script:Firefox, $script:Chrome)
       $Context.Result.applied | Should -Be @($script:Chrome, $script:Firefox)
+    }
+
+    It 'files an unchanged target before importing the package that nests it' {
+      $TargetPath = 'Mozilla Corporation\Mozilla Firefox\Mozilla Firefox - Install'
+      $Target = New-PackageText -Name:$script:Firefox -Path:('Packages\{0}' -f $TargetPath)
+      $Nester = New-PackageText -Name:$script:Chrome -Detail:'new' `
+        -NestedTarget:$script:Firefox -NestedPath:$TargetPath
+      $global:FakePackages[$script:Firefox] = $Target
+      $global:FakePackages[$script:Chrome] = New-PackageText -Name:$script:Chrome `
+        -Detail:'old' -NestedTarget:$script:Firefox -NestedPath:$TargetPath
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:@($Nester, $Target) | Out-Null
+
+      $Context.Failed | Should -BeFalse
+      $Context.Result.applied | Should -Be @($script:Chrome)
+      $Context.Result.filed | Should -Be @($script:Firefox)
+      $global:FakeEvent.IndexOf("File:$($script:Firefox)") | Should -BeLessThan `
+        $global:FakeEvent.IndexOf("Import:$($script:Chrome)")
+      $global:FakePackages[$script:Chrome] | Should -Match ([Regex]::Escape(
+          "<TargetPackagePath>$TargetPath</TargetPackagePath>"
+        ))
     }
 
     It 'ignores a nested target id and name but compares its path' {
@@ -667,6 +901,186 @@ Describe 'Set-PdqPackage' {
     }
   }
 
+  Context 'package placement' {
+    BeforeEach {
+      $script:ChromeFolder = 'Google LLC\Google Chrome'
+      $script:ChromePath = '{0}\{1}' -f $script:ChromeFolder, $script:Chrome
+      $script:FiledChrome = New-PackageText -Name:$script:Chrome `
+        -Path:('Packages\{0}' -f $script:ChromePath)
+    }
+
+    It 'creates a declared folder chain parent-first' {
+      New-AnsibleContext | Out-Null
+      Invoke-Reconcile -Definition:@(
+        $script:FiledChrome
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+
+      @($global:FakeFolders | ForEach-Object Path) | Should -Be @(
+        'Google LLC'
+        $script:ChromeFolder
+      )
+      $global:FakeFolders[0].Parent | Should -BeNullOrEmpty
+      $global:FakeFolders[1].Parent.Id | Should -Be $global:FakeFolders[0].Id
+    }
+
+    It 'reuses an existing shared folder chain without duplicating it' {
+      $Null = Add-FakeFolder -Path:'Google LLC'
+      $Nested = Add-FakeFolder -Path:$script:ChromeFolder
+      New-AnsibleContext | Out-Null
+      Invoke-Reconcile -Definition:@(
+        $script:FiledChrome
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+
+      $global:FakeFolders.Count | Should -Be 2
+      $global:FakePackageRows[$script:Chrome].Folder.Id | Should -Be $Nested.Id
+    }
+
+    It 'files the package at its canonical prefixless path' {
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:@(
+        $script:FiledChrome
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+
+      $Context.Changed | Should -BeTrue
+      $Context.Result.filed | Should -Be @($script:Chrome)
+      $global:FakePackageRows[$script:Chrome].Path | Should -Be $script:ChromePath
+      $global:FakePackageRows[$script:Chrome].Folder.Id | Should -Be $global:FakeFolders[1].Id
+      $global:FakePackageRows[$script:Chrome].Folder.Path | Should -Be $script:ChromeFolder
+    }
+
+    It 'writes the folder rows and package update in one transaction' {
+      New-AnsibleContext | Out-Null
+      Invoke-Reconcile -Definition:@(
+        $script:FiledChrome
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+
+      $Writes = @($global:FakeSqliteCalls | Where-Object {
+          $PSItem -like '*UPDATE Packages SET FolderId*'
+        })
+      $Writes.Count | Should -Be 1
+      $Writes[0] | Should -Match '^PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE;'
+      $Writes[0].IndexOf('INSERT INTO Folders') | Should -BeLessThan `
+        $Writes[0].IndexOf('UPDATE Packages SET FolderId')
+      $Writes[0] | Should -Match 'UPDATE Packages SET FolderId.* COMMIT;$'
+    }
+
+    It 'uses one placement transaction per package' {
+      $FirefoxPath = 'Mozilla Corporation\Mozilla Firefox\Mozilla Firefox - Install'
+      New-AnsibleContext | Out-Null
+      Invoke-Reconcile -Definition:@(
+        $script:FiledChrome
+        New-PackageText -Name:$script:Firefox -Path:('Packages\{0}' -f $FirefoxPath)
+      ) | Out-Null
+
+      $Writes = @($global:FakeSqliteCalls | Where-Object {
+          $PSItem -like '*UPDATE Packages SET FolderId*'
+        })
+      $Writes.Count | Should -Be 2
+      ForEach ($Write In $Writes) {
+        [Regex]::Matches($Write, 'BEGIN IMMEDIATE;').Count | Should -Be 1
+        [Regex]::Matches($Write, 'COMMIT;').Count | Should -Be 1
+      }
+    }
+
+    It 'does not write placement when the package is already filed' {
+      $Null = Add-FakeFolder -Path:'Google LLC'
+      $Nested = Add-FakeFolder -Path:$script:ChromeFolder
+      $global:FakePackageRows[$script:Chrome].Folder = $Nested
+      $global:FakePackageRows[$script:Chrome].Path = $script:ChromePath
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:@(
+        $script:FiledChrome
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+
+      $Context.Changed | Should -BeFalse
+      $Context.Result.filed.Count | Should -Be 0
+      $Context.Result.unchanged | Should -Be @($script:Chrome, $script:Firefox)
+      @($global:FakeSqliteCalls -like '*UPDATE Packages SET FolderId*').Count | Should -Be 0
+    }
+
+    It 'counts placement-only drift as changed without importing the package' {
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:@(
+        $script:FiledChrome
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+
+      $Context.Changed | Should -BeTrue
+      $Context.Result.filed | Should -Be @($script:Chrome)
+      $Context.Result.unchanged | Should -Be @($script:Firefox)
+      $Context.Result.msg | Should -Match ([Regex]::Escape($script:Chrome))
+      $global:FakeImportedNames.Count | Should -Be 0
+    }
+
+    It 'predicts placement-only drift in check mode without writing' {
+      $Context = New-AnsibleContext -CheckMode
+      Invoke-Reconcile -Definition:@(
+        $script:FiledChrome
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+
+      $Context.Changed | Should -BeTrue
+      $Context.Result.filed | Should -Be @($script:Chrome)
+      $global:FakeFolders.Count | Should -Be 0
+      $global:FakePackageRows[$script:Chrome].Folder | Should -BeNullOrEmpty
+      $global:FakePackageRows[$script:Chrome].Path | Should -Be $script:Chrome
+      @($global:FakeSqliteCalls -like '*UPDATE Packages SET FolderId*').Count | Should -Be 0
+      $global:FakeImportedNames.Count | Should -Be 0
+    }
+
+    It 'writes nothing on the converge after a placement-only run' {
+      New-AnsibleContext | Out-Null
+      Invoke-Reconcile -Definition:@(
+        $script:FiledChrome
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+      $Writes = @($global:FakeSqliteCalls -like '*UPDATE Packages SET FolderId*').Count
+
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:@(
+        $script:FiledChrome
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+
+      $Context.Changed | Should -BeFalse
+      $Context.Result.filed.Count | Should -Be 0
+      @($global:FakeSqliteCalls -like '*UPDATE Packages SET FolderId*').Count |
+        Should -Be $Writes
+    }
+
+    It 'files a package back at the root when its declaration has an empty chain' {
+      $Null = Add-FakeFolder -Path:'Google LLC'
+      $Nested = Add-FakeFolder -Path:$script:ChromeFolder
+      $global:FakePackageRows[$script:Chrome].Folder = $Nested
+      $global:FakePackageRows[$script:Chrome].Path = $script:ChromePath
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:@(
+        New-PackageText -Name:$script:Chrome -Path:('Packages\{0}' -f $script:Chrome)
+        New-PackageText -Name:$script:Firefox
+      ) | Out-Null
+
+      $Context.Result.filed | Should -Be @($script:Chrome)
+      $global:FakePackageRows[$script:Chrome].Folder | Should -BeNullOrEmpty
+      $global:FakePackageRows[$script:Chrome].Path | Should -Be $script:Chrome
+    }
+
+    It 'fails loudly when the placement does not read back as stored' {
+      $global:FakeUnwritablePlacement = @($script:Chrome)
+      {
+        Invoke-Reconcile -Definition:@(
+          $script:FiledChrome
+          New-PackageText -Name:$script:Firefox
+        )
+      } | Should -Throw "*$($script:Chrome)*$($script:ChromePath)*after the placement transaction*"
+      @($global:FakeSqliteCalls -like '*UPDATE Packages SET FolderId*').Count | Should -Be 1
+    }
+  }
+
   Context 'the batched read contract' {
     It 'passes separate names once, uses a directory and trusts each file Name rather than its filename' {
       $Context = New-AnsibleContext
@@ -696,6 +1110,7 @@ Describe 'Set-PdqPackage' {
 
     It 'accepts exit 1 when every missing name has its not-found line' {
       $Null = $global:FakePackages.Remove($script:Firefox)
+      $Null = $global:FakePackageRows.Remove($script:Firefox)
       $Context = New-AnsibleContext
       Invoke-Reconcile -Definition:@(
         New-PackageText -Name:$script:Chrome
@@ -712,6 +1127,7 @@ Describe 'Set-PdqPackage' {
 
     It 'accepts exit 3 when a fresh product holds none of the declaration' {
       $global:FakePackages.Clear()
+      $global:FakePackageRows.Clear()
       $Context = New-AnsibleContext
       Invoke-Reconcile -Definition:@(
         New-PackageText -Name:$script:Chrome
@@ -726,6 +1142,7 @@ Describe 'Set-PdqPackage' {
 
     It 'rejects exit 1 when a missing package has no matching not-found line' {
       $Null = $global:FakePackages.Remove($script:Firefox)
+      $Null = $global:FakePackageRows.Remove($script:Firefox)
       $global:FakeExportSuppressMissingError = $True
       {
         Invoke-Reconcile -Definition:@(
@@ -739,6 +1156,7 @@ Describe 'Set-PdqPackage' {
 
     It 'rejects an error line that cannot be accounted for by a missing package' {
       $Null = $global:FakePackages.Remove($script:Firefox)
+      $Null = $global:FakePackageRows.Remove($script:Firefox)
       $global:FakeExportExtraError = @('Error: the export store is unavailable.')
       {
         Invoke-Reconcile -Definition:@(
@@ -1013,7 +1431,7 @@ Describe 'Set-PdqPackage' {
       $Context.Result.repaired | Should -Be @($script:Chrome)
       $Context.Result.unchanged | Should -Be @($script:Chrome, $script:Firefox)
       $Context.Result.msg | Should -Be (
-        "Would apply: ; would remove: ; would repair references: $($script:Chrome); " +
+        "Would apply: ; would file: ; would remove: ; would repair references: $($script:Chrome); " +
         'already correct: 2'
       )
       @($global:FakeConditionRows | ForEach-Object Id) | Should -Be @(6)
@@ -1101,6 +1519,7 @@ Describe 'Set-PdqPackage' {
 
     It 'checks a nester scan step without reading its dependency scan step' {
       $global:FakePackages.Clear()
+      $global:FakePackageRows.Clear()
       $Definition = @(
         New-PackageText -Name:$script:Chrome -NestedTarget:$script:Firefox `
           -ScanProfileId:'2'

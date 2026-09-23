@@ -1,0 +1,104 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<AdminArsenal.Export Code="PDQDeploy" Name="PDQ Deploy" Version="20.1.8.0" MinimumVersion="15.0">
+  <Package>
+    <CurrentLibraryPackageVersionId value="null" />
+    <PackageDefinition name="Definition">
+      <Conditions type="list">
+        <PackageStepCondition>
+          <Architecture>Both, ArmAware</Architecture>
+          <Version>All</Version>
+          <TypeName>OperatingSystem</TypeName>
+        </PackageStepCondition>
+        <PackageStepCondition>
+          <Version>V5</Version>
+          <TypeName>PowerShellVersion</TypeName>
+        </PackageStepCondition>
+        <PackageStepCondition>
+          <IsUserLoggedOn>AlwaysRun</IsUserLoggedOn>
+          <TypeName>LoggedOnUser</TypeName>
+        </PackageStepCondition>
+        <PackageStepCondition>
+          <ConditionMode>None</ConditionMode>
+          <InventoryCollectionId value="null" />
+          <InventoryCollectionName></InventoryCollectionName>
+          <TypeName>Collection</TypeName>
+        </PackageStepCondition>
+      </Conditions>
+      <CopyMode>Default</CopyMode>
+      <DelayedApprovalTimeSpan>7.00:00:00</DelayedApprovalTimeSpan>
+      <DownloadApprovalMode>Manual</DownloadApprovalMode>
+      <InventoryScanProfileId value="null" />
+      <IsDownloadApprovalModeInherited value="true" />
+      <ScanAfterDeployment value="false" />
+      <Steps type="list">
+        <PowerShellStep>
+          <CustomCommandLine></CustomCommandLine>
+          <Files>$(Repository)\~resources\Start-Uninstaller.ps1</Files>
+          <Script>Try {
+  &amp; ".\Start-Uninstaller.ps1" `
+  -DebugLevel '103' `
+  -DisplayNamePattern '7-Zip*' `
+  -LogLevel '002223' `
+  -Property @('DisplayName', 'ParentKey', 'QuietUninstallString', 'UninstallString', 'AppArch') `
+  -RemoveConforming `
+  -SilentSwitch '/S' `
+  -SuccessExitCode @(0, 1641, 3010)
+} Catch {
+  Write-Error -Message:('Start-Uninstaller.ps1 failed: {0}' -f $PSItem.Exception.Message) -ErrorAction:'Continue'
+  Exit 3
+}
+Exit $LASTEXITCODE</Script>
+          <SuccessCodes>0</SuccessCodes>
+          <RunAs value="null" />
+          <Conditions type="list">
+            <PackageStepCondition>
+              <Architecture>Both, ArmAware</Architecture>
+              <Version>All</Version>
+              <TypeName>OperatingSystem</TypeName>
+            </PackageStepCondition>
+            <PackageStepCondition>
+              <IsUserLoggedOn>AlwaysRun</IsUserLoggedOn>
+              <TypeName>LoggedOnUser</TypeName>
+            </PackageStepCondition>
+            <PackageStepCondition>
+              <ConditionMode>None</ConditionMode>
+              <InventoryCollectionId value="null" />
+              <InventoryCollectionName></InventoryCollectionName>
+              <TypeName>Collection</TypeName>
+            </PackageStepCondition>
+          </Conditions>
+          <ErrorMode>StopDeploymentFail</ErrorMode>
+          <Title>Remove: 7-Zip</Title>
+          <TypeName>PowerShell</TypeName>
+          <IsEnabled value="true" />
+          <IsPostStep value="false" />
+          <IsPreStep value="false" />
+        </PowerShellStep>
+      </Steps>
+      <Timeout value="60" />
+      <UseCustomTimeout value="false" />
+      <RunAs value="null" />
+    </PackageDefinition>
+    <Description></Description>
+    <NewLibraryPackageVersionId value="null" />
+    <OriginalId value="null" />
+    <Version>@(Igor-Pavlov_7-Zip)</Version>
+    <IsAutoDownload value="false" />
+    <FolderId value="4" />
+    <LibraryPackageId value="null" />
+    <LibraryPackageVersionId value="null" />
+    <Name>7-Zip - Uninstall</Name>
+    <Path>Packages\Igor Pavlov\7-Zip\7-Zip - Uninstall</Path>
+    <CustomVariables type="list">
+      <CustomVariable>
+        <Name>Igor-Pavlov_7-Zip</Name>
+        <Value>@(Igor-Pavlov_7-Zip)</Value>
+      </CustomVariable>
+    </CustomVariables>
+    <PackageDisplaySettings name="DisplaySettings">
+      <DisplayType>Normal</DisplayType>
+      <IconKey>Icon-Package</IconKey>
+      <SortOrder value="9" />
+    </PackageDisplaySettings>
+  </Package>
+</AdminArsenal.Export>

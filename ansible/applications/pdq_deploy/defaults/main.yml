@@ -403,6 +403,8 @@ pdq_deploy_defaults:
   # exported definitions are not portable.
   packages:
     - '7-Zip - Install.xml'
+    - '7-Zip - Repair.xml'
+    - '7-Zip - Uninstall.xml'
     - 'Google Chrome - Install.xml'
     - 'Google Chrome - Repair.xml'
     - 'Google Chrome - Uninstall.xml'

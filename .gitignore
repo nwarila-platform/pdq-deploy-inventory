@@ -101,6 +101,8 @@
 # is a build artifact and is deliberately NEVER allowlisted, so it cannot be committed.
 !/ansible/applications/pdq_deploy/files/packages/.gitattributes
 !/ansible/applications/pdq_deploy/files/packages/7-Zip - Install.xml
+!/ansible/applications/pdq_deploy/files/packages/7-Zip - Repair.xml
+!/ansible/applications/pdq_deploy/files/packages/7-Zip - Uninstall.xml
 !/ansible/applications/pdq_deploy/files/packages/Google Chrome - Install.xml
 !/ansible/applications/pdq_deploy/files/packages/Google Chrome - Repair.xml
 !/ansible/applications/pdq_deploy/files/packages/Google Chrome - Uninstall.xml

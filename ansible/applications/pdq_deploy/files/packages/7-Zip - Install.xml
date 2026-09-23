@@ -122,7 +122,7 @@ If ($Result.ambiguous) {
   Exit 2
 }
 If ($Result.count -ne 1) {
-  Write-Error -Message:('Verification failed: 7-Zip is absent; found {0} registrations named {1}.' -f $Result.count, $DisplayName) -ErrorAction:'Continue'
+  Write-Error -Message:('Verification failed: the install did not produce the expected MSI registration named {1} (count {0}).' -f $Result.count, $DisplayName) -ErrorAction:'Continue'
   Exit 1
 }
 If ($Result.installed_version -ine $PinnedVersion) {

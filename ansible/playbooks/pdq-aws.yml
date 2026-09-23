@@ -287,10 +287,9 @@
 
 
     # The pinned application values, defined ONCE here and handed to BOTH products below (they
-    # share one custom-variable model). Version names use the fleet's
-    # <Publisher>_<Product> shape, with words joined by dashes; companion identities add a
-    # descriptive suffix. A name here, in a package or collection definition, and in the console
-    # is the same string. Every value is a repository version.
+    # share one custom-variable model). Version names use the fleet's <Publisher>_<Product> shape,
+    # with words joined by dashes. A name here, in a package or collection definition, and in the
+    # console is the same string. Every value is a repository version.
     # The map is the COMPLETE set:
     # only a name that is absent, or whose value differs, is written, each is proved to read
     # back, and a custom variable this map does not name is removed on the next converge --

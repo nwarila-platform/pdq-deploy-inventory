@@ -155,8 +155,8 @@ If ($Result.action_required) {
   Write-Error -Message:('Verification failed: Google Chrome is missing or below version {0}. {1}' -f $PinnedVersion, $Result.msg) -ErrorAction:'Continue'
   Exit 1
 }
-If ($Result.entries[0].product_id -ine '@(Google-LLC_Google-Chrome-ProductCode)') {
-  Write-Error -Message:('Verification failed: Google Chrome ProductCode {0} does not match {1}.' -f $Result.entries[0].product_id, '@(Google-LLC_Google-Chrome-ProductCode)') -ErrorAction:'Continue'
+If ($Result.entries[0].product_id -ine '{D474047F-C357-3094-9341-F8FE61A4716F}') {
+  Write-Error -Message:('Verification failed: Google Chrome ProductCode {0} does not match {1}.' -f $Result.entries[0].product_id, '{D474047F-C357-3094-9341-F8FE61A4716F}') -ErrorAction:'Continue'
   Exit 1
 }
 If ($Result.installed_version -ine $PinnedVersion) {

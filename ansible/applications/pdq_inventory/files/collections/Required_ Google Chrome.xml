@@ -44,7 +44,7 @@
                     <Table>Application</Table>
                     <Column>RegistryPath</Column>
                     <Comparison>!Contains</Comparison>
-                    <Value>@(Google-LLC_Google-Chrome-ProductCode)</Value>
+                    <Value>{D474047F-C357-3094-9341-F8FE61A4716F}</Value>
                   </ValueFilter>
                 </Filters>
               </GroupFilter>

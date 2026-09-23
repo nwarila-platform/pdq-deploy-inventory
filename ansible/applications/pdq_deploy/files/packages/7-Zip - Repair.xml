@@ -31,6 +31,64 @@
       <IsDownloadApprovalModeInherited value="true" />
       <ScanAfterDeployment value="false" />
       <Steps type="list">
+        <PowerShellStep>
+          <CustomCommandLine></CustomCommandLine>
+          <Files>$(Repository)\~resources\Get-InstalledSoftware.ps1</Files>
+          <Script>$PinnedVersion = '@(Igor-Pavlov_7-Zip)'
+$VersionParts = $PinnedVersion.Split('.')
+If ($VersionParts.Count -lt 2) {
+  Write-Error -Message:('Preflight failed: pinned version {0} does not contain both major and minor components.' -f $PinnedVersion) -ErrorAction:'Continue'
+  Exit 3
+}
+$DisplayName = '7-Zip {0}.{1} (x64 edition)' -f $VersionParts[0], $VersionParts[1]
+Try {
+  $Result = &amp; ".\Get-InstalledSoftware.ps1" -DisplayName $DisplayName -Version $PinnedVersion | ConvertFrom-Json -ErrorAction:'Stop'
+} Catch {
+  Write-Error -Message:('Preflight failed: {0}' -f $PSItem.Exception.Message) -ErrorAction:'Continue'
+  Exit 3
+}
+If ($Null -eq $Result) {
+  Write-Error -Message:'Preflight failed: Get-InstalledSoftware.ps1 did not return a result.' -ErrorAction:'Continue'
+  Exit 3
+}
+If ($Result.ambiguous) {
+  Write-Error -Message:('Preflight failed: {0}' -f $Result.msg) -ErrorAction:'Continue'
+  Exit 2
+}
+If ($Result.count -ne 1) {
+  Write-Error -Message:('Preflight failed: there is no pinned 7-Zip MSI registration to repair (expected count 1, found {0}); installing 7-Zip is the Install package''s job.' -f $Result.count) -ErrorAction:'Continue'
+  Exit 1
+}
+If ($Result.installed_version -ine $PinnedVersion) {
+  Write-Error -Message:('Preflight failed: 7-Zip installed version {0} does not match pinned version {1}.' -f $Result.installed_version, $PinnedVersion) -ErrorAction:'Continue'
+  Exit 1
+}
+$ProductId = [String]$Result.entries[0].product_id
+If ([String]::IsNullOrEmpty($ProductId) -or $ProductId -notmatch '^\{[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\}$') {
+  Write-Error -Message:('Preflight failed: 7-Zip registration product_id {0} is not a brace GUID; the registration is not an MSI product.' -f $ProductId) -ErrorAction:'Continue'
+  Exit 1
+}
+Exit 0</Script>
+          <SuccessCodes>0</SuccessCodes>
+          <RunAs value="null" />
+          <Conditions type="list">
+            <PackageStepCondition>
+              <Architecture>Both, ArmAware</Architecture>
+              <Version>All</Version>
+              <TypeName>OperatingSystem</TypeName>
+            </PackageStepCondition>
+            <PackageStepCondition>
+              <IsUserLoggedOn>AlwaysRun</IsUserLoggedOn>
+              <TypeName>LoggedOnUser</TypeName>
+            </PackageStepCondition>
+          </Conditions>
+          <ErrorMode>StopDeploymentFail</ErrorMode>
+          <Title>Preflight: 7-Zip</Title>
+          <TypeName>PowerShell</TypeName>
+          <IsEnabled value="true" />
+          <IsPostStep value="false" />
+          <IsPreStep value="false" />
+        </PowerShellStep>
         <NestedPackageStep>
           <TargetPackageId value="null" />
           <TargetPackageName>7-Zip - Uninstall</TargetPackageName>

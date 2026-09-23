@@ -31,7 +31,6 @@
       <IsDownloadApprovalModeInherited value="true" />
       <ScanAfterDeployment value="false" />
       <Steps type="list">
-        <!-- /fa is not used: Windows refuses this product's MSI reconfiguration while permitting Chrome's. -->
         <NestedPackageStep>
           <TargetPackageId value="null" />
           <TargetPackageName>7-Zip - Uninstall</TargetPackageName>
@@ -155,7 +154,7 @@ Exit 0</Script>
       <UseCustomTimeout value="false" />
       <RunAs value="null" />
     </PackageDefinition>
-    <Description></Description>
+    <Description>This package reinstalls rather than repairing because Windows refuses this product's MSI reconfiguration, while Chrome's is permitted.</Description>
     <NewLibraryPackageVersionId value="null" />
     <OriginalId value="null" />
     <Version>@(Igor-Pavlov_7-Zip)</Version>

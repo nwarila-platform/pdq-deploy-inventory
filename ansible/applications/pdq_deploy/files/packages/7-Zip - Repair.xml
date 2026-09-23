@@ -31,11 +31,56 @@
       <IsDownloadApprovalModeInherited value="true" />
       <ScanAfterDeployment value="false" />
       <Steps type="list">
-        <NestedPackageStep>
-          <TargetPackageId value="null" />
-          <TargetPackageName>7-Zip - Uninstall</TargetPackageName>
-          <TargetPackagePath>Igor Pavlov\7-Zip\7-Zip - Uninstall</TargetPackagePath>
-          <UseNestedPackageConditions value="false" />
+        <PowerShellStep>
+          <CustomCommandLine></CustomCommandLine>
+          <Files>$(Repository)\~resources\Get-InstalledSoftware.ps1</Files>
+          <Script>$PinnedVersion = '@(Igor-Pavlov_7-Zip)'
+$VersionParts = $PinnedVersion.Split('.')
+If ($VersionParts.Count -lt 2) {
+  Write-Error -Message:('Repair failed: pinned version {0} does not contain both major and minor components.' -f $PinnedVersion) -ErrorAction:'Continue'
+  Exit 3
+}
+$DisplayName = '7-Zip {0}.{1} (x64 edition)' -f $VersionParts[0], $VersionParts[1]
+Try {
+  $Result = &amp; ".\Get-InstalledSoftware.ps1" -DisplayName $DisplayName -Version $PinnedVersion | ConvertFrom-Json -ErrorAction:'Stop'
+} Catch {
+  Write-Error -Message:('Repair failed: {0}' -f $PSItem.Exception.Message) -ErrorAction:'Continue'
+  Exit 3
+}
+If ($Null -eq $Result) {
+  Write-Error -Message:'Repair failed: Get-InstalledSoftware.ps1 did not return a result.' -ErrorAction:'Continue'
+  Exit 3
+}
+If ($Result.ambiguous) {
+  Write-Error -Message:('Repair failed: {0}' -f $Result.msg) -ErrorAction:'Continue'
+  Exit 2
+}
+If ($Result.count -ne 1) {
+  Write-Error -Message:('Repair failed: 7-Zip is absent; found {0} registrations named {1}.' -f $Result.count, $DisplayName) -ErrorAction:'Continue'
+  Exit 1
+}
+If ($Result.installed_version -ine $PinnedVersion) {
+  Write-Error -Message:('Repair failed: 7-Zip registered version {0} does not match pinned version {1}.' -f $Result.installed_version, $PinnedVersion) -ErrorAction:'Continue'
+  Exit 1
+}
+$ProductId = [String]$Result.entries[0].product_id
+If ([String]::IsNullOrEmpty($ProductId) -or $ProductId -notmatch '^\{[0-9A-F]{8}(?:-[0-9A-F]{4}){3}-[0-9A-F]{12}\}$') {
+  Write-Error -Message:('Repair failed: 7-Zip registration product_id {0} is not a brace GUID; the registration is not an MSI product and must not be repaired.' -f $ProductId) -ErrorAction:'Continue'
+  Exit 1
+}
+$Process = Start-Process `
+  -FilePath:'msiexec.exe' `
+  -ArgumentList:@(
+    '/fa'
+    $ProductId
+    '/qn'
+    '/norestart'
+  ) `
+  -PassThru `
+  -Wait `
+  -ErrorAction:'Stop'
+Exit $Process.ExitCode</Script>
+          <SuccessCodes>0,3010</SuccessCodes>
           <RunAs value="null" />
           <Conditions type="list">
             <PackageStepCondition>
@@ -48,55 +93,19 @@
               <TypeName>LoggedOnUser</TypeName>
             </PackageStepCondition>
             <PackageStepCondition>
-              <ConditionMode>IsMember</ConditionMode>
+              <ConditionMode>None</ConditionMode>
               <InventoryCollectionId value="null" />
-              <InventoryCollectionName>Required: 7-Zip</InventoryCollectionName>
+              <InventoryCollectionName></InventoryCollectionName>
               <TypeName>Collection</TypeName>
             </PackageStepCondition>
           </Conditions>
           <ErrorMode>StopDeploymentFail</ErrorMode>
-          <Title>Uninstall: 7-Zip</Title>
-          <TypeName>NestedPackage</TypeName>
+          <Title>Repair: 7-Zip</Title>
+          <TypeName>PowerShell</TypeName>
           <IsEnabled value="true" />
           <IsPostStep value="false" />
           <IsPreStep value="false" />
-        </NestedPackageStep>
-        <InstallStep>
-          <CustomCommandLine></CustomCommandLine>
-          <FileName>$(Repository)\Igor Pavlov\7-Zip\@(Igor-Pavlov_7-Zip)\Igor-Pavlov_7-Zip_@(Igor-Pavlov_7-Zip)_x64.msi</FileName>
-          <Files></Files>
-          <IncludeDirectory value="false" />
-          <LeaveInstallFile value="false" />
-          <MsiOperation>Install</MsiOperation>
-          <MsiQuiet value="true" />
-          <MsiRestart>Never</MsiRestart>
-          <Parameters></Parameters>
-          <SuccessCodes>0,1641,3010,2359302</SuccessCodes>
-          <RunAs value="null" />
-          <Conditions type="list">
-            <PackageStepCondition>
-              <Architecture>Bits64, ArmAware</Architecture>
-              <Version>All</Version>
-              <TypeName>OperatingSystem</TypeName>
-            </PackageStepCondition>
-            <PackageStepCondition>
-              <IsUserLoggedOn>AlwaysRun</IsUserLoggedOn>
-              <TypeName>LoggedOnUser</TypeName>
-            </PackageStepCondition>
-            <PackageStepCondition>
-              <ConditionMode>IsMember</ConditionMode>
-              <InventoryCollectionId value="null" />
-              <InventoryCollectionName>Required: 7-Zip</InventoryCollectionName>
-              <TypeName>Collection</TypeName>
-            </PackageStepCondition>
-          </Conditions>
-          <ErrorMode>StopDeploymentFail</ErrorMode>
-          <Title>Install: 7-Zip (x64)</Title>
-          <TypeName>Install</TypeName>
-          <IsEnabled value="true" />
-          <IsPostStep value="false" />
-          <IsPreStep value="false" />
-        </InstallStep>
+        </PowerShellStep>
         <PowerShellStep>
           <CustomCommandLine></CustomCommandLine>
           <Files>$(Repository)\~resources\Get-InstalledSoftware.ps1</Files>
@@ -161,23 +170,6 @@ Exit 0</Script>
           <IsPostStep value="false" />
           <IsPreStep value="false" />
         </PowerShellStep>
-        <PackageStep>
-          <InventoryScanProfileId value="2" />
-          <Conditions type="list">
-            <PackageStepCondition>
-              <ConditionMode>IsMember</ConditionMode>
-              <InventoryCollectionId value="null" />
-              <InventoryCollectionName>Required: 7-Zip</InventoryCollectionName>
-              <TypeName>Collection</TypeName>
-            </PackageStepCondition>
-          </Conditions>
-          <ErrorMode>StopDeploymentFail</ErrorMode>
-          <Title>Scan: Applications</Title>
-          <TypeName>ScanStep</TypeName>
-          <IsEnabled value="true" />
-          <IsPostStep value="false" />
-          <IsPreStep value="false" />
-        </PackageStep>
       </Steps>
       <Timeout value="60" />
       <UseCustomTimeout value="false" />
@@ -191,8 +183,8 @@ Exit 0</Script>
     <FolderId value="4" />
     <LibraryPackageId value="null" />
     <LibraryPackageVersionId value="null" />
-    <Name>7-Zip - Install</Name>
-    <Path>Packages\Igor Pavlov\7-Zip\7-Zip - Install</Path>
+    <Name>7-Zip - Repair</Name>
+    <Path>Packages\Igor Pavlov\7-Zip\7-Zip - Repair</Path>
     <CustomVariables type="list">
       <CustomVariable>
         <Name>Igor-Pavlov_7-Zip</Name>
@@ -202,7 +194,7 @@ Exit 0</Script>
     <PackageDisplaySettings name="DisplaySettings">
       <DisplayType>Normal</DisplayType>
       <IconKey>Icon-Package</IconKey>
-      <SortOrder value="8" />
+      <SortOrder value="10" />
     </PackageDisplaySettings>
   </Package>
 </AdminArsenal.Export>

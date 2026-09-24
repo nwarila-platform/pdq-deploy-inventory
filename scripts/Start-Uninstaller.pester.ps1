@@ -658,17 +658,20 @@ Describe 'Start-Uninstaller' {
       )
 
       $Json = & $script:ScriptPath `
-        -Family @{ Method = 'Exact'; Query = ' Spaced Product ' }
+        -Family @{ Method = 'Simple'; Query = '*' } `
+        -Filter @(
+          @{ Property = 'ParentKey'; Method = 'Exact'; Query = 'EmptyName' }
+        )
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
       $ExitCode | Should -Be 0
-      $Result.removed.key_name | Should -Be 'SpacedProduct'
-      @($global:StartUninstallerRegistry[$script:Native]).PSChildName |
-        Should -Contain 'TrimmedProduct'
+      $Result.changed | Should -BeFalse
+      $Result.msg | Should -Match '^Removed 0 selected registration\(s\)'
+      $Result.removed | Should -HaveCount 0
       @($global:StartUninstallerRegistry[$script:Native]).PSChildName |
         Should -Contain 'EmptyName'
-      $global:StartUninstallerProcessCalls | Should -HaveCount 1
+      $global:StartUninstallerProcessCalls | Should -HaveCount 0
     }
   }
 
@@ -716,6 +719,10 @@ Describe 'Start-Uninstaller' {
       $Result.failures -join ' ' | Should -Match 'Typed Product second'
       $Result.failures -join ' ' | Should -Match 'BinaryValue'
       $Result.failures -join ' ' | Should -Match 'Typed Product first'
+      $Result.failures -join "`n" |
+        Should -Match 'Typed Product selected: property MultiValue'
+      $Result.failures -join "`n" |
+        Should -Match 'Typed Product selected: property BinaryValue'
       $global:StartUninstallerReadRoots | Should -HaveCount 2
     }
 

@@ -632,7 +632,7 @@ jobs:
             }
           }
           $Inv = 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
-          & $Inv ExportCollections -Name 'Chrome Below Pinned Version' -Path 'C:\Windows\Temp\decl-out' -Overwrite 2>&1 | Out-Null
+          & $Inv ExportCollections -Name 'Required: Google Chrome' -Path 'C:\Windows\Temp\decl-out' -Overwrite 2>&1 | Out-Null
           If ($LASTEXITCODE -ne 0) { Write-Output 'the declared collection is not there'; Exit 3 }
           Remove-Item 'C:\Windows\Temp\decl-out' -Recurse -Force
           & $Inv ExportCollections -Name 'UndeclaredByHand Collection' -Path 'C:\Windows\Temp\stray-out2' -Overwrite 2>&1 | Out-Null

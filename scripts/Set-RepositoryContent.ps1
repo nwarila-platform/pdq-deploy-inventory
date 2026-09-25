@@ -31,6 +31,11 @@
     Nothing here carries a credential: the host reads the bucket through the instance profile it
     was launched with.
 
+    The bucket is read through AWS.Tools.S3 where the host has it, and otherwise through
+    AWSPowerShell, the monolithic module stock Windows Server 2019 carries instead; the two
+    cmdlets used take the same parameters in both. With neither installed, the run fails naming
+    both.
+
 .PARAMETER Bucket
     The application repository bucket, without a scheme or prefix.
 
@@ -48,6 +53,7 @@
 
 .OUTPUTS
     One object carrying changed, check_mode, bucket, path, fetched, removed, swept, present and msg.
+    Run outside the module, it is written as one line of JSON.
 #>
 
 [CmdletBinding(
@@ -58,7 +64,7 @@
   SupportsPaging = $False,
   SupportsShouldProcess = $True
 )]
-[OutputType([System.Void])]
+[OutputType([System.String])]
 Param (
   [Parameter(
     DontShow = $False,
@@ -120,26 +126,36 @@ Param (
 #region ------ [ Initialization ] ----------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Initialization'
 
+# Every user-facing message, in one table. Declared before anything that can fail, because the
+# trap below reports every failure through it.
+[System.Collections.Hashtable]$Script:Message = @{
+  'Set-RepositoryContent.Changed'          = '{0} of {1} object(s) fetched from {2}, {3} local file(s) removed'
+  'Set-RepositoryContent.Current'          = '{0} object(s) already current from {1}'
+  'Set-RepositoryContent.Failure'          = '[{0:0000}] {1} [{2}]'
+  'Set-RepositoryContent.KeyOutsideRoot'   = 'The key {0} resolves outside the repository: {1}'
+  'Set-RepositoryContent.NoS3Module'       = 'Neither AWS.Tools.S3 nor AWSPowerShell is installed, and the bucket is read through one of them.'
+  'Set-RepositoryContent.ReparsePoint'     = 'The repository holds a reparse point: {0}. Remove it before syncing.'
+  'Set-RepositoryContent.VolumeNotMounted' = 'The repository directory is not there: {0}. The volume holding it is not mounted.'
+}
+
 # The module runs this script in check mode because it declares SupportsShouldProcess, and injects
 # -WhatIf when it does. This script decides check mode from $Ansible.CheckMode, so -WhatIf is
-# neutralised here; left on, it would suppress the New-Variable setup below.
+# neutralised here; left on, it would suppress the Set-Variable setup below.
 #
 # It is captured first. A person running this directly reaches for -WhatIf expecting it to mean
 # change nothing, and this script deletes files -- so the request is honoured below rather than
 # discarded with the preference.
-$RequestedWhatIf = [System.Boolean]$WhatIfPreference
-$WhatIfPreference = $false
+[System.Boolean]$Private:RequestedWhatIf = [System.Boolean]$WhatIfPreference
+$WhatIfPreference = $False
 
 # Log level names, by LogLevel digit position.
-New-Variable -Force -Name:'LOG_LEVELS' -Option:('Private', 'ReadOnly') -Value:(
-  [System.String[]]@('Verbose', 'Debug', 'Information', 'Warning', 'Error', 'Fatal')
+[System.String[]]$Private:LOG_LEVELS = [System.String[]]@(
+  'Verbose', 'Debug', 'Information', 'Warning', 'Error', 'Fatal'
 )
 
 # An S3 key always separates with '/'. Translating to the platform's own separator is what lets
 # this script's spec run on the Linux CI leg as well as on the host it deploys to.
-New-Variable -Force -Name:'PATH_SEPARATOR' -Option:('Private', 'ReadOnly') -Value:(
-  [System.String][System.IO.Path]::DirectorySeparatorChar
-)
+[System.String]$Private:PATH_SEPARATOR = [System.String][System.IO.Path]::DirectorySeparatorChar
 
 # Configure log levels based on the LogLevel parameter.
 For ($L = 0; $L -lt 6; $L++) {
@@ -173,7 +189,7 @@ Trap {
       )
     }
     Write-Warning -Message:(
-      '[{0:0000}] {1} [{2}]' -f @(
+      $Script:Message['Set-RepositoryContent.Failure'] -f @(
         [System.Int64]$PSItem.InvocationInfo.ScriptLineNumber
         [System.String]$PSItem.Exception.Message
         [System.String]$PSItem.Exception.GetBaseException().GetType().FullName
@@ -187,9 +203,9 @@ Trap {
 }
 
 # Standalone (a dev shell or spec) has no transport-provided $Ansible; stub it faithfully.
-$StandaloneRun = $Null -eq (Get-Variable -Name:'Ansible' -ValueOnly -ErrorAction:'SilentlyContinue')
+[System.Boolean]$Private:StandaloneRun = $Null -eq (Get-Variable -Name:'Ansible' -ValueOnly -ErrorAction:'SilentlyContinue')
 If ($StandaloneRun) {
-  $Ansible = [PSCustomObject]@{
+  [PSCustomObject]$Private:Ansible = [PSCustomObject]@{
     Changed   = $True
     CheckMode = $False
     Failed    = $False
@@ -202,59 +218,83 @@ If ($StandaloneRun) {
 #region ------ [ Main ] --------------------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Main'
 
-Import-Module -Name:'AWS.Tools.S3' -ErrorAction:'Stop'
+# Initialize Variable(s)
+[System.Boolean]$Private:Changed = $False
+[System.Object[]]$Private:Content = @()
+[System.String]$Private:Current = [System.String]::Empty
+[System.Collections.Generic.List[System.String]]$Private:Directories = [System.Collections.Generic.List[System.String]]::new()
+[System.Boolean]$Private:DryRun = $False
+[System.IO.FileSystemInfo]$Private:Existing = $Null
+# Everything the bucket says this volume should hold. Compared case-insensitively because the
+# filesystem is: two keys differing only in case cannot both exist here, and treating them as
+# distinct would delete whichever arrived second on every run.
+[System.Collections.Generic.HashSet[System.String]]$Private:Expected = [System.Collections.Generic.HashSet[System.String]]::new(
+  [System.StringComparer]::OrdinalIgnoreCase
+)
+[System.Boolean]$Private:IsCurrent = $False
+[System.String]$Private:LocalPath = [System.String]::Empty
+[System.Object[]]$Private:Objects = @()
+[System.String]$Private:Parent = [System.String]::Empty
+[System.Collections.Generic.List[System.Object]]$Private:Pending = [System.Collections.Generic.List[System.Object]]::new()
+[System.Object[]]$Private:Refilled = @()
+[System.Object[]]$Private:Remaining = @()
+[System.Collections.Generic.List[System.String]]$Private:Removable = [System.Collections.Generic.List[System.String]]::new()
+[PSCustomObject]$Private:Result = $Null
+[System.String]$Private:Root = [System.String]::Empty
+[System.Collections.Generic.List[System.String]]$Private:Surplus = [System.Collections.Generic.List[System.String]]::new()
+[System.Collections.Generic.Stack[System.String]]$Private:Unvisited = [System.Collections.Generic.Stack[System.String]]::new()
+
+If (Get-Module -ListAvailable -Name:'AWS.Tools.S3') {
+  Import-Module -Name:'AWS.Tools.S3' -ErrorAction:'Stop'
+} ElseIf (Get-Module -ListAvailable -Name:'AWSPowerShell') {
+  Import-Module -Name:'AWSPowerShell' -ErrorAction:'Stop'
+} Else {
+  Throw ($Script:Message['Set-RepositoryContent.NoS3Module'])
+}
 
 # The repository lives on a volume of its own, so a missing directory means that volume is not
 # mounted. Filling the same path on the system disk instead would hide the fault behind a drive
 # that silently fills up.
 If (-not (Test-Path -LiteralPath:$Path -PathType:'Container')) {
-  Throw ('The repository directory is not there: {0}. The volume holding it is not mounted.' -f $Path)
+  Throw ($Script:Message['Set-RepositoryContent.VolumeNotMounted'] -f $Path)
 }
 
 $Objects = @(Get-S3Object -BucketName:$Bucket -Region:$Region)
 
 # A key ending in '/' is the console's way of drawing a folder. It carries no content, and the
 # directories are made below from the keys that do.
-$Content = @($Objects | Where-Object -FilterScript { -not $PSItem.Key.EndsWith('/') })
+$Content = @($Objects | Where-Object -FilterScript:({ -not $PSItem.Key.EndsWith('/') }))
 
 # Resolved once, so every comparison below is against one spelling of the root. The joined paths
 # are canonicalised individually too; both are needed for a path the caller did not normalise.
 $Root = (Get-Item -LiteralPath:$Path -ErrorAction:'Stop').FullName
 
-# Everything the bucket says this volume should hold. Compared case-insensitively because the
-# filesystem is: two keys differing only in case cannot both exist here, and treating them as
-# distinct would delete whichever arrived second on every run.
-$Expected = [System.Collections.Generic.HashSet[System.String]]::new(
-  [System.StringComparer]::OrdinalIgnoreCase
-)
-
-$Pending = [System.Collections.Generic.List[System.Object]]::new()
 ForEach ($Object In $Content) {
   # GetFullPath collapses what the filesystem collapses. A key carrying '//', '/./' or '/../'
   # names a file the filesystem will call something shorter, and holding the longer spelling here
   # would mark the bucket's own object surplus on the next run -- deleting it, refetching it, and
   # never converging. Key-building code that interpolates a prefix produces exactly that.
-  $Local = [System.IO.Path]::GetFullPath(
-    (Join-Path -Path:$Root -ChildPath:$Object.Key.Replace('/', $PATH_SEPARATOR))
+  $LocalPath = [System.IO.Path]::GetFullPath(
+    (Join-Path -Path:$Root -ChildPath:($Object.Key.Replace('/', $PATH_SEPARATOR)))
   )
 
   # Collapsing '/../' can land outside the repository entirely. This script is the one place a
   # key from the bucket becomes a local path, so containment is checked here or nowhere: a key
   # that escapes would be written beside the volume, as the account a deployment runs as, and
   # never seen again by a sync that only looks inside the root.
-  If (-not $Local.StartsWith($Root + $PATH_SEPARATOR, [System.StringComparison]::OrdinalIgnoreCase)) {
-    Throw ('The key {0} resolves outside the repository: {1}' -f $Object.Key, $Local)
+  If (-not $LocalPath.StartsWith($Root + $PATH_SEPARATOR, [System.StringComparison]::OrdinalIgnoreCase)) {
+    Throw ($Script:Message['Set-RepositoryContent.KeyOutsideRoot'] -f $Object.Key, $LocalPath)
   }
 
-  [void]$Expected.Add($Local)
-  $Existing = Get-Item -LiteralPath:$Local -ErrorAction:'SilentlyContinue'
-  $Current = (
+  [void]$Expected.Add($LocalPath)
+  $Existing = Get-Item -LiteralPath:$LocalPath -ErrorAction:'SilentlyContinue'
+  $IsCurrent = (
     $Null -ne $Existing -and
     $Existing.Length -eq $Object.Size -and
     $Existing.LastWriteTimeUtc -ge $Object.LastModified.ToUniversalTime()
   )
-  If (-not $Current) {
-    [void]$Pending.Add([PSCustomObject]@{ Key = [System.String]$Object.Key; Local = [System.String]$Local })
+  If (-not $IsCurrent) {
+    [void]$Pending.Add([PSCustomObject]@{ Key = [System.String]$Object.Key; Local = [System.String]$LocalPath })
   }
 }
 
@@ -267,16 +307,13 @@ ForEach ($Object In $Content) {
 # script would delete them -- outside the repository, as the account a deployment runs as. Nothing
 # in this role creates a junction, so finding one means something this lifecycle did not do, and
 # stopping to name it is more use than guessing which side of the link was meant.
-$Surplus = [System.Collections.Generic.List[System.String]]::new()
-$Directories = [System.Collections.Generic.List[System.String]]::new()
-$Unvisited = [System.Collections.Generic.Stack[System.String]]::new()
 $Unvisited.Push($Root)
 
 While ($Unvisited.Count -gt 0) {
   $Current = $Unvisited.Pop()
   ForEach ($Entry In @(Get-ChildItem -Force -LiteralPath:$Current -ErrorAction:'Stop')) {
     If ($Entry.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)) {
-      Throw ('The repository holds a reparse point: {0}. Remove it before syncing.' -f $Entry.FullName)
+      Throw ($Script:Message['Set-RepositoryContent.ReparsePoint'] -f $Entry.FullName)
     }
     If ($Entry.PSIsContainer) {
       [void]$Directories.Add([System.String]$Entry.FullName)
@@ -290,13 +327,12 @@ While ($Unvisited.Count -gt 0) {
 # Directories emptied by this run or left by an earlier one. Counted into 'changed' because a
 # run that removes one has changed the volume, and reporting otherwise makes the next reader
 # trust a converged result that is not. A directory the fetch is about to fill is not one.
-$Removable = [System.Collections.Generic.List[System.String]]::new()
 ForEach ($Directory In @($Directories | Sort-Object -Descending -Property:'Length')) {
   $Remaining = @(Get-ChildItem -Force -LiteralPath:$Directory -ErrorAction:'Stop' |
-      Where-Object -FilterScript { $Surplus -notcontains $PSItem.FullName -and $Removable -notcontains $PSItem.FullName })
-  $Refilled = @($Pending | Where-Object -FilterScript {
-      $PSItem.Local.StartsWith($Directory + $PATH_SEPARATOR, [System.StringComparison]::OrdinalIgnoreCase)
-    })
+      Where-Object -FilterScript:({ $Surplus -notcontains $PSItem.FullName -and $Removable -notcontains $PSItem.FullName }))
+  $Refilled = @($Pending | Where-Object -FilterScript:({
+        $PSItem.Local.StartsWith($Directory + $PATH_SEPARATOR, [System.StringComparison]::OrdinalIgnoreCase)
+      }))
   If (-not $Remaining -and -not $Refilled) {
     [void]$Removable.Add([System.String]$Directory)
   }
@@ -318,11 +354,11 @@ If (-not $DryRun) {
   }
 
   ForEach ($Fetch In $Pending) {
-    $Parent = Split-Path -Path:$Fetch.Local -Parent
+    $Parent = Split-Path -Path:($Fetch.Local) -Parent
     If (-not (Test-Path -LiteralPath:$Parent -PathType:'Container')) {
       [void](New-Item -Force -ItemType:'Directory' -Path:$Parent)
     }
-    Read-S3Object -BucketName:$Bucket -File:$Fetch.Local -Key:$Fetch.Key -Region:$Region | Out-Null
+    Read-S3Object -BucketName:$Bucket -File:($Fetch.Local) -Key:($Fetch.Key) -Region:$Region | Out-Null
   }
 
   # Deepest-first, so a parent emptied by its own child's removal goes in the same pass. The
@@ -342,12 +378,12 @@ $Result = [PSCustomObject]@{
   bucket     = [System.String]$Bucket
   changed    = [System.Boolean]$Changed
   check_mode = [System.Boolean]$DryRun
-  fetched    = [System.String[]]@($Pending | ForEach-Object { $PSItem.Key })
+  fetched    = [System.String[]]@($Pending | ForEach-Object -Process:({ $PSItem.Key }))
   msg        = If ($Changed) {
-    '{0} of {1} object(s) fetched from {2}, {3} local file(s) removed' -f
+    $Script:Message['Set-RepositoryContent.Changed'] -f
     $Pending.Count, $Content.Count, $Bucket, $Surplus.Count
   } Else {
-    '{0} object(s) already current from {1}' -f $Content.Count, $Bucket
+    $Script:Message['Set-RepositoryContent.Current'] -f $Content.Count, $Bucket
   }
   path       = [System.String]$Path
   present    = [System.Int32]$Content.Count
@@ -358,8 +394,9 @@ $Result = [PSCustomObject]@{
 $Ansible.Changed = $Result.changed
 $Ansible.Result = $Result
 
+# One line, so a log that captures every stream still ends with the whole result.
 If ($StandaloneRun) {
-  $Ansible.Result | ConvertTo-Json -Depth:4
+  $Ansible.Result | ConvertTo-Json -Depth:4 -Compress
 }
 
 Write-Debug -Message:'Exiting Script'

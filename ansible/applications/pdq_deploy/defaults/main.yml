@@ -362,10 +362,11 @@ pdq_deploy_defaults:
     directory: 'PDQ Repository'
     share_name: 'AppRepo$'
 
-    # Where the repository's contents come from. The role writes Sync-Repository.cmd at the
-    # repository drive's root, above the directory it fills, carrying these two values, so an
-    # administrator pulls the current contents down without knowing either. Both carry deployment-time identity -- the account
-    # number and the region -- so the caller composes them, as it already does for the installer.
+    # Where the repository's contents come from. The role's repository sync -- the scheduled task
+    # every converge starts and awaits, and an administrator's launcher starts too -- carries
+    # these two values, so nobody who starts it needs to know either. Both carry deployment-time
+    # identity -- the account number and the region -- so the caller composes them, as it already
+    # does for the installer.
     bucket: ''
     region: ''
 

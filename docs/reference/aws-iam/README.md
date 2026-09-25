@@ -90,7 +90,7 @@ deployed host can read these objects.
 
 Both hosts run as `nwarila-ec2-apprepo-profile`. Its role reads the **whole** application repository
 (`s3:ListBucket` and `s3:GetObject`) and carries `AmazonSSMManagedInstanceCore`. The PDQ console
-needs the whole bucket, because `Sync-Repository.cmd` mirrors it; the scan target needs only the one
+needs the whole bucket, because the repository sync mirrors it; the scan target needs only the one
 Feature-on-Demand cab it fetches at boot. Narrowing that is tracked in
 [issue #56](https://github.com/nwarila-platform/pdq-deploy-inventory/issues/56).
 

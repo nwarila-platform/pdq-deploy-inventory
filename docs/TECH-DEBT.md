@@ -109,7 +109,8 @@
   deployment works. The dependency is undeclared, unpinned and unproven — a base image change
   removes it silently, and the first symptom is a converge that fails at its last step.
 - **Also unpinned:** the version. Everything else this deployment installs is pinned to an exact
-  build with a digest; the module is whatever the image happens to carry.
+  build with a digest; the module is whatever the image happens to carry. The parallel fetch needs
+  AWS Tools 5.0.208 or later; an older module fetches one stream at a time.
 - **Correction:** a small role in the framework that installs a pinned version of the module, so
   a host declares what it depends on instead of inheriting it. It belongs in the framework rather
   than here: every repository whose hosts read S3 natively has the same dependency.

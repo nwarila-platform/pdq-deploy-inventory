@@ -19,8 +19,10 @@ SCHTASKS /Run /TN "{{ __sync_task__ }}"
 SET "SYNC_EXIT=%ERRORLEVEL%"
 ECHO.
 IF "%SYNC_EXIT%"=="0" (
-    ECHO The sync is running in the background. It writes its result to
-    ECHO {{ __sync_log__ }}
+    ECHO Task Scheduler accepted the start request. The sync runs in the background and writes
+    ECHO its result to {{ __sync_log__ }}
+    ECHO If that log does not change, check the "{{ __sync_task__ }}" task's last run result
+    ECHO in Task Scheduler.
     ECHO A start while a sync is already running is ignored, so once that sync has finished,
     ECHO run this again to pick up anything published since it began.
 ) ELSE (

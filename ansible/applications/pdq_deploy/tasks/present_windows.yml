@@ -181,9 +181,9 @@
 
     - name: 'PROCESS | Create The Controller Staging Directory'
       changed_when: false
+      check_mode: false
       delegate_to: 'localhost'
       register: '__pdq_deploy_stage__'
-      when: __action_required__ | bool
 
       ansible.builtin.tempfile:
         path: '/tmp'
@@ -484,23 +484,9 @@
     #
     # The difference is judged here, by SHA-256, and not by the module: its own comparison hashes
     # with MD5, which a FIPS-mode controller refuses. The published copies are read back into a
-    # staging directory of their own and both sides hashed, so the upload runs, and reports a
+    # controller staging directory and both sides hashed, so the upload runs, and reports a
     # change, exactly when a copy differs. The staging directory and the read-back run in check
     # mode too, because a check run must still compare; they write nowhere but the controller.
-
-    - name: 'PROCESS | Create The Controller Staging Directory For The Helper Scripts'
-      changed_when: false
-      check_mode: false
-      delegate_to: 'localhost'
-      register: '__pdq_deploy_helper_stage__'
-
-      ansible.builtin.tempfile:
-        path: '/tmp'
-        prefix: 'pdq-deploy-helpers-'
-        state: 'directory'
-        suffix: ''
-
-    # ----------------------------------------------------------------------------------------- #
     # Without the bucket-level grant this role is deliberately not given, S3 answers a missing
     # key and a denied one alike, and the module reports both as the key not existing: either way
     # the published copy is unreadable and the upload below replaces it. Any other failure stops
@@ -523,7 +509,7 @@
         bucket: "{{ pdq_deploy_running.repository.bucket }}"
         ceph: false
         debug_botocore_endpoint_logs: false
-        dest: "{{ __pdq_deploy_helper_stage__.path }}/{{ item }}"
+        dest: "{{ __pdq_deploy_stage__.path }}/{{ item }}"
         dualstack: false
         encrypt: true
         encryption_mode: 'AES256'
@@ -557,7 +543,7 @@
         get_checksum: true
         get_mime: false
         get_selinux_context: false
-        path: "{{ __pdq_deploy_helper_stage__.path }}/{{ item }}"
+        path: "{{ __pdq_deploy_stage__.path }}/{{ item }}"
 
     # ----------------------------------------------------------------------------------------- #
 
@@ -1476,9 +1462,9 @@
       ansible.builtin.meta: 'flush_handlers'
 
     # ----------------------------------------------------------------------------------------- #
-    # Finished means: neither running nor queued, a last run time other than the one read before
-    # the start -- the requested run or a later one, never an earlier run's result -- and a
-    # result other than 0x41301, which Task Scheduler reports while a run is still in progress.
+    # The start assertion above has already proved the requested run began after the baseline.
+    # Finished means: neither running nor queued and a result other than 0x41301, which Task
+    # Scheduler reports while a run is still in progress.
     # Polled every 30 seconds, inside the SSH connection's 60-second persistence, so the polls
     # share one connection; bounded by the task's own time limit, plus five minutes to observe
     # Task Scheduler ending a run that reaches it.
@@ -1489,8 +1475,6 @@
       retries: "{{ __sync_limit_days__ * 2880 + 10 }}"
       until: >-
         __pdq_deploy_sync__.state.status not in ['TASK_STATE_RUNNING', 'TASK_STATE_QUEUED']
-        and __pdq_deploy_sync__.state.last_run_time
-            != __pdq_deploy_sync_before__.state.last_run_time
         and __pdq_deploy_sync__.state.last_task_result != 0x41301
       when: not ansible_check_mode
 
@@ -1714,8 +1698,8 @@
 
     - name: 'END | Remove The Controller Staging Directory'
       changed_when: false
+      check_mode: false
       delegate_to: 'localhost'
-      when: __pdq_deploy_stage__ is defined and not (__pdq_deploy_stage__ is skipped)
 
       ansible.builtin.file:
         access_time_format: '%Y%m%d%H%M.%S'
@@ -1728,24 +1712,5 @@
         unsafe_writes: false
 
     #endregion --- [ Always: Remove The Controller Staging Directory ] ------------------------ #
-
-    #region ------ [ Always: Remove The Helper Script Staging Directory ] --------------------- #
-
-    - name: 'END | Remove The Controller Staging Directory For The Helper Scripts'
-      changed_when: false
-      check_mode: false
-      delegate_to: 'localhost'
-
-      ansible.builtin.file:
-        access_time_format: '%Y%m%d%H%M.%S'
-        follow: true
-        force: false
-        modification_time_format: '%Y%m%d%H%M.%S'
-        path: "{{ __pdq_deploy_helper_stage__.path }}"
-        recurse: false
-        state: 'absent'
-        unsafe_writes: false
-
-    #endregion --- [ Always: Remove The Helper Script Staging Directory ] --------------------- #
 
 #endregion --- [ Always: Install PDQ Deploy on Windows ] -------------------------------------- #

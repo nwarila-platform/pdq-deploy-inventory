@@ -733,7 +733,7 @@ Describe 'Set-RepositoryContent' {
       # host's error output, which Task Scheduler discards.
       $Log = Join-Path -Path:$Script:Sandbox -ChildPath:'Sync-Repository.log'
       Remove-Variable -Name:'Ansible' -Scope:'Script' -Force -ErrorAction:'SilentlyContinue'
-      { & $Script:ScriptPath -Bucket:$Script:Bucket -Path:$Script:Repository -Region:$Script:Region *> $Log } |
+      { & $Script:ScriptPath -Bucket:$Script:Bucket -Path:$Script:Repository -Region:$Script:Region 3> $Log } |
         Should -Throw
       Get-Content -LiteralPath:$Log -Raw | Should -BeLike '*Neither AWS.Tools.S3 nor AWSPowerShell is installed*'
     }

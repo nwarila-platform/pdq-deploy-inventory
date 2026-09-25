@@ -10,10 +10,11 @@ preferences, reconciles the pinned variables and the declared packages, seeds th
 defaults, authorises the console users, chooses the event-log severities and service-manager
 behaviour, and records the registration that would otherwise stop the first console with a popup.
 
-Everything moves through the controller: it fetches each artifact from S3 and hands the installer
-to the target, so the guest never receives cloud credentials. The installer is verified against
-its pinned SHA-256 on the guest before execution, the licence is verified against its pinned
-SHA-256 before use, and the in-memory service-account password is rejected if it is empty.
+The controller fetches the installer and licence from S3 and carries both to the target. The host
+reads the application repository bucket itself through its instance profile. The installer is
+verified against its pinned SHA-256 on the guest before execution, the licence is verified against
+its pinned SHA-256 before use, and the in-memory service-account password is rejected if it is
+empty.
 
 ## Domain and credentials
 
@@ -85,8 +86,9 @@ step, so a first fill that takes hours runs alongside the rest of the converge i
 it; a sync that fails fails the converge, naming its result and quoting its log. A converge that
 finds a sync already running waits for it to finish before starting its own, and fails at the
 sync's own step if its run cannot start because the service account cannot log on. Task Scheduler
-ends a run after 24 hours, and the same limit bounds the converge's wait. A check run validates
-the task but starts nothing.
+ends a run after 24 hours. Each of the converge's two waits is bounded by the same limit — one for
+a run already in progress and one for its own — so a converge that meets an existing run can wait
+about twice the limit. A check run validates the task but starts nothing.
 
 An administrator starts the same task between deployments with `Sync-Repository.bat` —
 right-click, "Run as administrator" — and a start while a sync is running is ignored, so run it

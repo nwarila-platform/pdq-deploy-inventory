@@ -232,8 +232,6 @@
     #endregion --- [ Process: Fetch The Installer To The Controller ] ------------------------- #
 
     #region ------ [ Process: Ensure The Guest Staging Directory Exists ] --------------------- #
-    # Everything moves through the runner: the controller holds the S3 credentials and hands the
-    # file to the guest, so the guest never receives any reach into S3.
 
     - name: 'PROCESS | Ensure The Guest Staging Directory Exists'
       when: __action_required__ | bool
@@ -710,8 +708,8 @@
     # ----------------------------------------------------------------------------------------- #
     # Started the way the launcher starts it, because neither scheduled-task module starts a
     # task, and only once no run is in progress: a start during one is ignored. The state read
-    # last is what the wait at the end of this block compares against. No change is reported
-    # here: the change, if any, is the sync's own, and it is reported where the run is awaited.
+    # last is what the start check below compares against. No change is reported here: the change,
+    # if any, is the sync's own, and it is reported where the run is awaited.
     # Nothing after this point needs the repository filled or restarts the machine. A converge
     # that fails before the wait, or loses its connection during it, leaves its sync running
     # unattended, and the next converge waits for that run to finish before starting its own --

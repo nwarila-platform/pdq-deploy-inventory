@@ -218,7 +218,17 @@ BeforeAll {
         ValueFromPipelineByPropertyName = $False
       )]
       [System.String]
-      $Root
+      $Root,
+
+      [Parameter(
+        DontShow = $False,
+        Mandatory = $False,
+        ParameterSetName = 'default',
+        ValueFromPipeline = $False,
+        ValueFromPipelineByPropertyName = $False
+      )]
+      [System.Management.Automation.SwitchParameter]
+      $UseMultipartDownload
     )
     Write-Debug -Message:'[New-S3StubModule] Entering'
 
@@ -240,8 +250,9 @@ BeforeAll {
 
   Function Read-S3Object {
     [CmdletBinding()]
-    Param ([System.String]$BucketName, [System.String]$File, [System.String]$Key, [System.String]$Region)
+    Param ([System.String]$BucketName, [System.String]$File, [System.String]$Key, [System.String]$Region{MultipartParameter})
     Add-Content -LiteralPath:'{State}/Fetched.log' -Value:$Key
+    Add-Content -LiteralPath:'{State}/Multipart.log' -Value:($PSBoundParameters.ContainsKey('UseMultipartDownload'))
     Add-Content -LiteralPath:'{State}/Served.log' -Value:($MyInvocation.MyCommand.Module.Name)
     $Entry = @(Import-Clixml -LiteralPath:'{State}/Bucket.xml' | Where-Object -FilterScript:({ $PSItem.Key -eq $Key }))[0]
     [System.IO.File]::WriteAllBytes($File, [System.Byte[]]::new($Entry.Size))
@@ -250,7 +261,7 @@ BeforeAll {
 
   Export-ModuleMember -Function:@('Get-S3Object', 'Read-S3Object')
 '@
-    Set-Content -LiteralPath:(Join-Path -Path:$ModuleDir -ChildPath:($Name + '.psm1')) -Value:($Source.Replace('{State}', $Script:FakeS3))
+    Set-Content -LiteralPath:(Join-Path -Path:$ModuleDir -ChildPath:($Name + '.psm1')) -Value:($Source.Replace('{MultipartParameter}', $(If ($UseMultipartDownload) { ', [System.Management.Automation.SwitchParameter]$UseMultipartDownload' } Else { [System.String]::Empty })).Replace('{State}', $Script:FakeS3))
     Set-Content -LiteralPath:(Join-Path -Path:$ModuleDir -ChildPath:($Name + '.psd1')) -Value:(
       "@{ ModuleVersion = '1.0.0'; RootModule = '$Name.psm1'; FunctionsToExport = @('Get-S3Object', 'Read-S3Object'); GUID = '$([System.Guid]::NewGuid())'; Author = 'spec' }"
     )
@@ -308,7 +319,7 @@ BeforeAll {
         ValueFromPipeline = $False,
         ValueFromPipelineByPropertyName = $False
       )]
-      [ValidateSet('Fetched', 'Listed', 'Served')]
+      [ValidateSet('Fetched', 'Listed', 'Multipart', 'Served')]
       [System.String]
       $Name
     )
@@ -455,6 +466,21 @@ Describe 'Set-RepositoryContent' {
       @(Get-FakeS3Log -Name:'Fetched').Count | Should -Be 2
       $Ctx.Changed | Should -BeTrue
       $Ctx.Result.fetched | Should -Contain 'Vendor/App/1.0/app.exe'
+    }
+
+    It 'uses multipart download for every fetch when the module offers it' {
+      New-S3StubModule -Name:'AWS.Tools.S3' -Root:$Script:ModuleRoot -UseMultipartDownload
+      Set-FakeBucket -Entry:@((New-S3Entry -Key:'Vendor/App/1.0/app.exe'), (New-S3Entry -Key:'Vendor/App/1.0/notes.txt'))
+      [void](New-AnsibleContext)
+      & $Script:ScriptPath -Bucket:$Script:Bucket -Path:$Script:Repository -Region:$Script:Region
+      Get-FakeS3Log -Name:'Multipart' | Select-Object -Unique | Should -Be 'True'
+    }
+
+    It 'does not use multipart download for any fetch when the module does not offer it' {
+      Set-FakeBucket -Entry:@((New-S3Entry -Key:'Vendor/App/1.0/app.exe'), (New-S3Entry -Key:'Vendor/App/1.0/notes.txt'))
+      [void](New-AnsibleContext)
+      & $Script:ScriptPath -Bucket:$Script:Bucket -Path:$Script:Repository -Region:$Script:Region
+      Get-FakeS3Log -Name:'Multipart' | Select-Object -Unique | Should -Be 'False'
     }
 
     It 'creates the intermediate directories a nested key names' {

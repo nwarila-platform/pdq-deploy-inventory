@@ -27,6 +27,7 @@
     -- the comparison the vendor's own sync makes. A converge that finds the repository already
     current fetches nothing, removes nothing, and reports no change, so this can run on every
     deployment.
+    Where the installed module offers it, object fetches use parallel parts.
 
     Nothing here carries a credential: the host reads the bucket through the instance profile it
     was launched with.
@@ -240,6 +241,7 @@ Write-Debug -Message:'Entering Stage: Main'
 )
 [System.Boolean]$Private:IsCurrent = $False
 [System.String]$Private:LocalPath = [System.String]::Empty
+[System.Collections.Hashtable]$Private:Multipart = @{}
 [System.Object[]]$Private:Objects = @()
 [System.String]$Private:Parent = [System.String]::Empty
 [System.Collections.Generic.List[System.Object]]$Private:Pending = [System.Collections.Generic.List[System.Object]]::new()
@@ -257,6 +259,15 @@ If (Get-Module -ListAvailable -Name:'AWS.Tools.S3') {
   Import-Module -Name:'AWSPowerShell' -ErrorAction:'Stop'
 } Else {
   Throw ($Script:Message['Set-RepositoryContent.NoS3Module'])
+}
+
+# Set before the first S3 call: .NET Framework otherwise fixes the service point at its default
+# of two connections, while multipart download runs ten parts at once.
+[System.Net.ServicePointManager]::DefaultConnectionLimit = 10
+# Multipart download fetches parallel parts pinned to one version, then swaps in the whole file.
+# It is conditional because modules before AWS Tools 5.0.208 do not expose the switch.
+If ((Get-Command -Name:'Read-S3Object').Parameters.ContainsKey('UseMultipartDownload')) {
+  $Multipart['UseMultipartDownload'] = $True
 }
 
 # The repository lives on a volume of its own, so a missing directory means that volume is not
@@ -365,7 +376,7 @@ If (-not $DryRun) {
     If (-not (Test-Path -LiteralPath:$Parent -PathType:'Container')) {
       [void](New-Item -Force -ItemType:'Directory' -Path:$Parent)
     }
-    Read-S3Object -BucketName:$Bucket -File:($Fetch.Local) -Key:($Fetch.Key) -Region:$Region | Out-Null
+    Read-S3Object -BucketName:$Bucket -File:($Fetch.Local) -Key:($Fetch.Key) -Region:$Region @Multipart | Out-Null
   }
 
   # Deepest-first, so a parent emptied by its own child's removal goes in the same pass. The

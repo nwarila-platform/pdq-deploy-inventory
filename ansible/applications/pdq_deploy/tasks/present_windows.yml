@@ -759,9 +759,9 @@
           - "{{ __sync_task__ }}"
 
     # ----------------------------------------------------------------------------------------- #
-    # A run whose account cannot log on is never launched and leaves the last run time as it was,
-    # so the wait at the end of this block would sit out its whole bound. The launch is confirmed
-    # here instead.
+    # A run whose account cannot log on is never launched and leaves the last run time as it was.
+    # The converge would then fail at the next logon as that account, where no_log hides the
+    # reason, so the launch is confirmed here to name the cause at the sync's own step.
 
     - name: 'PROCESS | Wait For The Repository Sync To Start'
       delay: 10
@@ -784,9 +784,9 @@
 
       ansible.builtin.assert:
         fail_msg: >-
-          Task Scheduler did not launch the repository sync within five minutes: a logon or
-          launch failure, such as the service account disabled or denied batch logon. The
-          Microsoft-Windows-TaskScheduler event log names the cause.
+          Task Scheduler did not start the repository sync within five minutes (its last run time
+          is unchanged), which is what happens when the service account cannot log on -- for
+          example, when it is disabled.
         quiet: true
         that:
           - __pdq_deploy_sync_started__.state.last_run_time

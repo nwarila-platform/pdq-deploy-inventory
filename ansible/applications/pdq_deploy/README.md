@@ -82,7 +82,9 @@ The mirror is one scheduled task, `PDQ Repository Sync`, with no schedule of its
 the Background Service User with its elevated token, logged on without a stored password. Each
 converge starts it where the repository is prepared and waits for it as the installation's last
 step, so a first fill that takes hours runs alongside the rest of the converge instead of ahead of
-it; a sync that fails fails the converge, naming its result and quoting its log. Task Scheduler
+it; a sync that fails fails the converge, naming its result and quoting its log. A converge that
+finds a sync already running waits for it to finish before starting its own, and fails at the
+sync's own step if its run cannot start because the service account cannot log on. Task Scheduler
 ends a run after 24 hours, and the same limit bounds the converge's wait. A check run validates
 the task but starts nothing.
 

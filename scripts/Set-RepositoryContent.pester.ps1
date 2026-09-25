@@ -727,6 +727,16 @@ Describe 'Set-RepositoryContent' {
         Should -Throw -ExpectedMessage '*AWS.Tools.S3*AWSPowerShell*'
       @(Get-FakeS3Log -Name:'Fetched').Count | Should -Be 0
     }
+
+    It 'writes a failure it throws as a warning into redirected output' {
+      # A background run keeps only what its redirect captures: the error itself goes to the
+      # host's error output, which Task Scheduler discards.
+      $Log = Join-Path -Path:$Script:Sandbox -ChildPath:'Sync-Repository.log'
+      Remove-Variable -Name:'Ansible' -Scope:'Script' -Force -ErrorAction:'SilentlyContinue'
+      { & $Script:ScriptPath -Bucket:$Script:Bucket -Path:$Script:Repository -Region:$Script:Region *> $Log } |
+        Should -Throw
+      Get-Content -LiteralPath:$Log -Raw | Should -BeLike '*Neither AWS.Tools.S3 nor AWSPowerShell is installed*'
+    }
   }
 
   Context 'what it reports' {

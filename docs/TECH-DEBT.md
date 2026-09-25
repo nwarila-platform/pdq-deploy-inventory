@@ -107,7 +107,7 @@
   image supplying one.
 - **Why it is debt rather than a defect today:** the images in use do supply one, so the
   deployment works. The dependency is undeclared, unpinned and unproven — a base image change
-  removes it silently, and the first symptom is a repository that stops filling.
+  removes it silently, and the first symptom is a converge that fails at its last step.
 - **Also unpinned:** the version. Everything else this deployment installs is pinned to an exact
   build with a digest; the module is whatever the image happens to carry.
 - **Correction:** a small role in the framework that installs a pinned version of the module, so

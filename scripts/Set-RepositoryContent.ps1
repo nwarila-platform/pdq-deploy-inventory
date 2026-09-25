@@ -179,15 +179,14 @@ If ($DebugLevel.Substring(2, 1) -eq '0') {
   Set-StrictMode -Version:([System.String]$DebugLevel.Substring(2, 1))
 }
 
-# Universal trap: log diagnostics, rethrow so the task fails honestly. Wrapped so a partial
-# error record can never replace the original failure with a StrictMode property error.
+# Universal trap: log diagnostics, rethrow so the task fails honestly. The warning comes first
+# and reads only the failing record, so no diagnostic after it can silence it: a background
+# run's log is the only place its cause is kept. An error PowerShell raises itself -- a Throw,
+# a provider error -- carries no inner invocation, so the diagnostic reads one only where it
+# exists. Wrapped so a partial error record can never replace the original failure with a
+# StrictMode property error.
 Trap {
   Try {
-    If ($PSItem.Exception.PSObject.Properties.Name -contains 'ErrorRecord') {
-      Write-Debug -Message:(
-        'Failed to execute command: {0}' -f [System.String]$PSItem.Exception.ErrorRecord.InvocationInfo.Line
-      )
-    }
     Write-Warning -Message:(
       $Script:Message['Set-RepositoryContent.Failure'] -f @(
         [System.Int64]$PSItem.InvocationInfo.ScriptLineNumber
@@ -195,6 +194,14 @@ Trap {
         [System.String]$PSItem.Exception.GetBaseException().GetType().FullName
       )
     )
+    If (
+      $PSItem.Exception.PSObject.Properties.Name -contains 'ErrorRecord' -and
+      $Null -ne $PSItem.Exception.ErrorRecord.InvocationInfo
+    ) {
+      Write-Debug -Message:(
+        'Failed to execute command: {0}' -f [System.String]$PSItem.Exception.ErrorRecord.InvocationInfo.Line
+      )
+    }
   } Catch {
     Write-Debug -Message:'Trap diagnostics unavailable for this error record.'
   }

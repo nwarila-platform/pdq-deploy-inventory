@@ -96,7 +96,7 @@
     # and log, beside the repository rather than in it, so neither the sync nor the share reaches
     # them.
     __sync_task__: 'PDQ Repository Sync'
-    __sync_limit_hours__: 24
+    __sync_limit_days__: 1
     __sync_dir__: "{{ pdq_deploy_running.repository.drive }}:\\Sync-Repository"
     __sync_script__: "{{ __sync_dir__ }}\\Set-RepositoryContent.ps1"
     __sync_launcher__: "{{ __sync_dir__ }}\\Sync-Repository.bat"
@@ -655,21 +655,21 @@
     # with update_password off it reaches Task Scheduler only when the definition changes, and a
     # rotation cannot break a task that stores none.
     #
-    # A start while a run is in progress stops that run and starts afresh, so the run a converge
-    # waits for began after that converge's helper publish; hard termination is what lets that
-    # stop, and the time limit, end the process. Priority 5 is normal: the module's default of 7
-    # would run a ten-hour first fill at below-normal CPU and low I/O. A failed run is not
-    # restarted: it fails the converge that awaits it. The script runs as a script block, as the
-    # converge runs every script it carries, so an execution policy that refuses unsigned files
-    # cannot stop the task when it does not stop the converge; every stream it writes goes to the
-    # log.
+    # A start while a run is in progress is ignored, so a run is never stopped mid-transfer and
+    # nothing races the running one for its log; hard termination is what lets the time limit
+    # end the process. Priority 5 is normal: the module's default of 7 would run a ten-hour first
+    # fill at below-normal CPU and low I/O. A failed run is not restarted: it fails the converge
+    # that awaits it. The script runs as a script block, as the converge runs every script it
+    # carries, so an execution policy that refuses unsigned files cannot stop the task when it
+    # does not stop the converge; every stream it writes goes to the log.
     #
     # The module compares every argument it is given with the stored task, so what is left unset
     # is left unset on purpose: the display name, author, date, source and version are
     # informational, and a stored form differing from the stated one would re-register the task
     # every converge; delete_expired_task_after and restart_interval mean nothing without a
     # trigger end or a restart count; the working directory, because the action names every path
-    # absolutely; and group, which cannot be combined with a user.
+    # absolutely; and group, which cannot be combined with a user. The limit is stated in days
+    # for the same reason: Task Scheduler stores a whole-day limit as days, however it is stated.
 
     - name: 'PROCESS | Register The Repository Sync Task'
       no_log: true
@@ -691,10 +691,10 @@
           demand, by every deployment and by {{ __sync_launcher__ }}; it has no schedule.
         disallow_start_if_on_batteries: false
         enabled: true
-        execution_time_limit: "PT{{ __sync_limit_hours__ }}H"
+        execution_time_limit: "P{{ __sync_limit_days__ }}D"
         hidden: false
         logon_type: 's4u'
-        multiple_instances: 3
+        multiple_instances: 2
         name: "{{ __sync_task__ }}"
         password: "{{ pdq_deploy_running.service_account.password }}"
         path: '\'
@@ -723,15 +723,22 @@
 
     # ----------------------------------------------------------------------------------------- #
     # Started the way the launcher starts it, because neither scheduled-task module starts a
-    # task. The state read first is what the wait at the end of this block compares against. No
-    # change is reported here: the change, if any, is the sync's own, and it is reported where
-    # the run is awaited. Nothing after this point needs the repository filled or restarts the
-    # machine. A converge that fails before the wait, or loses its connection during it, leaves
-    # its sync running unattended, and the next converge's start stops it and starts afresh. A
-    # check run only validates the task's definition, so it has nothing to start or await.
+    # task, and only once no run is in progress: a start during one is ignored. The state read
+    # last is what the wait at the end of this block compares against. No change is reported
+    # here: the change, if any, is the sync's own, and it is reported where the run is awaited.
+    # Nothing after this point needs the repository filled or restarts the machine. A converge
+    # that fails before the wait, or loses its connection during it, leaves its sync running
+    # unattended, and the next converge waits for that run to finish before starting its own --
+    # as it does for a run an operator started. A check run only validates the task's
+    # definition, so it has nothing to start or await.
 
-    - name: 'PROCESS | Read The Repository Sync Before Starting It'
+    - name: 'PROCESS | Wait Until No Repository Sync Is Running'
+      delay: 30
       register: '__pdq_deploy_sync_before__'
+      retries: "{{ __sync_limit_days__ * 2880 + 10 }}"
+      until: >-
+        __pdq_deploy_sync_before__.state.status
+            not in ['TASK_STATE_RUNNING', 'TASK_STATE_QUEUED']
       when: not ansible_check_mode
 
       community.windows.win_scheduled_task_stat:
@@ -750,6 +757,40 @@
           - '/Run'
           - '/TN'
           - "{{ __sync_task__ }}"
+
+    # ----------------------------------------------------------------------------------------- #
+    # A run whose account cannot log on is never launched and leaves the last run time as it was,
+    # so the wait at the end of this block would sit out its whole bound. The launch is confirmed
+    # here instead.
+
+    - name: 'PROCESS | Wait For The Repository Sync To Start'
+      delay: 10
+      failed_when: false
+      register: '__pdq_deploy_sync_started__'
+      retries: 30
+      until: >-
+        __pdq_deploy_sync_started__.state.last_run_time
+            != __pdq_deploy_sync_before__.state.last_run_time
+      when: not ansible_check_mode
+
+      community.windows.win_scheduled_task_stat:
+        name: "{{ __sync_task__ }}"
+        path: '\'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Require The Repository Sync To Have Started'
+      when: not ansible_check_mode
+
+      ansible.builtin.assert:
+        fail_msg: >-
+          Task Scheduler did not launch the repository sync within five minutes: a logon or
+          launch failure, such as the service account disabled or denied batch logon. The
+          Microsoft-Windows-TaskScheduler event log names the cause.
+        quiet: true
+        that:
+          - __pdq_deploy_sync_started__.state.last_run_time
+            != __pdq_deploy_sync_before__.state.last_run_time
 
     # ----------------------------------------------------------------------------------------- #
     # The launcher's earlier forms, in the drive root. Hosts converged before it moved carry them
@@ -1438,14 +1479,14 @@
     # Finished means: neither running nor queued, a last run time other than the one read before
     # the start -- the requested run or a later one, never an earlier run's result -- and a
     # result other than 0x41301, which Task Scheduler reports while a run is still in progress.
-    # Polled every 30 seconds, inside the connection's 60-second persistence, so the polls share
-    # one connection; bounded by the task's own time limit, plus five minutes to observe Task
-    # Scheduler ending a run that reaches it.
+    # Polled every 30 seconds, inside the SSH connection's 60-second persistence, so the polls
+    # share one connection; bounded by the task's own time limit, plus five minutes to observe
+    # Task Scheduler ending a run that reaches it.
 
     - name: 'PROCESS | Wait For The Repository Sync To Finish'
       delay: 30
       register: '__pdq_deploy_sync__'
-      retries: "{{ __sync_limit_hours__ * 120 + 10 }}"
+      retries: "{{ __sync_limit_days__ * 2880 + 10 }}"
       until: >-
         __pdq_deploy_sync__.state.status not in ['TASK_STATE_RUNNING', 'TASK_STATE_QUEUED']
         and __pdq_deploy_sync__.state.last_run_time

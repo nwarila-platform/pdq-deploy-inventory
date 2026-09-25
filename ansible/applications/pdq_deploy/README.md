@@ -87,7 +87,8 @@ ends a run after 24 hours, and the same limit bounds the converge's wait. A chec
 the task but starts nothing.
 
 An administrator starts the same task between deployments with `Sync-Repository.bat` —
-right-click, "Run as administrator" — and a start while a sync is running begins it again. The
+right-click, "Run as administrator" — and a start while a sync is running is ignored, so run it
+again once that sync has finished to pick up anything published since it began. The
 launcher, the script the task runs and its log live in `Sync-Repository\` at the root of the
 repository drive: beside the repository rather than in it, so they are neither objects the sync can
 act on nor files inside the network share, and under the repository's own permissions, because the

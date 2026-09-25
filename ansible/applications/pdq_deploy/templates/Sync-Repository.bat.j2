@@ -5,7 +5,7 @@ REM
 REM  Right-click this file and choose "Run as administrator": Task Scheduler refuses to start the
 REM  sync from a session that is not elevated. The sync runs in the background as the scheduled
 REM  task named below, the same one every deployment starts, and a start while it is already
-REM  running begins it again from the top.
+REM  running is ignored.
 REM
 REM  The sync is DETERMINISTIC: afterwards the repository holds what the bucket holds and nothing
 REM  else. It copies what is new or newer, and removes what the bucket does not carry -- including
@@ -21,6 +21,8 @@ ECHO.
 IF "%SYNC_EXIT%"=="0" (
     ECHO The sync is running in the background. It writes its result to
     ECHO {{ __sync_log__ }}
+    ECHO A start while a sync is already running is ignored, so once that sync has finished,
+    ECHO run this again to pick up anything published since it began.
 ) ELSE (
     ECHO The sync did not start. Starting it needs administrator rights: close this window,
     ECHO right-click the file, and choose "Run as administrator".

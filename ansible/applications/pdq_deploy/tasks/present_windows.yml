@@ -17,9 +17,9 @@
 # Windows removes the entry on uninstall, which the vendor's own product key cannot answer because
 # it survives uninstall. Not the MSI ProductCode, which changes every release.
 #
-# Everything moves through the runner: the controller fetches the installer and hands it to the
-# target, so the guest never receives cloud credentials or any other reach into S3. The digest is
-# verified on the guest, because that is the copy that executes.
+# The installer moves through the runner: the controller fetches it and hands it to the target, and
+# its digest is verified on the guest because that is the copy that executes. The repository is the
+# one thing the host reads from S3 itself, through its instance profile, during the repository sync.
 #
 # Return code 3010 is a success: it means the product installed and wants a restart. The role
 # restarts when the installer asks for one, and only then.

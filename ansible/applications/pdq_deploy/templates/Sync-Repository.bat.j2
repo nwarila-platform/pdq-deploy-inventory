@@ -19,10 +19,10 @@ SCHTASKS /Run /TN "{{ __sync_task__ }}"
 SET "SYNC_EXIT=%ERRORLEVEL%"
 ECHO.
 IF "%SYNC_EXIT%"=="0" (
-    ECHO Task Scheduler accepted the start request. The sync runs in the background and writes
-    ECHO its result to {{ __sync_log__ }}
-    ECHO If that log does not change, check the "{{ __sync_task__ }}" task's last run result
-    ECHO in Task Scheduler.
+    ECHO Task Scheduler accepted the start. While the sync runs, the "{{ __sync_task__ }}" task shows Running
+    ECHO in Task Scheduler, and the sync writes its result to {{ __sync_log__ }}
+    ECHO If the task shows Ready and that log has not changed, the sync could not start, as happens
+    ECHO when the account it runs as cannot log on, for example when it is disabled.
     ECHO A start while a sync is already running is ignored, so once that sync has finished,
     ECHO run this again to pick up anything published since it began.
 ) ELSE (

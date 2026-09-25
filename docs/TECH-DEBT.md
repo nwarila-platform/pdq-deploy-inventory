@@ -98,20 +98,21 @@
   declared collections on a converged host; the converged script reports `changed=0`; every changed
   collection remains named in the result.
 
-## TD-008 — OPEN — no role installs the AWS command line on a deployed host
+## TD-008 — OPEN — no role installs the AWS PowerShell module the repository sync reads through
 
-- **Recorded:** 2026-08-31.
-- **Issue:** `Sync-Repository.cmd` and the repository sync both invoke
-  `%ProgramFiles%\Amazon\AWSCLIV2\aws.exe`, and nothing in this repository installs it. The
-  deployment relies on the base image supplying it.
-- **Why it is debt rather than a defect today:** the image in use does supply it, so the
+- **Recorded:** 2026-08-31. **Restated:** 2026-09-25.
+- **Issue:** the repository sync reads the bucket through an AWS PowerShell module —
+  `AWS.Tools.S3`, or the monolithic `AWSPowerShell` that stock Windows Server 2019 carries
+  instead — and nothing in this repository installs either. The deployment relies on the base
+  image supplying one.
+- **Why it is debt rather than a defect today:** the images in use do supply one, so the
   deployment works. The dependency is undeclared, unpinned and unproven — a base image change
-  removes it silently, and the first symptom is a repository that stops filling.
+  removes it silently, and the first symptom is a converge that fails at its last step.
 - **Also unpinned:** the version. Everything else this deployment installs is pinned to an exact
-  build with a digest; the command line is whatever the image happens to carry.
-- **Correction:** a small `aws_cli` role in the framework that installs a pinned version, so a
-  host declares the tool it depends on instead of inheriting it. It belongs in the framework
-  rather than here: every repository whose hosts read S3 natively has the same dependency.
-- **Exit criteria:** a converged host holds a declared, pinned AWS command line version; a base
-  image without it converges to the same state; and nothing invokes `aws.exe` without the role
-  that guarantees it having run.
+  build with a digest; the module is whatever the image happens to carry.
+- **Correction:** a small role in the framework that installs a pinned version of the module, so
+  a host declares what it depends on instead of inheriting it. It belongs in the framework rather
+  than here: every repository whose hosts read S3 natively has the same dependency.
+- **Exit criteria:** a converged host holds a declared, pinned AWS PowerShell module version; a
+  base image without one converges to the same state; and nothing reads the bucket without the
+  role that guarantees the module having run.

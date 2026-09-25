@@ -17,16 +17,16 @@
 # Windows removes the entry on uninstall, which the vendor's own product key cannot answer because
 # it survives uninstall. Not the MSI ProductCode, which changes every release.
 #
-# Everything moves through the runner: the controller fetches the installer and hands it to the
-# target, so the guest never receives cloud credentials or any other reach into S3. The digest is
-# verified on the guest, because that is the copy that executes.
+# The installer moves through the runner: the controller fetches it and hands it to the target, and
+# its digest is verified on the guest because that is the copy that executes. The repository is the
+# one thing the host reads from S3 itself, through its instance profile, during the repository sync.
 #
 # Return code 3010 is a success: it means the product installed and wants a restart. The role
 # restarts when the installer asks for one, and only then.
 #
 # Cleanup lives under END's 'always', which means it does NOT run after an unrescued PROCESS
-# failure. That is the accepted trade of the three-stage shape: the residue is a controller temp
-# directory and an installer on the guest, and the proof bed is rebuilt for every run. PROCESS
+# failure. That is the accepted trade of the three-stage shape: the residue is controller temp
+# directories and an installer on the guest, and the proof bed is rebuilt for every run. PROCESS
 # carries an 'always' of its own for one thing only -- flushing a notified restart -- because a
 # service left running configuration that was already written is not residue to tidy up later,
 # it is a wrong state no later converge would ever correct.
@@ -91,6 +91,16 @@
     __action_required__: "{{ __pdq_deploy_arp__.result.action_required }}"
     __repository_dir__: >-
       {{ pdq_deploy_running.repository.drive }}:\{{ pdq_deploy_running.repository.directory }}
+    # The repository sync: its scheduled task, the limit Task Scheduler holds one run to -- which
+    # also bounds the converge's wait for it -- and the directory holding its script, launcher
+    # and log, beside the repository rather than in it, so neither the sync nor the share reaches
+    # them.
+    __sync_task__: 'PDQ Repository Sync'
+    __sync_limit_days__: 1
+    __sync_dir__: "{{ pdq_deploy_running.repository.drive }}:\\Sync-Repository"
+    __sync_script__: "{{ __sync_dir__ }}\\Set-RepositoryContent.ps1"
+    __sync_launcher__: "{{ __sync_dir__ }}\\Sync-Repository.bat"
+    __sync_log__: "{{ __sync_dir__ }}\\Sync-Repository.log"
     # Anchored on THIS role. A bare 'packages/*.xml' is resolved against the whole search path, so
     # a role whose own files/ did not arrive silently matches another tree's -- measured 2026-08-25,
     # it returned a file from the playbook's files/ directory.
@@ -171,9 +181,9 @@
 
     - name: 'PROCESS | Create The Controller Staging Directory'
       changed_when: false
+      check_mode: false
       delegate_to: 'localhost'
       register: '__pdq_deploy_stage__'
-      when: __action_required__ | bool
 
       ansible.builtin.tempfile:
         path: '/tmp'
@@ -222,8 +232,6 @@
     #endregion --- [ Process: Fetch The Installer To The Controller ] ------------------------- #
 
     #region ------ [ Process: Ensure The Guest Staging Directory Exists ] --------------------- #
-    # Everything moves through the runner: the controller holds the S3 credentials and hands the
-    # file to the guest, so the guest never receives any reach into S3.
 
     - name: 'PROCESS | Ensure The Guest Staging Directory Exists'
       when: __action_required__ | bool
@@ -410,24 +418,40 @@
     # repeating that would be a second place to maintain one fact. The referenced .ps1 is
     # MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role tracks only
     # files/Set-RepositoryAcl.ps1.stub); run it before this role.
+    #
+    # The sync directory takes the same list, before its script, launcher and log are written
+    # into it: the volume root lets any authenticated user modify what it holds, and those are
+    # files an administrator's elevated token runs.
 
-    - name: 'PROCESS | Create The Repository Directory On Its Dedicated Drive'
+    - name: 'PROCESS | Create The Repository And Sync Directories On Their Dedicated Drive'
+      loop:
+        - "{{ __repository_dir__ }}"
+        - "{{ __sync_dir__ }}"
+      loop_control:
+        label: "{{ item }}"
+
       ansible.windows.win_file:
         access_time: 'preserve'
         access_time_format: 'yyyy-MM-dd HH:mm:ss'
         modification_time: 'preserve'
         modification_time_format: 'yyyy-MM-dd HH:mm:ss'
-        path: "{{ __repository_dir__ }}"
+        path: "{{ item }}"
         state: 'directory'
 
     # ----------------------------------------------------------------------------------------- #
 
-    - name: 'PROCESS | Enforce The Repository Directory Permissions'
+    - name: 'PROCESS | Enforce The Repository And Sync Directory Permissions'
+      loop:
+        - "{{ __repository_dir__ }}"
+        - "{{ __sync_dir__ }}"
+      loop_control:
+        label: "{{ item }}"
+
       ansible.windows.win_powershell:
         depth: 2
         error_action: 'stop'
         parameters:
-          Path: "{{ __repository_dir__ }}"
+          Path: "{{ item }}"
           # SYSTEM and Administrators full, Users read-and-execute so privileged operators
           # can navigate but never alter packages the product runs as SYSTEM; inheritance off.
           Sddl: 'D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)'
@@ -455,12 +479,105 @@
     # bucket is read-only. Replaced when the content differs rather than written once, because a corrected
     # script reaching the fleet is the point: these objects are identified by name and not by
     # version, and the grant permits replacing exactly these two keys and nothing else.
+    #
+    # The difference is judged here, by SHA-256, and not by the module: its own comparison hashes
+    # with MD5, which a FIPS-mode controller refuses. The published copies are read back into a
+    # controller staging directory and both sides hashed, so the upload runs, and reports a
+    # change, exactly when a copy differs. The staging directory and the read-back run in check
+    # mode too, because a check run must still compare; they write nowhere but the controller.
+    # Without the bucket-level grant this role is deliberately not given, S3 answers a missing
+    # key and a denied one alike, and the module reports both as the key not existing: either way
+    # the published copy is unreadable and the upload below replaces it. Any other failure stops
+    # the run.
+
+    - name: 'PROCESS | Read The Published Helper Scripts Back'
+      changed_when: false
+      check_mode: false
+      delegate_to: 'localhost'
+      failed_when: >-
+        __pdq_deploy_published_helper__ is failed
+        and __pdq_deploy_published_helper__.msg
+            != 'Key ~resources/%s does not exist.' | format(item)
+      loop: "{{ __repository_helper_scripts__ }}"
+      loop_control:
+        label: "{{ item }}"
+      register: '__pdq_deploy_published_helper__'
+
+      amazon.aws.s3_object:
+        bucket: "{{ pdq_deploy_running.repository.bucket }}"
+        ceph: false
+        debug_botocore_endpoint_logs: false
+        dest: "{{ __pdq_deploy_stage__.path }}/{{ item }}"
+        dualstack: false
+        encrypt: true
+        encryption_mode: 'AES256'
+        expiry: 600
+        ignore_nonexistent_bucket: true
+        mode: 'get'
+        object: "~resources/{{ item }}"
+        overwrite: 'always'
+        permission: [ 'private' ]
+        prefix: ''
+        purge_tags: true
+        region: "{{ pdq_deploy_running.repository.region }}"
+        retries: 0
+        sig_v4: true
+        validate_bucket_name: true
+        validate_certs: true
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Hash The Published Helper Scripts'
+      delegate_to: 'localhost'
+      loop: "{{ __repository_helper_scripts__ }}"
+      loop_control:
+        label: "{{ item }}"
+      register: '__pdq_deploy_published_digest__'
+
+      ansible.builtin.stat:
+        checksum_algorithm: 'sha256'
+        follow: false
+        get_attributes: false
+        get_checksum: true
+        get_mime: false
+        get_selinux_context: false
+        path: "{{ __pdq_deploy_stage__.path }}/{{ item }}"
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Hash The Helper Scripts This Role Ships'
+      delegate_to: 'localhost'
+      loop: "{{ __repository_helper_scripts__ }}"
+      loop_control:
+        label: "{{ item }}"
+      register: '__pdq_deploy_shipped_digest__'
+
+      ansible.builtin.stat:
+        checksum_algorithm: 'sha256'
+        follow: false
+        get_attributes: false
+        get_checksum: true
+        get_mime: false
+        get_selinux_context: false
+        path: "{{ role_path }}/files/{{ item }}"
+
+    # ----------------------------------------------------------------------------------------- #
 
     - name: 'PROCESS | Publish The Helper Scripts Packages Call'
       delegate_to: 'localhost'
       loop: "{{ __repository_helper_scripts__ }}"
       loop_control:
         label: "{{ item }}"
+      vars:
+        __published__: >-
+          {{ __pdq_deploy_published_digest__.results
+             | items2dict(key_name='item', value_name='stat') }}
+        __shipped__: >-
+          {{ __pdq_deploy_shipped_digest__.results
+             | items2dict(key_name='item', value_name='stat') }}
+      when: >-
+        not __published__[item].exists
+        or __published__[item].checksum != __shipped__[item].checksum
 
       amazon.aws.s3_object:
         bucket: "{{ pdq_deploy_running.repository.bucket }}"
@@ -477,7 +594,7 @@
         ignore_nonexistent_bucket: true
         mode: 'put'
         object: "~resources/{{ item }}"
-        overwrite: 'different'
+        overwrite: 'always'
         # Empty, not 'private'. The bucket enforces bucket-owner ownership, so ACLs are disabled on
         # it and a PUT carrying any canned ACL is refused outright. The module cannot detect that
         # here -- reading the ownership setting needs a permission this role does not have, and it
@@ -493,42 +610,190 @@
         validate_certs: true
 
     # ----------------------------------------------------------------------------------------- #
-    - name: 'PROCESS | Fill The Repository From The Application Repository'
-      ansible.windows.win_powershell:
-        depth: 2
-        error_action: 'stop'
-        parameters:
-          Bucket: "{{ pdq_deploy_running.repository.bucket }}"
-          Path: "{{ __repository_dir__ }}"
-          Region: "{{ pdq_deploy_running.repository.region }}"
-        script: "{{ lookup('ansible.builtin.file', 'Set-RepositoryContent.ps1') }}"
+    # The sync runs in the background, as a scheduled task: a first fill takes hours, longer than
+    # the controller's AWS session lasts, and nothing else in the installation needs the
+    # repository filled, so the rest proceeds while it runs and the end of this block waits for
+    # it. The task is the sync's only runner: every converge and every operator start the same
+    # one.
+
+    - name: 'PROCESS | Place The Repository Sync Script'
+      ansible.windows.win_copy:
+        backup: false
+        decrypt: true
+        dest: "{{ __sync_script__ }}"
+        force: true
+        local_follow: true
+        remote_src: false
+        src: "{{ role_path }}/files/Set-RepositoryContent.ps1"
 
     # ----------------------------------------------------------------------------------------- #
-    # The same script again, this time for an administrator publishing new content between
-    # deployments. The batch header makes the file right-clickable; below the header it is the
-    # script the task above just ran, so the two can never diverge.
+    # The task runs as the Background Service User rather than SYSTEM, which the job does not
+    # need. That account is an Administrator by vendor requirement and the repository admits it
+    # only through that membership, so it runs with its elevated token. S4U logs it on without
+    # storing a password: Administrators hold the batch-logon right, which the STIG restricts to
+    # them, so no grant names the account. S4U carries no network credential, and the sync needs
+    # none -- it reads the bucket over HTTPS through the instance profile, which AWS keys set
+    # machine-wide or in the account's own profile would outrank.
     #
-    # It sits in the DRIVE ROOT, one level above the directory it fills, for two reasons: it is
-    # then not itself an object the sync can act on, and it is not inside the network share, where
-    # every console that browses the repository would see it.
+    # The module refuses S4U without the password, so the current one is presented under no_log;
+    # with update_password off it reaches Task Scheduler only when the definition changes, and a
+    # rotation cannot break a task that stores none.
+    #
+    # A start while a run is in progress is ignored, so a run is never stopped mid-transfer and
+    # nothing races the running one for its log; hard termination is what lets the time limit
+    # end the process. Priority 5 is normal: the module's default of 7 would run a ten-hour first
+    # fill at below-normal CPU and low I/O. A failed run is not restarted: it fails the converge
+    # that awaits it. The script runs as a script block, as the converge runs every script it
+    # carries, so an execution policy that refuses unsigned files cannot stop the task when it
+    # does not stop the converge; every stream it writes goes to the log.
+    #
+    # The module compares every argument it is given with the stored task, so what is left unset
+    # is left unset on purpose: the display name, author, date, source and version are
+    # informational, and a stored form differing from the stated one would re-register the task
+    # every converge; delete_expired_task_after and restart_interval mean nothing without a
+    # trigger end or a restart count; the working directory, because the action names every path
+    # absolutely; and group, which cannot be combined with a user. The limit is stated in days
+    # for the same reason: Task Scheduler stores a whole-day limit as days, however it is stated.
 
-    - name: 'PROCESS | Write The Repository Sync Script'
+    - name: 'PROCESS | Register The Repository Sync Task'
+      no_log: true
+
+      community.windows.win_scheduled_task:
+        actions:
+          - arguments: >-
+              -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "&
+              ([ScriptBlock]::Create((Get-Content -LiteralPath '{{ __sync_script__ }}' -Raw)))
+              -Bucket '{{ pdq_deploy_running.repository.bucket }}'
+              -Path '{{ __repository_dir__ }}'
+              -Region '{{ pdq_deploy_running.repository.region }}' *> '{{ __sync_log__ }}'"
+            path: 'powershell.exe'
+        allow_demand_start: true
+        allow_hard_terminate: true
+        compatibility: 4
+        description: >-
+          Mirrors the application repository bucket into {{ __repository_dir__ }}. Started on
+          demand, by every deployment and by {{ __sync_launcher__ }}; it has no schedule.
+        disallow_start_if_on_batteries: false
+        enabled: true
+        execution_time_limit: "P{{ __sync_limit_days__ }}D"
+        hidden: false
+        logon_type: 's4u'
+        multiple_instances: 2
+        name: "{{ __sync_task__ }}"
+        password: "{{ pdq_deploy_running.service_account.password }}"
+        path: '\'
+        priority: 5
+        restart_count: 0
+        run_level: 'highest'
+        run_only_if_idle: false
+        run_only_if_network_available: false
+        start_when_available: false
+        state: 'present'
+        stop_if_going_on_batteries: false
+        triggers: []
+        update_password: false
+        username: "{{ pdq_deploy_running.service_account.name }}"
+        wake_to_run: false
+
+    # ----------------------------------------------------------------------------------------- #
+    # The same start for an administrator publishing new content between deployments: the
+    # launcher asks Task Scheduler to run the task above, and the log says how the run went.
+
+    - name: 'PROCESS | Write The Repository Sync Launcher'
       ansible.windows.win_template:
-        dest: "{{ pdq_deploy_running.repository.drive }}:\\Sync-Repository.bat"
+        dest: "{{ __sync_launcher__ }}"
         newline_sequence: '\r\n'
         src: 'Sync-Repository.bat.j2'
 
     # ----------------------------------------------------------------------------------------- #
-    # The previous name of the file above. Hosts deployed before the sync moved into the role
-    # still carry it, and it cannot work: it calls an AWS command line this image does not ship.
+    # Started the way the launcher starts it, because neither scheduled-task module starts a
+    # task, and only once no run is in progress: a start during one is ignored. The state read
+    # last is what the start check below compares against. No change is reported here: the change,
+    # if any, is the sync's own, and it is reported where the run is awaited.
+    # Nothing after this point needs the repository filled or restarts the machine. A converge
+    # that fails before the wait, or loses its connection during it, leaves its sync running
+    # unattended, and the next converge waits for that run to finish before starting its own --
+    # as it does for a run an operator started. A check run only validates the task's
+    # definition, so it has nothing to start or await.
 
-    - name: 'PROCESS | Remove The Superseded Repository Sync Script'
+    - name: 'PROCESS | Wait Until No Repository Sync Is Running'
+      delay: 30
+      register: '__pdq_deploy_sync_before__'
+      retries: "{{ __sync_limit_days__ * 2880 + 10 }}"
+      until: >-
+        __pdq_deploy_sync_before__.state.status
+            not in ['TASK_STATE_RUNNING', 'TASK_STATE_QUEUED']
+      when: not ansible_check_mode
+
+      community.windows.win_scheduled_task_stat:
+        name: "{{ __sync_task__ }}"
+        path: '\'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Start The Repository Sync In The Background'
+      changed_when: false
+      when: not ansible_check_mode
+
+      ansible.windows.win_command:
+        argv:
+          - 'schtasks.exe'
+          - '/Run'
+          - '/TN'
+          - "{{ __sync_task__ }}"
+
+    # ----------------------------------------------------------------------------------------- #
+    # A run whose account cannot log on is never launched and leaves the last run time as it was.
+    # The converge would then fail at the next logon as that account, where no_log hides the
+    # reason, so the launch is confirmed here to name the cause at the sync's own step.
+
+    - name: 'PROCESS | Wait For The Repository Sync To Start'
+      delay: 10
+      failed_when: false
+      register: '__pdq_deploy_sync_started__'
+      retries: 30
+      until: >-
+        __pdq_deploy_sync_started__.state.last_run_time
+            != __pdq_deploy_sync_before__.state.last_run_time
+      when: not ansible_check_mode
+
+      community.windows.win_scheduled_task_stat:
+        name: "{{ __sync_task__ }}"
+        path: '\'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Require The Repository Sync To Have Started'
+      when: not ansible_check_mode
+
+      ansible.builtin.assert:
+        fail_msg: >-
+          Task Scheduler did not start the repository sync within five minutes (its last run time
+          is unchanged), which is what happens when the service account cannot log on -- for
+          example, when it is disabled.
+        quiet: true
+        that:
+          - __pdq_deploy_sync_started__.state.last_run_time
+            != __pdq_deploy_sync_before__.state.last_run_time
+
+    # ----------------------------------------------------------------------------------------- #
+    # The launcher's earlier forms, in the drive root. Hosts converged before it moved carry them
+    # there, where any authenticated user can modify a file an administrator runs elevated; the
+    # .cmd cannot work at all, calling an AWS command line this image does not ship.
+
+    - name: 'PROCESS | Remove The Superseded Repository Sync Scripts'
+      loop:
+        - 'Sync-Repository.bat'
+        - 'Sync-Repository.cmd'
+      loop_control:
+        label: "{{ item }}"
+
       ansible.windows.win_file:
         access_time: 'preserve'
         access_time_format: 'yyyy-MM-dd HH:mm:ss'
         modification_time: 'preserve'
         modification_time_format: 'yyyy-MM-dd HH:mm:ss'
-        path: "{{ pdq_deploy_running.repository.drive }}:\\Sync-Repository.cmd"
+        path: "{{ pdq_deploy_running.repository.drive }}:\\{{ item }}"
         state: 'absent'
 
     #endregion --- [ Process: Prepare The Repository Directory ] ------------------------------ #
@@ -1183,6 +1448,78 @@
 
     #endregion --- [ Process: Record The Product Registration ] ------------------------------- #
 
+    #region ------ [ Process: Await The Repository Sync ] ------------------------------------- #
+    # The sync started where the repository is prepared has run in the background since; the
+    # installation ends when it does, and fails with the sync's own reason when it failed.
+    # This role is the playbook's last: every task needing the controller's AWS session has run.
+    #
+    # Handlers are flushed first, so a restart notified late in this block is applied now rather
+    # than after a wait measured in hours.
+
+    - name: 'PROCESS | Apply Any Pending Restart Before Waiting'
+      ansible.builtin.meta: 'flush_handlers'
+
+    # ----------------------------------------------------------------------------------------- #
+    # The start assertion above has already proved the requested run began after the baseline.
+    # Finished means: neither running nor queued and a result other than 0x41301, which Task
+    # Scheduler reports while a run is still in progress.
+    # Polled every 30 seconds, inside the SSH connection's 60-second persistence, so the polls
+    # share one connection; bounded by the task's own time limit, plus five minutes to observe
+    # Task Scheduler ending a run that reaches it.
+
+    - name: 'PROCESS | Wait For The Repository Sync To Finish'
+      delay: 30
+      register: '__pdq_deploy_sync__'
+      retries: "{{ __sync_limit_days__ * 2880 + 10 }}"
+      until: >-
+        __pdq_deploy_sync__.state.status not in ['TASK_STATE_RUNNING', 'TASK_STATE_QUEUED']
+        and __pdq_deploy_sync__.state.last_task_result != 0x41301
+      when: not ansible_check_mode
+
+      community.windows.win_scheduled_task_stat:
+        name: "{{ __sync_task__ }}"
+        path: '\'
+
+    # ----------------------------------------------------------------------------------------- #
+    # A run that never launched writes no log, and the report must still name its result.
+
+    - name: 'PROCESS | Read The Repository Sync Log'
+      failed_when: false
+      register: '__pdq_deploy_sync_log__'
+      when: not ansible_check_mode
+
+      ansible.builtin.slurp:
+        src: "{{ __sync_log__ }}"
+
+    # ----------------------------------------------------------------------------------------- #
+    # The result is Task Scheduler's: the process's exit code, or why it never launched as a
+    # negative HRESULT, shown here the way Windows prints one. The log is UTF-16, as Windows
+    # PowerShell writes a redirect, and is quoted as last written: a run that never launched
+    # leaves the previous run's in place. On success its last line is the script's own result, so
+    # the change reported is the sync's, and a success whose last line does not parse fails.
+
+    - name: 'PROCESS | Report The Repository Sync Result'
+      changed_when: >-
+        __pdq_deploy_sync__.state.last_task_result == 0
+        and ((__log__ | trim).splitlines() | last | from_json).changed
+      vars:
+        __log__: >-
+          {{ __pdq_deploy_sync_log__.content | default('')
+             | b64decode(encoding='utf-16') }}
+      when: not ansible_check_mode
+
+      ansible.builtin.assert:
+        fail_msg: >-
+          The repository sync failed with result
+          {{ '0x%08X' | format(__pdq_deploy_sync__.state.last_task_result % 4294967296) }}.
+          {{ 'The log as last written: ' ~ (__log__ | trim)
+             if __pdq_deploy_sync_log__.content is defined
+             else 'No log exists at ' ~ __sync_log__ ~ '.' }}
+        quiet: true
+        that: [ __pdq_deploy_sync__.state.last_task_result == 0 ]
+
+    #endregion --- [ Process: Await The Repository Sync ] ------------------------------------- #
+
 #endregion --- [ Process: Install PDQ Deploy on Windows ] ------------------------------------- #
 
 
@@ -1359,8 +1696,8 @@
 
     - name: 'END | Remove The Controller Staging Directory'
       changed_when: false
+      check_mode: false
       delegate_to: 'localhost'
-      when: __pdq_deploy_stage__ is defined and not (__pdq_deploy_stage__ is skipped)
 
       ansible.builtin.file:
         access_time_format: '%Y%m%d%H%M.%S'

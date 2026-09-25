@@ -4,16 +4,17 @@ Installs PDQ Deploy at a pinned version and brings it up as an all-in-one **Cent
 Windows. In one converge it installs the product, applies the licence, ensures the shared PDQ
 service account and reconciles the complete credential store, places the
 database on its dedicated drive, creates the package repository on a second drive and enforces its
-directory permissions, publishes it as an encrypted read-only network share, writes the script that
-fills it, sets Central Server mode and the console port, applies the product preferences, reconciles
-the pinned variables and the declared packages, seeds the per-user console defaults, authorises the
-console users, chooses the event-log severities and service-manager behaviour, and records the
-registration that would otherwise stop the first console with a popup.
+directory permissions, publishes it as an encrypted read-only network share, fills it from the
+application repository bucket, sets Central Server mode and the console port, applies the product
+preferences, reconciles the pinned variables and the declared packages, seeds the per-user console
+defaults, authorises the console users, chooses the event-log severities and service-manager
+behaviour, and records the registration that would otherwise stop the first console with a popup.
 
-Everything moves through the controller: it fetches each artifact from S3 and hands the installer
-to the target, so the guest never receives cloud credentials. The installer is verified against
-its pinned SHA-256 on the guest before execution, the licence is verified against its pinned
-SHA-256 before use, and the in-memory service-account password is rejected if it is empty.
+The controller fetches the installer and licence from S3 and carries both to the target. The host
+reads the application repository bucket itself through its instance profile. The installer is
+verified against its pinned SHA-256 on the guest before execution, the licence is verified against
+its pinned SHA-256 before use, and the in-memory service-account password is rejected if it is
+empty.
 
 ## Domain and credentials
 
@@ -74,21 +75,38 @@ product configuration aligned.
 
 The repository holds the installers deployments copy to their targets. Those are vendor content,
 not configuration: pinning each one here would make a converge the only way to publish software.
-The role therefore ships the pull rather than performing it. `templates/Sync-Repository.cmd.j2` is
-written as `Sync-Repository.cmd` in the root of the repository drive, carrying this host's bucket,
-region and repository path, so an administrator runs it without knowing any of them. It sits one
-level above the directory it fills so that it is neither an object the sync can act on nor a file
-inside the network share.
+The role therefore mirrors the application repository bucket into it, and the host reads the
+bucket itself, through its instance profile, rather than receiving gigabytes through the
+controller.
 
-The sync is deterministic: afterwards the volume holds what the bucket holds and nothing else.
+The mirror is one scheduled task, `PDQ Repository Sync`, with no schedule of its own. It runs as
+the Background Service User with its elevated token, logged on without a stored password. Each
+converge starts it where the repository is prepared and waits for it as the installation's last
+step, so a first fill that takes hours runs alongside the rest of the converge instead of ahead of
+it; a sync that fails fails the converge, naming its result and quoting its log. A converge that
+finds a sync already running waits for it to finish before starting its own, and fails at the
+sync's own step if its run cannot start because the service account cannot log on. Task Scheduler
+ends a run after 24 hours. Each of the converge's two waits is bounded by the same limit — one for
+a run already in progress and one for its own — so a converge that meets an existing run can wait
+about twice the limit. A check run validates the task but starts nothing.
+
+An administrator starts the same task between deployments with `Sync-Repository.bat` —
+right-click, "Run as administrator" — and a start while a sync is running is ignored, so run it
+again once that sync has finished to pick up anything published since it began. The
+launcher, the script the task runs and its log live in `Sync-Repository\` at the root of the
+repository drive: beside the repository rather than in it, so they are neither objects the sync can
+act on nor files inside the network share, and under the repository's own permissions, because the
+volume root lets any authenticated user modify what it holds.
+
+The sync is deterministic: afterwards the repository holds what the bucket holds and nothing else.
 The repository layout carries the version in the path so older versions stay addressable for a
 rollback — in the bucket, which is the one place that decides what the repository contains. A file
 the bucket does not carry is removed, including one placed here by hand, because a volume that
 kept local-only files would drift away from every other host running the same deployment.
 
-The script is generated unconditionally; whether it can complete is a property of the host, not of
-this role. It needs the AWS CLI installed, and it needs the host's instance profile to allow reads
-on the bucket. It reports which of the two is missing rather than failing on the first object.
+The sync needs an AWS PowerShell module on the host — `AWS.Tools.S3`, or the `AWSPowerShell` that
+stock Windows Server 2019 carries instead — and the host's instance profile allowing reads on the
+bucket. Nothing in this repository installs the module (TD-008 in `docs/TECH-DEBT.md`).
 
 ## Declared packages
 

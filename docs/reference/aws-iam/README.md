@@ -56,10 +56,10 @@ The grant is two exact keys, and deliberately narrow in three ways:
   `~resources/anything-else.ps1` returns an implicit deny.
 - **Write and replace, but not delete.** A script is updated in place when its source changes;
   removing one is not something a deployment should be able to do.
-- **`s3:GetObjectTagging` on the same two keys.** Not decoration: the collection reads an
-  object's tags on every put, before it decides whether tags were even requested, so without
-  this the task fails on every converge once the object exists. Read from the pinned module's
-  source rather than inferred from the error.
+- **`s3:GetObjectTagging` on the same two keys.** Not decoration: after the collection writes an
+  object, it reads the object's tags even when none were requested. The role uploads only when a
+  helper is missing or differs, so without this grant a converge that uploads fails after the
+  object is written. Read from the pinned module's source rather than inferred from the error.
 - **No conditional-write requirement**, unlike the artifact publisher's grant. These two keys
   are meant to be overwritten — that is how a corrected script reaches the fleet — whereas an
   installer at a version is written once and never again.
@@ -90,7 +90,7 @@ deployed host can read these objects.
 
 Both hosts run as `nwarila-ec2-apprepo-profile`. Its role reads the **whole** application repository
 (`s3:ListBucket` and `s3:GetObject`) and carries `AmazonSSMManagedInstanceCore`. The PDQ console
-needs the whole bucket, because `Sync-Repository.cmd` mirrors it; the scan target needs only the one
+needs the whole bucket, because the repository sync mirrors it; the scan target needs only the one
 Feature-on-Demand cab it fetches at boot. Narrowing that is tracked in
 [issue #56](https://github.com/nwarila-platform/pdq-deploy-inventory/issues/56).
 

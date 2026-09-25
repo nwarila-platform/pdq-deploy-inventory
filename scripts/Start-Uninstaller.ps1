@@ -7,15 +7,13 @@
         Removes selected machine registrations from one product family.
 
     .DESCRIPTION
-        Reads both machine uninstall roots, loads the requested registry
-        properties by name, and synthesizes ParentKey and AppArch. The
-        DisplayName wildcard remains the product-family matcher. Conforming MSI
-        registrations are retained unless RemoveConforming is supplied. Include
-        narrows the selection, and Exclude retains registrations by wildcard
-        matching loaded properties.
-
-        Include and Exclude can be combined; a registration must match every
-        inclusion and must not match every exclusion to be selected.
+        Reads both machine uninstall roots, loads the properties required for
+        identity, removal, and declared filters, and synthesizes ParentKey and
+        AppArch. Family matches DisplayName. Every Filter tuple narrows the
+        selection, and any matching Exclude tuple retains a registration.
+        Conforming MSI registrations are retained unless RemoveConforming is
+        supplied. MaxRemovals limits the selected registrations before any
+        process is launched.
 
         A selected MSI registration is removed through msiexec with its
         synthesized ParentKey. Other selected registrations use their recorded
@@ -31,39 +29,33 @@
 
         The result reports registration identities and outcomes, never the
         recorded command lines. The script does not remove anything outside the
-        family pattern or user data.
+        declared family or user data.
 
     .PARAMETER DebugLevel
         Three-digit control string configuring ErrorActionPreference,
         Set-PSDebug, and Set-StrictMode. Default '103'.
 
-    .PARAMETER DisplayNamePattern
-        PowerShell wildcard pattern matching the product family's Add/Remove
-        Programs DisplayName values.
-
     .PARAMETER Exclude
-        Property names and wildcard values that retain a registration when all
-        entries match. Every named property must be present in Property and
-        every value must be a non-empty string.
+        Tuples naming a property, matching method, and query. A registration
+        matching any tuple is retained.
 
-    .PARAMETER Include
-        Property names and wildcard values that select a registration when all
-        entries match. Every named property must be present in Property and
-        every value must be a non-empty string.
+    .PARAMETER Family
+        One tuple with Method and Query keys matching DisplayName.
+
+    .PARAMETER Filter
+        Tuples naming a property, matching method, and query. A registration
+        must match every tuple to be selected.
 
     .PARAMETER LogLevel
         Six-digit control string mapping Verbose, Debug, Information, Warning,
         Error, and Fatal streams to ActionPreference values.
 
+    .PARAMETER MaxRemovals
+        Maximum registrations the call may select. Defaults to one.
+
     .PARAMETER RemoveConforming
         Also select conforming MSI registrations for removal. Without this
         switch, conforming MSI registrations are retained.
-
-    .PARAMETER Property
-        Registry value names to load for every family registration. ParentKey
-        and AppArch are synthesized rather than read from the registry. The
-        properties required to identify and uninstall registrations must remain
-        in the list; additional registry values can be added for criteria.
 
     .PARAMETER SilentSwitch
         Silent argument appended only when a matching registration has no
@@ -74,11 +66,13 @@
         success, reboot-initiated, and reboot-required codes.
 
     .EXAMPLE
-        PS> ./Start-Uninstaller.ps1 -DisplayNamePattern '7-Zip*' -SilentSwitch '/S'
+        PS> $Family = @{ Method = 'Simple'; Query = '7-Zip*' }
+        PS> ./Start-Uninstaller.ps1 -Family $Family -MaxRemovals 3 -SilentSwitch '/S'
 
     .EXAMPLE
-        PS> $Keep = @{ ParentKey = '{00000000-0000-0000-0000-000000000000}' }
-        PS> ./Start-Uninstaller.ps1 -DisplayNamePattern 'Google Chrome' -Exclude $Keep -RemoveConforming
+        PS> $Family = @{ Method = 'Exact'; Query = 'Google Chrome' }
+        PS> $Keep = @{ Property = 'ParentKey'; Method = 'Exact'; Query = '{00000000-0000-0000-0000-000000000000}' }
+        PS> ./Start-Uninstaller.ps1 -Family $Family -Exclude $Keep -RemoveConforming
 
     .OUTPUTS
         One JSON result object when run standalone; the same object through
@@ -113,9 +107,8 @@ Param (
     ValueFromPipeline = $False,
     ValueFromPipelineByPropertyName = $False
   )]
-  [ValidateNotNullOrEmpty()]
-  [System.String]
-  $DisplayNamePattern,
+  [System.Object]
+  $Family,
 
   [Parameter(
     DontShow = $False,
@@ -124,7 +117,8 @@ Param (
     ValueFromPipeline = $False,
     ValueFromPipelineByPropertyName = $False
   )]
-  [System.Collections.Hashtable]
+  [AllowEmptyCollection()]
+  [System.Object[]]
   $Exclude,
 
   [Parameter(
@@ -134,8 +128,9 @@ Param (
     ValueFromPipeline = $False,
     ValueFromPipelineByPropertyName = $False
   )]
-  [System.Collections.Hashtable]
-  $Include,
+  [AllowEmptyCollection()]
+  [System.Object[]]
+  $Filter,
 
   [Parameter(
     DontShow = $False,
@@ -155,8 +150,8 @@ Param (
     ValueFromPipeline = $False,
     ValueFromPipelineByPropertyName = $False
   )]
-  [System.Management.Automation.SwitchParameter]
-  $RemoveConforming = $False,
+  [System.Int32]
+  $MaxRemovals = 1,
 
   [Parameter(
     DontShow = $False,
@@ -165,15 +160,8 @@ Param (
     ValueFromPipeline = $False,
     ValueFromPipelineByPropertyName = $False
   )]
-  [ValidateNotNullOrEmpty()]
-  [System.String[]]
-  $Property = @(
-    'DisplayName'
-    'ParentKey'
-    'QuietUninstallString'
-    'UninstallString'
-    'AppArch'
-  ),
+  [System.Management.Automation.SwitchParameter]
+  $RemoveConforming = $False,
 
   [Parameter(
     DontShow = $False,
@@ -213,6 +201,10 @@ Param (
   'Start-Uninstaller.NoSilentCommand' = '{0}: no QuietUninstallString exists and no silent switch was supplied; refusing the interactive uninstall command.'
   'Start-Uninstaller.ProcessFailed'   = '{0}: the uninstaller could not be started ({1}).'
   'Start-Uninstaller.ProcessResult'   = '{0}: the uninstaller exited with unaccepted code {1}.'
+  'Start-Uninstaller.RegistryData'    = '{0}: property {1} has unsupported registry value type {2}.'
+  'Start-Uninstaller.RegistryFailed'  = 'Registry data refused removal for {0}: {1} unsupported value(s) were found.'
+  'Start-Uninstaller.SelectionLimit'  = '{0}: selected while MaxRemovals is {1}; refusing every removal in this call.'
+  'Start-Uninstaller.SelectionFailed' = 'Selected {0} registration(s) matching {1}, exceeding MaxRemovals {2}; no removal was attempted.'
   'Start-Uninstaller.ShouldProcess'   = 'Run the registration''s recorded silent uninstall command'
   'Start-Uninstaller.TrapCommand'     = 'Failed to execute command: {0}'
   'Start-Uninstaller.TrapRecord'      = '[{0:0000}] {1} [{2}]'
@@ -292,20 +284,25 @@ If ($StandaloneRun) {
   }
 }
 
-[System.String]$Private:NormalizedDisplayNamePattern = $DisplayNamePattern.Trim()
 [System.String]$Private:NormalizedSilentSwitch = $SilentSwitch.Trim()
-If ([System.String]::IsNullOrWhiteSpace($NormalizedDisplayNamePattern)) {
-  Throw 'DisplayNamePattern must contain a non-whitespace wildcard pattern.'
-}
-
 [System.Boolean]$Private:HasCriteria = (
-  $PSBoundParameters.ContainsKey('Include') -or
+  $PSBoundParameters.ContainsKey('Filter') -or
   $PSBoundParameters.ContainsKey('Exclude')
+)
+[System.Collections.Generic.List[System.String]]$Private:LoadedProperty = (
+  [System.Collections.Generic.List[System.String]]::new()
 )
 [System.Collections.Generic.HashSet[System.String]]$Private:LoadedPropertyName = (
   [System.Collections.Generic.HashSet[System.String]]::new(
     [System.StringComparer]::OrdinalIgnoreCase
   )
+)
+[System.Collections.Generic.List[System.Object]]$Private:NormalizedExclude = (
+  [System.Collections.Generic.List[System.Object]]::new()
+)
+[PSCustomObject]$Private:NormalizedFamily = $Null
+[System.Collections.Generic.List[System.Object]]$Private:NormalizedFilter = (
+  [System.Collections.Generic.List[System.Object]]::new()
 )
 [System.String[]]$Private:RequiredProperty = @(
   'DisplayName'
@@ -314,74 +311,269 @@ If ([System.String]::IsNullOrWhiteSpace($NormalizedDisplayNamePattern)) {
   'UninstallString'
   'AppArch'
 )
+[System.Object]$Private:TupleMethod = $Null
+[System.String]$Private:TupleMethodKey = [System.String]::Empty
+[System.String]$Private:TupleName = [System.String]::Empty
+[System.Object]$Private:TupleProperty = $Null
+[System.String]$Private:TuplePropertyKey = [System.String]::Empty
+[System.Object]$Private:TupleQuery = $Null
+[System.String]$Private:TupleQueryKey = [System.String]::Empty
+[System.Text.RegularExpressions.Regex]$Private:TupleRegex = $Null
 
-ForEach ($PropertyName In $Property) {
-  If ([System.String]::IsNullOrWhiteSpace($PropertyName)) {
-    Throw 'Property must contain only non-whitespace property names.'
+If ($MaxRemovals -le 0) {
+  Throw 'MaxRemovals must be a positive integer.'
+}
+If ($Family -isnot [System.Collections.Hashtable]) {
+  Throw 'Family must be a hashtable tuple.'
+}
+
+$TupleMethodKey = [System.String]::Empty
+$TupleQueryKey = [System.String]::Empty
+ForEach ($TupleKey In $Family.Keys) {
+  If ($TupleKey -isnot [System.String]) {
+    Continue
   }
-  If (-not $LoadedPropertyName.Add($PropertyName)) {
-    Throw ('Property contains the duplicate name {0}.' -f $PropertyName)
+  If ([System.String]$TupleKey -ieq 'Method') {
+    $TupleMethodKey = [System.String]$TupleKey
+  } ElseIf ([System.String]$TupleKey -ieq 'Query') {
+    $TupleQueryKey = [System.String]$TupleKey
   }
 }
+If (
+  $Family.Count -ne 2 -or
+  [System.String]::IsNullOrEmpty($TupleMethodKey) -or
+  [System.String]::IsNullOrEmpty($TupleQueryKey)
+) {
+  Throw 'Family must contain exactly the keys Method and Query.'
+}
+
+$TupleMethod = $Family[$TupleMethodKey]
+$TupleQuery = $Family[$TupleQueryKey]
+If (
+  $TupleMethod -isnot [System.String] -or
+  @('Exact', 'Simple', 'Regex') -inotcontains [System.String]$TupleMethod
+) {
+  Throw 'Family Method must be Exact, Simple, or Regex.'
+}
+If (
+  $TupleQuery -isnot [System.String] -or
+  [System.String]::IsNullOrWhiteSpace([System.String]$TupleQuery)
+) {
+  Throw 'Family Query must be a non-whitespace string.'
+}
+$TupleRegex = $Null
+If ([System.String]$TupleMethod -ieq 'Regex') {
+  Try {
+    $TupleRegex = [System.Text.RegularExpressions.Regex]::new(
+      [System.String]$TupleQuery,
+      (
+        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor
+        [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+      )
+    )
+  } Catch {
+    Throw 'Family Query is not a valid regular expression.'
+  }
+}
+$NormalizedFamily = [PSCustomObject]@{
+  method = [System.String]$TupleMethod
+  query  = [System.String]$TupleQuery
+  regex  = $TupleRegex
+}
+
 ForEach ($PropertyName In $RequiredProperty) {
-  If (-not $LoadedPropertyName.Contains($PropertyName)) {
-    Throw ('Property must include the script-required property {0}.' -f $PropertyName)
+  If ($LoadedPropertyName.Add($PropertyName)) {
+    $LoadedProperty.Add($PropertyName)
   }
 }
 
-ForEach ($CriterionName In @('Include', 'Exclude')) {
+ForEach ($CriterionName In @('Filter', 'Exclude')) {
   If (-not $PSBoundParameters.ContainsKey($CriterionName)) {
     Continue
   }
 
-  [System.Collections.Hashtable]$Private:Criterion = Get-Variable `
-    -Name:$CriterionName `
-    -ValueOnly
-  If ($Null -eq $Criterion -or $Criterion.Count -eq 0) {
-    Throw ('{0} must contain at least one property criterion.' -f $CriterionName)
+  [System.Object[]]$Private:CriterionTuple = @(
+    If ($CriterionName -eq 'Filter') {
+      $Filter
+    } Else {
+      $Exclude
+    }
+  )
+  If ($CriterionTuple.Count -eq 0) {
+    Throw ('{0} must contain at least one tuple.' -f $CriterionName)
   }
 
-  ForEach ($CriterionProperty In $Criterion.Keys) {
-    If (
-      $CriterionProperty -isnot [System.String] -or
-      [System.String]::IsNullOrWhiteSpace([System.String]$CriterionProperty)
-    ) {
-      Throw ('{0} property names must be non-whitespace strings.' -f $CriterionName)
-    }
-    If (-not $LoadedPropertyName.Contains([System.String]$CriterionProperty)) {
-      Throw ('{0} names unloaded property {1}.' -f @(
-          $CriterionName
-          $CriterionProperty
-        ))
+  For ($TupleIndex = 0; $TupleIndex -lt $CriterionTuple.Count; $TupleIndex++) {
+    $TupleName = '{0}[{1}]' -f @($CriterionName, $TupleIndex)
+    [System.Object]$Private:RawTuple = $CriterionTuple[$TupleIndex]
+    If ($RawTuple -isnot [System.Collections.Hashtable]) {
+      Throw ('{0} must be a hashtable tuple.' -f $TupleName)
     }
 
-    [System.Object]$Private:CriterionValue = $Criterion[$CriterionProperty]
-    If (
-      $CriterionValue -isnot [System.String] -or
-      [System.String]::IsNullOrWhiteSpace([System.String]$CriterionValue)
-    ) {
-      Throw ('{0} criterion {1} must be a non-whitespace string.' -f @(
-          $CriterionName
-          $CriterionProperty
-        ))
+    $TupleMethodKey = [System.String]::Empty
+    $TuplePropertyKey = [System.String]::Empty
+    $TupleQueryKey = [System.String]::Empty
+    ForEach ($TupleKey In $RawTuple.Keys) {
+      If ($TupleKey -isnot [System.String]) {
+        Continue
+      }
+      Switch ([System.String]$TupleKey) {
+        { $PSItem -ieq 'Method' } {
+          $TupleMethodKey = [System.String]$TupleKey
+          Break
+        }
+        { $PSItem -ieq 'Property' } {
+          $TuplePropertyKey = [System.String]$TupleKey
+          Break
+        }
+        { $PSItem -ieq 'Query' } {
+          $TupleQueryKey = [System.String]$TupleKey
+          Break
+        }
+      }
     }
-    Try {
-      $Null = [System.Management.Automation.WildcardPattern]::new(
-        [System.String]$CriterionValue
-      ).IsMatch([System.String]::Empty)
-    } Catch {
-      Throw ('{0} criterion {1} is not a valid wildcard pattern.' -f @(
-          $CriterionName
-          $CriterionProperty
-        ))
+    If (
+      $RawTuple.Count -ne 3 -or
+      [System.String]::IsNullOrEmpty($TupleMethodKey) -or
+      [System.String]::IsNullOrEmpty($TuplePropertyKey) -or
+      [System.String]::IsNullOrEmpty($TupleQueryKey)
+    ) {
+      Throw ('{0} must contain exactly the keys Property, Method, and Query.' -f $TupleName)
+    }
+
+    $TupleMethod = $RawTuple[$TupleMethodKey]
+    $TupleProperty = $RawTuple[$TuplePropertyKey]
+    $TupleQuery = $RawTuple[$TupleQueryKey]
+    If (
+      $TupleProperty -isnot [System.String] -or
+      [System.String]::IsNullOrWhiteSpace([System.String]$TupleProperty)
+    ) {
+      Throw ('{0} Property must be a non-whitespace string.' -f $TupleName)
+    }
+    If (
+      $TupleMethod -isnot [System.String] -or
+      @('Exact', 'Simple', 'Regex') -inotcontains [System.String]$TupleMethod
+    ) {
+      Throw ('{0} Method must be Exact, Simple, or Regex.' -f $TupleName)
+    }
+    If (
+      $TupleQuery -isnot [System.String] -or
+      [System.String]::IsNullOrWhiteSpace([System.String]$TupleQuery)
+    ) {
+      Throw ('{0} Query must be a non-whitespace string.' -f $TupleName)
+    }
+
+    $TupleRegex = $Null
+    If ([System.String]$TupleMethod -ieq 'Regex') {
+      Try {
+        $TupleRegex = [System.Text.RegularExpressions.Regex]::new(
+          [System.String]$TupleQuery,
+          (
+            [System.Text.RegularExpressions.RegexOptions]::IgnoreCase -bor
+            [System.Text.RegularExpressions.RegexOptions]::CultureInvariant
+          )
+        )
+      } Catch {
+        Throw ('{0} Query is not a valid regular expression.' -f $TupleName)
+      }
+    }
+
+    [PSCustomObject]$Private:NormalizedTuple = [PSCustomObject]@{
+      method   = [System.String]$TupleMethod
+      property = [System.String]$TupleProperty
+      query    = [System.String]$TupleQuery
+      regex    = $TupleRegex
+    }
+    If ($CriterionName -eq 'Filter') {
+      $NormalizedFilter.Add($NormalizedTuple)
+    } Else {
+      $NormalizedExclude.Add($NormalizedTuple)
+    }
+    If ($LoadedPropertyName.Add([System.String]$TupleProperty)) {
+      $LoadedProperty.Add([System.String]$TupleProperty)
     }
   }
 }
+
+[PSCustomObject[]]$Private:FilterTuple = [PSCustomObject[]]$NormalizedFilter.ToArray()
+[PSCustomObject[]]$Private:ExcludeTuple = [PSCustomObject[]]$NormalizedExclude.ToArray()
+[System.String[]]$Private:Property = [System.String[]]$LoadedProperty.ToArray()
 
 #endregion --- [ Initialization ] ------------------------------------------------------------ #
 
 #region ------ [ Main ] ---------------------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Main'
+
+Function Test-SelectorValue {
+  [CmdletBinding(
+    ConfirmImpact = 'None',
+    DefaultParameterSetName = 'default',
+    HelpUri = '',
+    PositionalBinding = $False,
+    SupportsPaging = $False,
+    SupportsShouldProcess = $False
+  )]
+  [OutputType([System.Boolean])]
+  Param (
+    [Parameter(
+      DontShow = $False,
+      Mandatory = $True,
+      ParameterSetName = 'default',
+      ValueFromPipeline = $False,
+      ValueFromPipelineByPropertyName = $False
+    )]
+    [PSCustomObject]
+    $Tuple,
+
+    [Parameter(
+      DontShow = $False,
+      Mandatory = $False,
+      ParameterSetName = 'default',
+      ValueFromPipeline = $False,
+      ValueFromPipelineByPropertyName = $False
+    )]
+    [AllowNull()]
+    [System.Object]
+    $Value
+  )
+  Write-Debug -Message:'[Test-SelectorValue] Entering'
+
+  If ($Null -eq $Value) {
+    Return $False
+  }
+  If (
+    $Value -isnot [System.String] -and
+    $Value -isnot [System.Int32] -and
+    $Value -isnot [System.Int64]
+  ) {
+    Return $False
+  }
+
+  [System.String]$Private:Text = [System.Convert]::ToString(
+    $Value,
+    [System.Globalization.CultureInfo]::InvariantCulture
+  )
+  [System.Boolean]$Private:Result = Switch ($Tuple.method) {
+    { $PSItem -ieq 'Exact' } {
+      $Text.Equals(
+        $Tuple.query,
+        [System.StringComparison]::OrdinalIgnoreCase
+      )
+      Break
+    }
+    { $PSItem -ieq 'Simple' } {
+      $Text -like $Tuple.query
+      Break
+    }
+    { $PSItem -ieq 'Regex' } {
+      $Tuple.regex.IsMatch($Text)
+      Break
+    }
+  }
+
+  Write-Debug -Message:'[Test-SelectorValue] Exiting'
+  $Result
+}
 
 Function Get-FamilyRegistration {
   [CmdletBinding(
@@ -401,9 +593,8 @@ Function Get-FamilyRegistration {
       ValueFromPipeline = $False,
       ValueFromPipelineByPropertyName = $False
     )]
-    [ValidateNotNullOrEmpty()]
-    [System.String]
-    $DisplayNamePattern,
+    [PSCustomObject]
+    $Family,
 
     [Parameter(
       DontShow = $False,
@@ -430,9 +621,10 @@ Function Get-FamilyRegistration {
   Write-Debug -Message:'[Get-FamilyRegistration] Entering'
 
   [System.Management.Automation.PSPropertyInfo]$Private:DisplayNameProperty = $Null
+  [System.Object]$Private:DisplayNameValue = $Null
   [System.Guid]$Private:Guid = [System.Guid]::Empty
   [System.Boolean]$Private:IsConforming = $False
-  [System.Collections.Specialized.OrderedDictionary]$Private:Loaded = $Null
+  [System.Collections.Hashtable]$Private:Loaded = $Null
   [System.String]$Private:LoadedAppArch = [System.String]::Empty
   [System.Object]$Private:LoadedValue = $Null
   [PSCustomObject]$Private:RawRegistration = $Null
@@ -454,10 +646,22 @@ Function Get-FamilyRegistration {
         Continue
       }
 
-      $DisplayNameProperty = $RawRegistration.PSObject.Properties['DisplayName']
+      $DisplayNameProperty = $Null
+      ForEach ($RawProperty In $RawRegistration.PSObject.Properties) {
+        If ($RawProperty.Name -ieq 'DisplayName') {
+          $DisplayNameProperty = $RawProperty
+          Break
+        }
+      }
+      $DisplayNameValue = If ($Null -eq $DisplayNameProperty) {
+        $Null
+      } Else {
+        $DisplayNameProperty.Value
+      }
       If (
         $Null -eq $DisplayNameProperty -or
-        [System.String]$DisplayNameProperty.Value -notlike $DisplayNamePattern
+        [System.String]::IsNullOrEmpty([System.String]$DisplayNameValue) -or
+        -not (Test-SelectorValue -Tuple:$Family -Value:$DisplayNameValue)
       ) {
         Continue
       }
@@ -478,7 +682,9 @@ Function Get-FamilyRegistration {
         $LoadedAppArch = 'x86'
       }
 
-      $Loaded = [Ordered]@{}
+      $Loaded = [System.Collections.Hashtable]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+      )
       ForEach ($PropertyName In $Property) {
         $LoadedValue = $Null
         Switch ($PropertyName) {
@@ -491,7 +697,13 @@ Function Get-FamilyRegistration {
             Break
           }
           Default {
-            $ValueProperty = $RawRegistration.PSObject.Properties[$PropertyName]
+            $ValueProperty = $Null
+            ForEach ($RawProperty In $RawRegistration.PSObject.Properties) {
+              If ($RawProperty.Name -ieq $PropertyName) {
+                $ValueProperty = $RawProperty
+                Break
+              }
+            }
             If ($Null -ne $ValueProperty) {
               $LoadedValue = $ValueProperty.Value
             }
@@ -504,7 +716,7 @@ Function Get-FamilyRegistration {
           display_name           = [System.String]$Loaded['DisplayName']
           is_conforming          = $IsConforming
           key_name               = [System.String]$Loaded['ParentKey']
-          properties             = [PSCustomObject]$Loaded
+          properties             = $Loaded
           quiet_uninstall_string = [System.String]$Loaded['QuietUninstallString']
           registry_path          = [System.String]$Key.PSPath
           uninstall_string       = [System.String]$Loaded['UninstallString']
@@ -520,7 +732,7 @@ Function Get-FamilyRegistration {
   Write-Debug -Message:'[Get-FamilyRegistration] Exiting'
 }
 
-Function Test-RegistrationCriterion {
+Function Test-RegistrationTuple {
   [CmdletBinding(
     ConfirmImpact = 'None',
     DefaultParameterSetName = 'default',
@@ -538,8 +750,8 @@ Function Test-RegistrationCriterion {
       ValueFromPipeline = $False,
       ValueFromPipelineByPropertyName = $False
     )]
-    [System.Collections.Hashtable]
-    $Criterion,
+    [PSCustomObject]
+    $Tuple,
 
     [Parameter(
       DontShow = $False,
@@ -551,21 +763,19 @@ Function Test-RegistrationCriterion {
     [PSCustomObject]
     $Registration
   )
-  Write-Debug -Message:'[Test-RegistrationCriterion] Entering'
+  Write-Debug -Message:'[Test-RegistrationTuple] Entering'
 
   [System.Object]$Private:ActualValue = $Null
-  [System.Management.Automation.PSPropertyInfo]$Private:LoadedProperty = $Null
-
-  ForEach ($CriterionProperty In $Criterion.Keys) {
-    $LoadedProperty = $Registration.properties.PSObject.Properties[[System.String]$CriterionProperty]
-    $ActualValue = $LoadedProperty.Value
-    If ([System.String]$ActualValue -notlike [System.String]$Criterion[$CriterionProperty]) {
-      Return $False
-    }
+  If ($Registration.properties.ContainsKey([System.String]$Tuple.property)) {
+    $ActualValue = $Registration.properties[[System.String]$Tuple.property]
   }
 
-  Write-Debug -Message:'[Test-RegistrationCriterion] Exiting'
-  $True
+  [System.Boolean]$Private:Result = Test-SelectorValue `
+    -Tuple:$Tuple `
+    -Value:$ActualValue
+
+  Write-Debug -Message:'[Test-RegistrationTuple] Exiting'
+  $Result
 }
 
 Function Test-RegistrationSelected {
@@ -586,9 +796,9 @@ Function Test-RegistrationSelected {
       ValueFromPipeline = $False,
       ValueFromPipelineByPropertyName = $False
     )]
-    [AllowNull()]
-    [System.Collections.Hashtable]
-    $Exclude,
+    [AllowEmptyCollection()]
+    [PSCustomObject[]]
+    $ExcludeTuple,
 
     [Parameter(
       DontShow = $False,
@@ -597,29 +807,9 @@ Function Test-RegistrationSelected {
       ValueFromPipeline = $False,
       ValueFromPipelineByPropertyName = $False
     )]
-    [System.Boolean]
-    $HasExcludeCriterion,
-
-    [Parameter(
-      DontShow = $False,
-      Mandatory = $True,
-      ParameterSetName = 'default',
-      ValueFromPipeline = $False,
-      ValueFromPipelineByPropertyName = $False
-    )]
-    [System.Boolean]
-    $HasIncludeCriterion,
-
-    [Parameter(
-      DontShow = $False,
-      Mandatory = $True,
-      ParameterSetName = 'default',
-      ValueFromPipeline = $False,
-      ValueFromPipelineByPropertyName = $False
-    )]
-    [AllowNull()]
-    [System.Collections.Hashtable]
-    $Include,
+    [AllowEmptyCollection()]
+    [PSCustomObject[]]
+    $FilterTuple,
 
     [Parameter(
       DontShow = $False,
@@ -646,17 +836,15 @@ Function Test-RegistrationSelected {
   If ($Registration.is_conforming -and -not $RemoveConforming) {
     Return $False
   }
-  If (
-    $HasIncludeCriterion -and
-    -not (Test-RegistrationCriterion -Criterion:$Include -Registration:$Registration)
-  ) {
-    Return $False
+  ForEach ($Tuple In $FilterTuple) {
+    If (-not (Test-RegistrationTuple -Tuple:$Tuple -Registration:$Registration)) {
+      Return $False
+    }
   }
-  If (
-    $HasExcludeCriterion -and
-    (Test-RegistrationCriterion -Criterion:$Exclude -Registration:$Registration)
-  ) {
-    Return $False
+  ForEach ($Tuple In $ExcludeTuple) {
+    If (Test-RegistrationTuple -Tuple:$Tuple -Registration:$Registration) {
+      Return $False
+    }
   }
 
   Write-Debug -Message:'[Test-RegistrationSelected] Exiting'
@@ -681,13 +869,17 @@ Function Test-RegistrationSelected {
   [System.Collections.Generic.List[System.String]]::new()
 )
 [System.Boolean]$Private:Failed = $False
-[System.Boolean]$Private:HasExcludeCriterion = $PSBoundParameters.ContainsKey('Exclude')
-[System.Boolean]$Private:HasIncludeCriterion = $PSBoundParameters.ContainsKey('Include')
 [System.Boolean]$Private:IsSelected = $False
 [System.String]$Private:OutcomeMessage = [System.String]::Empty
 [System.String]$Private:OutcomeMessageKey = [System.String]::Empty
 [System.Object]$Private:Process = $Null
 [PSCustomObject]$Private:PublicRegistration = $Null
+[System.Collections.Generic.HashSet[System.String]]$Private:ReferencedProperty = (
+  [System.Collections.Generic.HashSet[System.String]]::new(
+    [System.StringComparer]::OrdinalIgnoreCase
+  )
+)
+[System.Boolean]$Private:Refused = $False
 [System.Collections.Generic.List[System.Object]]$Private:Removed = (
   [System.Collections.Generic.List[System.Object]]::new()
 )
@@ -695,6 +887,9 @@ Function Test-RegistrationSelected {
   [System.Collections.Generic.List[System.Object]]::new()
 )
 [PSCustomObject]$Private:Result = $Null
+[System.Collections.Generic.List[System.Object]]$Private:Selected = (
+  [System.Collections.Generic.List[System.Object]]::new()
+)
 [System.Int32]$Private:SelectedCount = 0
 [System.Collections.Generic.HashSet[System.String]]$Private:SelectedPath = (
   [System.Collections.Generic.HashSet[System.String]]::new(
@@ -704,6 +899,7 @@ Function Test-RegistrationSelected {
 [System.Collections.Generic.List[System.Object]]$Private:Survived = (
   [System.Collections.Generic.List[System.Object]]::new()
 )
+[System.Object]$Private:TypedValue = $Null
 [System.String[]]$Private:UninstallRoots = @(
   'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
   'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
@@ -711,235 +907,306 @@ Function Test-RegistrationSelected {
 
 $Before = @(
   Get-FamilyRegistration `
-    -DisplayNamePattern:$NormalizedDisplayNamePattern `
+    -Family:$NormalizedFamily `
     -Property:$Property `
     -UninstallRoot:$UninstallRoots
 )
 
+ForEach ($Tuple In @($FilterTuple + $ExcludeTuple)) {
+  $Null = $ReferencedProperty.Add([System.String]$Tuple.property)
+}
 ForEach ($Registration In $Before) {
-  $IsSelected = Test-RegistrationSelected `
-    -Exclude:$Exclude `
-    -HasExcludeCriterion:$HasExcludeCriterion `
-    -HasIncludeCriterion:$HasIncludeCriterion `
-    -Include:$Include `
-    -RemoveConforming:$RemoveConforming.IsPresent `
-    -Registration:$Registration
-  If (-not $IsSelected) {
-    Continue
+  ForEach ($PropertyName In $ReferencedProperty) {
+    $TypedValue = $Registration.properties[$PropertyName]
+    If (
+      $Null -ne $TypedValue -and
+      $TypedValue -isnot [System.String] -and
+      $TypedValue -isnot [System.Int32] -and
+      $TypedValue -isnot [System.Int64]
+    ) {
+      $Failure.Add($Script:Message['Start-Uninstaller.RegistryData'] -f @(
+          $Registration.display_name
+          $PropertyName
+          $TypedValue.GetType().FullName
+        ))
+    }
   }
+}
 
-  $SelectedCount++
-  $Null = $SelectedPath.Add($Registration.registry_path)
-  If (-not (Test-Path -LiteralPath:$Registration.registry_path)) {
-    Continue
+If ($Failure.Count -gt 0) {
+  $Refused = $True
+  $Failed = $True
+  ForEach ($Registration In $Before) {
+    $Retained.Add([PSCustomObject]@{
+        display_name  = $Registration.display_name
+        key_name      = $Registration.key_name
+        registry_path = $Registration.registry_path
+      })
   }
-  $CommandLine = [System.String]::Empty
-  If ($Registration.is_conforming) {
-    If ([System.String]::IsNullOrWhiteSpace($Registration.uninstall_string)) {
+  $OutcomeMessage = $Script:Message['Start-Uninstaller.RegistryFailed'] -f @(
+    $NormalizedFamily.query
+    $Failure.Count
+  )
+}
+
+If (-not $Refused) {
+  ForEach ($Registration In $Before) {
+    $IsSelected = Test-RegistrationSelected `
+      -ExcludeTuple:$ExcludeTuple `
+      -FilterTuple:$FilterTuple `
+      -RemoveConforming:$RemoveConforming.IsPresent `
+      -Registration:$Registration
+    If ($IsSelected) {
+      $Selected.Add($Registration)
+    }
+  }
+  $SelectedCount = $Selected.Count
+}
+
+If (-not $Refused -and $SelectedCount -gt $MaxRemovals) {
+  $Refused = $True
+  $Failed = $True
+  ForEach ($Registration In $Before) {
+    $PublicRegistration = [PSCustomObject]@{
+      display_name  = $Registration.display_name
+      key_name      = $Registration.key_name
+      registry_path = $Registration.registry_path
+    }
+    If ($Selected.Contains($Registration)) {
+      $Failure.Add($Script:Message['Start-Uninstaller.SelectionLimit'] -f @(
+          $Registration.display_name
+          $MaxRemovals
+        ))
+      $Survived.Add($PublicRegistration)
+    } Else {
+      $Retained.Add($PublicRegistration)
+    }
+  }
+  $OutcomeMessage = $Script:Message['Start-Uninstaller.SelectionFailed'] -f @(
+    $SelectedCount
+    $NormalizedFamily.query
+    $MaxRemovals
+  )
+}
+
+If (-not $Refused) {
+  ForEach ($Registration In $Selected) {
+    $Null = $SelectedPath.Add($Registration.registry_path)
+    If (-not (Test-Path -LiteralPath:$Registration.registry_path)) {
+      Continue
+    }
+    $CommandLine = [System.String]::Empty
+    If ($Registration.is_conforming) {
+      If ([System.String]::IsNullOrWhiteSpace($Registration.uninstall_string)) {
+        $Failure.Add($Script:Message['Start-Uninstaller.NoCommand'] -f @(
+            $Registration.display_name
+          ))
+        Continue
+      }
+      $CommandLine = $Registration.uninstall_string.Trim()
+    } ElseIf (-not [System.String]::IsNullOrWhiteSpace(
+        $Registration.quiet_uninstall_string
+      )) {
+      $CommandLine = $Registration.quiet_uninstall_string.Trim()
+    } ElseIf (
+      -not [System.String]::IsNullOrWhiteSpace($Registration.uninstall_string) -and
+      -not [System.String]::IsNullOrWhiteSpace($NormalizedSilentSwitch)
+    ) {
+      $CommandLine = '{0} {1}' -f @(
+        $Registration.uninstall_string.Trim()
+        $NormalizedSilentSwitch
+      )
+    } ElseIf ([System.String]::IsNullOrWhiteSpace($Registration.uninstall_string)) {
       $Failure.Add($Script:Message['Start-Uninstaller.NoCommand'] -f @(
           $Registration.display_name
         ))
       Continue
-    }
-    $CommandLine = $Registration.uninstall_string.Trim()
-  } ElseIf (-not [System.String]::IsNullOrWhiteSpace(
-      $Registration.quiet_uninstall_string
-    )) {
-    $CommandLine = $Registration.quiet_uninstall_string.Trim()
-  } ElseIf (
-    -not [System.String]::IsNullOrWhiteSpace($Registration.uninstall_string) -and
-    -not [System.String]::IsNullOrWhiteSpace($NormalizedSilentSwitch)
-  ) {
-    $CommandLine = '{0} {1}' -f @(
-      $Registration.uninstall_string.Trim()
-      $NormalizedSilentSwitch
-    )
-  } ElseIf ([System.String]::IsNullOrWhiteSpace($Registration.uninstall_string)) {
-    $Failure.Add($Script:Message['Start-Uninstaller.NoCommand'] -f @(
-        $Registration.display_name
-      ))
-    Continue
-  } Else {
-    $Failure.Add($Script:Message['Start-Uninstaller.NoSilentCommand'] -f @(
-        $Registration.display_name
-      ))
-    Continue
-  }
-
-  $Arguments = [System.String]::Empty
-  $Executable = [System.String]::Empty
-  If ($CommandLine.StartsWith('"', [System.StringComparison]::Ordinal)) {
-    $ClosingQuote = $CommandLine.IndexOf('"', 1)
-    If ($ClosingQuote -gt 1) {
-      $Executable = $CommandLine.Substring(1, $ClosingQuote - 1)
-      $Arguments = $CommandLine.Substring($ClosingQuote + 1).Trim()
-    }
-  } Else {
-    $CommandMatch = [System.Text.RegularExpressions.Regex]::Match(
-      $CommandLine,
-      '^(?<Executable>.+?\.exe)(?:\s+(?<Arguments>.*))?$',
-      [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    )
-    If ($CommandMatch.Success) {
-      $Executable = $CommandMatch.Groups['Executable'].Value.Trim()
-      $Arguments = $CommandMatch.Groups['Arguments'].Value.Trim()
-    }
-  }
-
-  If ([System.String]::IsNullOrWhiteSpace($Executable)) {
-    $Failure.Add($Script:Message['Start-Uninstaller.InvalidCommand'] -f @(
-        $Registration.display_name
-      ))
-    Continue
-  }
-  If ($Registration.is_conforming) {
-    If ($Executable -notmatch '(^|[\\/])msiexec(?:\.exe)?$') {
-      $Failure.Add($Script:Message['Start-Uninstaller.UnsupportedMsi'] -f @(
+    } Else {
+      $Failure.Add($Script:Message['Start-Uninstaller.NoSilentCommand'] -f @(
           $Registration.display_name
         ))
       Continue
     }
-    $Executable = '{0}\System32\msiexec.exe' -f $ENV:WINDIR
-    $Arguments = '/x {0} /qn /norestart' -f $Registration.key_name
-  } Else {
-    $Executable = [System.Environment]::ExpandEnvironmentVariables($Executable)
-  }
 
-  If ($CheckMode) {
-    Continue
-  }
-  If (-not $PSCmdlet.ShouldProcess(
-      $Registration.display_name,
-      $Script:Message['Start-Uninstaller.ShouldProcess']
-    )) {
-    Continue
-  }
-
-  Try {
-    If ([System.String]::IsNullOrWhiteSpace($Arguments)) {
-      $Process = Start-Process `
-        -FilePath:$Executable `
-        -PassThru `
-        -Wait `
-        -ErrorAction:'Stop'
+    $Arguments = [System.String]::Empty
+    $Executable = [System.String]::Empty
+    If ($CommandLine.StartsWith('"', [System.StringComparison]::Ordinal)) {
+      $ClosingQuote = $CommandLine.IndexOf('"', 1)
+      If ($ClosingQuote -gt 1) {
+        $Executable = $CommandLine.Substring(1, $ClosingQuote - 1)
+        $Arguments = $CommandLine.Substring($ClosingQuote + 1).Trim()
+      }
     } Else {
-      $Process = Start-Process `
-        -FilePath:$Executable `
-        -ArgumentList:$Arguments `
-        -PassThru `
-        -Wait `
-        -ErrorAction:'Stop'
+      $CommandMatch = [System.Text.RegularExpressions.Regex]::Match(
+        $CommandLine,
+        '^(?<Executable>.+?\.exe)(?:\s+(?<Arguments>.*))?$',
+        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+      )
+      If ($CommandMatch.Success) {
+        $Executable = $CommandMatch.Groups['Executable'].Value.Trim()
+        $Arguments = $CommandMatch.Groups['Arguments'].Value.Trim()
+      }
     }
-    $ExitCode = [System.Int32]$Process.ExitCode
-    If ($SuccessExitCode -notcontains $ExitCode) {
-      $Failure.Add($Script:Message['Start-Uninstaller.ProcessResult'] -f @(
+
+    If ([System.String]::IsNullOrWhiteSpace($Executable)) {
+      $Failure.Add($Script:Message['Start-Uninstaller.InvalidCommand'] -f @(
           $Registration.display_name
-          $ExitCode
+        ))
+      Continue
+    }
+    If ($Registration.is_conforming) {
+      If ($Executable -notmatch '(^|[\\/])msiexec(?:\.exe)?$') {
+        $Failure.Add($Script:Message['Start-Uninstaller.UnsupportedMsi'] -f @(
+            $Registration.display_name
+          ))
+        Continue
+      }
+      $Executable = '{0}\System32\msiexec.exe' -f $ENV:WINDIR
+      $Arguments = '/x {0} /qn /norestart' -f $Registration.key_name
+    } Else {
+      $Executable = [System.Environment]::ExpandEnvironmentVariables($Executable)
+    }
+
+    If ($CheckMode) {
+      Continue
+    }
+    If (-not $PSCmdlet.ShouldProcess(
+        $Registration.display_name,
+        $Script:Message['Start-Uninstaller.ShouldProcess']
+      )) {
+      Continue
+    }
+
+    Try {
+      If ([System.String]::IsNullOrWhiteSpace($Arguments)) {
+        $Process = Start-Process `
+          -FilePath:$Executable `
+          -PassThru `
+          -Wait `
+          -ErrorAction:'Stop'
+      } Else {
+        $Process = Start-Process `
+          -FilePath:$Executable `
+          -ArgumentList:$Arguments `
+          -PassThru `
+          -Wait `
+          -ErrorAction:'Stop'
+      }
+      $ExitCode = [System.Int32]$Process.ExitCode
+      If ($SuccessExitCode -notcontains $ExitCode) {
+        $Failure.Add($Script:Message['Start-Uninstaller.ProcessResult'] -f @(
+            $Registration.display_name
+            $ExitCode
+          ))
+      }
+    } Catch {
+      $Failure.Add($Script:Message['Start-Uninstaller.ProcessFailed'] -f @(
+          $Registration.display_name
+          $PSItem.Exception.GetBaseException().GetType().FullName
         ))
     }
-  } Catch {
-    $Failure.Add($Script:Message['Start-Uninstaller.ProcessFailed'] -f @(
-        $Registration.display_name
-        $PSItem.Exception.GetBaseException().GetType().FullName
-      ))
   }
-}
 
-$After = @(
-  Get-FamilyRegistration `
-    -DisplayNamePattern:$NormalizedDisplayNamePattern `
-    -Property:$Property `
-    -UninstallRoot:$UninstallRoots
-)
+  $After = @(
+    Get-FamilyRegistration `
+      -Family:$NormalizedFamily `
+      -Property:$Property `
+      -UninstallRoot:$UninstallRoots
+  )
 
-ForEach ($Registration In $After) {
-  $Null = $AfterPath.Add($Registration.registry_path)
-  $PublicRegistration = [PSCustomObject]@{
-    display_name  = $Registration.display_name
-    key_name      = $Registration.key_name
-    registry_path = $Registration.registry_path
+  ForEach ($Registration In $After) {
+    $Null = $AfterPath.Add($Registration.registry_path)
+    $PublicRegistration = [PSCustomObject]@{
+      display_name  = $Registration.display_name
+      key_name      = $Registration.key_name
+      registry_path = $Registration.registry_path
+    }
+    $IsSelected = $SelectedPath.Contains($Registration.registry_path) -or (
+      Test-RegistrationSelected `
+        -ExcludeTuple:$ExcludeTuple `
+        -FilterTuple:$FilterTuple `
+        -RemoveConforming:$RemoveConforming.IsPresent `
+        -Registration:$Registration
+    )
+    If ($IsSelected) {
+      $Survived.Add($PublicRegistration)
+    } Else {
+      $Retained.Add($PublicRegistration)
+    }
   }
-  $IsSelected = $SelectedPath.Contains($Registration.registry_path) -or (
-    Test-RegistrationSelected `
-      -Exclude:$Exclude `
-      -HasExcludeCriterion:$HasExcludeCriterion `
-      -HasIncludeCriterion:$HasIncludeCriterion `
-      -Include:$Include `
-      -RemoveConforming:$RemoveConforming.IsPresent `
-      -Registration:$Registration
-  )
-  If ($IsSelected) {
-    $Survived.Add($PublicRegistration)
-  } Else {
-    $Retained.Add($PublicRegistration)
-  }
-}
 
-ForEach ($Registration In $Before) {
-  If (-not $SelectedPath.Contains($Registration.registry_path)) {
-    Continue
+  ForEach ($Registration In $Before) {
+    If (-not $SelectedPath.Contains($Registration.registry_path)) {
+      Continue
+    }
+    If (-not (Test-Path -LiteralPath:$Registration.registry_path)) {
+      $Removed.Add([PSCustomObject]@{
+          display_name  = $Registration.display_name
+          key_name      = $Registration.key_name
+          registry_path = $Registration.registry_path
+        })
+    } ElseIf (-not $AfterPath.Contains($Registration.registry_path)) {
+      $Survived.Add([PSCustomObject]@{
+          display_name  = $Registration.display_name
+          key_name      = $Registration.key_name
+          registry_path = $Registration.registry_path
+        })
+    }
   }
-  If (-not (Test-Path -LiteralPath:$Registration.registry_path)) {
-    $Removed.Add([PSCustomObject]@{
-        display_name  = $Registration.display_name
-        key_name      = $Registration.key_name
-        registry_path = $Registration.registry_path
-      })
-  } ElseIf (-not $AfterPath.Contains($Registration.registry_path)) {
-    $Survived.Add([PSCustomObject]@{
-        display_name  = $Registration.display_name
-        key_name      = $Registration.key_name
-        registry_path = $Registration.registry_path
-      })
-  }
-}
 
-$Failed = -not $CheckMode -and (
-  $Survived.Count -gt 0 -or
-  $Failure.Count -gt 0
-)
-If ($CheckMode) {
-  $OutcomeMessageKey = If ($HasCriteria) {
-    'Start-Uninstaller.CheckModeFilter'
-  } Else {
-    'Start-Uninstaller.CheckMode'
-  }
-  $OutcomeMessage = $Script:Message[$OutcomeMessageKey] -f @(
-    $SelectedCount
-    $NormalizedDisplayNamePattern
-    $Failure.Count
+  $Failed = -not $CheckMode -and (
+    $Survived.Count -gt 0 -or
+    $Failure.Count -gt 0
   )
-} ElseIf ($Failed) {
-  $OutcomeMessageKey = If ($HasCriteria) {
-    'Start-Uninstaller.FailedFilter'
+  If ($CheckMode) {
+    $OutcomeMessageKey = If ($HasCriteria) {
+      'Start-Uninstaller.CheckModeFilter'
+    } Else {
+      'Start-Uninstaller.CheckMode'
+    }
+    $OutcomeMessage = $Script:Message[$OutcomeMessageKey] -f @(
+      $SelectedCount
+      $NormalizedFamily.query
+      $Failure.Count
+    )
+  } ElseIf ($Failed) {
+    $OutcomeMessageKey = If ($HasCriteria) {
+      'Start-Uninstaller.FailedFilter'
+    } Else {
+      'Start-Uninstaller.Failed'
+    }
+    $OutcomeMessage = $Script:Message[$OutcomeMessageKey] -f @(
+      $NormalizedFamily.query
+      $Survived.Count
+      $Failure.Count
+    )
   } Else {
-    'Start-Uninstaller.Failed'
+    $OutcomeMessageKey = If ($HasCriteria) {
+      'Start-Uninstaller.ConvergedFilter'
+    } Else {
+      'Start-Uninstaller.Converged'
+    }
+    $OutcomeMessage = $Script:Message[$OutcomeMessageKey] -f @(
+      $Removed.Count
+      $NormalizedFamily.query
+      $Retained.Count
+    )
   }
-  $OutcomeMessage = $Script:Message[$OutcomeMessageKey] -f @(
-    $NormalizedDisplayNamePattern
-    $Survived.Count
-    $Failure.Count
-  )
-} Else {
-  $OutcomeMessageKey = If ($HasCriteria) {
-    'Start-Uninstaller.ConvergedFilter'
-  } Else {
-    'Start-Uninstaller.Converged'
-  }
-  $OutcomeMessage = $Script:Message[$OutcomeMessageKey] -f @(
-    $Removed.Count
-    $NormalizedDisplayNamePattern
-    $Retained.Count
-  )
 }
 
 $Result = [PSCustomObject]@{
   changed       = [System.Boolean](
-    $(If ($CheckMode) { $SelectedCount -gt 0 } Else { $Removed.Count -gt 0 })
+    $(If ($Refused) {
+        $False
+      } ElseIf ($CheckMode) {
+        $SelectedCount -gt 0
+      } Else {
+        $Removed.Count -gt 0
+      })
   )
   check_mode    = $CheckMode
   failures      = [System.String[]]$Failure.ToArray()
-  matched_count = $After.Count
+  matched_count = $(If ($Refused) { $Before.Count } Else { $After.Count })
   msg           = $OutcomeMessage
   removed       = [System.Object[]]$Removed.ToArray()
   retained      = [System.Object[]]$Retained.ToArray()

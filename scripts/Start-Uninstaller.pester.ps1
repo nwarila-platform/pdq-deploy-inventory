@@ -13,19 +13,18 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 BeforeAll {
-  $script:ScriptPath = Join-Path -Path $PSScriptRoot -ChildPath 'Start-Uninstaller.ps1'
+  $script:ScriptPath = If ([System.String]::IsNullOrWhiteSpace(
+      $env:START_UNINSTALLER_SOURCE_UNDER_TEST
+    )) {
+    Join-Path -Path $PSScriptRoot -ChildPath 'Start-Uninstaller.ps1'
+  } Else {
+    $env:START_UNINSTALLER_SOURCE_UNDER_TEST
+  }
   $script:Native = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
   $script:Wow = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
   $script:User = 'HKU:\S-1-5-21\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall'
   $script:ProductCode = '{23170F69-40C1-2702-2602-000001000000}'
   $script:WrongProductCode = '{00000000-0000-0000-0000-000000000000}'
-  $script:DefaultProperty = @(
-    'DisplayName'
-    'ParentKey'
-    'QuietUninstallString'
-    'UninstallString'
-    'AppArch'
-  )
   $global:StartUninstallerNative = $script:Native
   $global:StartUninstallerWow = $script:Wow
 
@@ -300,9 +299,800 @@ Describe 'Start-Uninstaller' {
     Remove-AnsibleContext
   }
 
+  Context 'selector contract' -Tag 'WatchedFailure' {
+    It 'uses Exact for the Chrome family without selecting adjacent or localized names' {
+      $global:StartUninstallerRegistry[$script:Native] = @(
+        @{
+          DisplayName          = 'Google Chrome'
+          PSChildName          = 'Chrome'
+          QuietUninstallString = 'C:\Chrome\uninstall.exe --silent'
+        },
+        @{
+          DisplayName          = 'google chrome'
+          PSChildName          = 'ChromeCaseVariant'
+          QuietUninstallString = 'C:\ChromeCase\uninstall.exe --silent'
+        },
+        @{
+          DisplayName          = 'Google Chrome Beta'
+          PSChildName          = 'ChromeBeta'
+          QuietUninstallString = 'C:\ChromeBeta\uninstall.exe --silent'
+        },
+        @{
+          DisplayName          = 'Google Chrome for Testing'
+          PSChildName          = 'ChromeTesting'
+          QuietUninstallString = 'C:\ChromeTesting\uninstall.exe --silent'
+        },
+        @{
+          DisplayName          = 'Google Chrome (français)'
+          PSChildName          = 'ChromeLocalized'
+          QuietUninstallString = 'C:\ChromeLocalized\uninstall.exe --silent'
+        }
+      )
+
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Exact'; Query = 'Google Chrome' } `
+        -MaxRemovals 2
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.removed | Should -HaveCount 2
+      $Result.removed.key_name | Should -Contain 'Chrome'
+      $Result.removed.key_name | Should -Contain 'ChromeCaseVariant'
+      @($global:StartUninstallerRegistry[$script:Native]).PSChildName |
+        Should -Contain 'ChromeBeta'
+      @($global:StartUninstallerRegistry[$script:Native]).PSChildName |
+        Should -Contain 'ChromeTesting'
+      @($global:StartUninstallerRegistry[$script:Native]).PSChildName |
+        Should -Contain 'ChromeLocalized'
+      $global:StartUninstallerProcessCalls | Should -HaveCount 2
+    }
+
+    It 'uses Simple for native WOW and MSI 7-Zip registration forms' {
+      $global:StartUninstallerRegistry[$script:Native] = @(
+        @{
+          DisplayName          = '7-Zip 26.02 (x64)'
+          PSChildName          = 'Native7Zip'
+          QuietUninstallString = 'C:\Native7Zip\uninstall.exe /S'
+        },
+        @{
+          DisplayName     = '7-Zip 26.02 (x64 edition)'
+          PSChildName     = $script:ProductCode
+          UninstallString = 'MsiExec.exe /X{23170F69-40C1-2702-2602-000001000000}'
+        }
+      )
+      $global:StartUninstallerRegistry[$script:Wow] = @(
+        @{
+          DisplayName          = '7-Zip 25.01 (x86)'
+          PSChildName          = 'Wow7Zip'
+          QuietUninstallString = 'C:\Wow7Zip\uninstall.exe /S'
+        }
+      )
+
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' } `
+        -MaxRemovals 3 `
+        -RemoveConforming
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.removed | Should -HaveCount 3
+      $Result.removed.key_name | Should -Contain 'Native7Zip'
+      $Result.removed.key_name | Should -Contain 'Wow7Zip'
+      $Result.removed.key_name | Should -Contain $script:ProductCode
+      $global:StartUninstallerProcessCalls | Should -HaveCount 3
+    }
+
+    It 'uses an anchored Regex family for ESR and maintenance without selecting release' {
+      $global:StartUninstallerRegistry[$script:Native] = @(
+        @{
+          DisplayName          = 'Mozilla Firefox ESR (x64 en-US)'
+          PSChildName          = 'FirefoxEsr'
+          QuietUninstallString = 'C:\FirefoxEsr\helper.exe /S'
+        },
+        @{
+          DisplayName          = 'Mozilla Maintenance Service'
+          PSChildName          = 'MozillaMaintenance'
+          QuietUninstallString = 'C:\MozillaMaintenance\uninstall.exe /S'
+        },
+        @{
+          DisplayName          = 'Mozilla Firefox (x64 en-US)'
+          PSChildName          = 'FirefoxRelease'
+          QuietUninstallString = 'C:\FirefoxRelease\helper.exe /S'
+        }
+      )
+
+      $Json = & $script:ScriptPath `
+        -Family @{
+          Method = 'Regex'
+          Query  = '^(?:Mozilla Firefox ESR \(x64 en-US\)|Mozilla Maintenance Service)$'
+        } `
+        -MaxRemovals 2
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.removed.key_name | Should -Contain 'FirefoxEsr'
+      $Result.removed.key_name | Should -Contain 'MozillaMaintenance'
+      @($global:StartUninstallerRegistry[$script:Native]).PSChildName |
+        Should -Contain 'FirefoxRelease'
+      $global:StartUninstallerProcessCalls | Should -HaveCount 2
+    }
+
+    It 'requires every filter tuple to match' {
+      $global:StartUninstallerRegistry[$script:Native] = @(
+        @{
+          DisplayName          = 'Scoped Product selected'
+          DisplayVersion       = '2.4.1'
+          PSChildName          = 'SelectedProduct'
+          Publisher            = 'Scoped Publisher'
+          QuietUninstallString = 'C:\Selected\uninstall.exe /S'
+        },
+        @{
+          DisplayName          = 'Scoped Product wrong version'
+          DisplayVersion       = '1.9.0'
+          PSChildName          = 'WrongVersion'
+          Publisher            = 'Scoped Publisher'
+          QuietUninstallString = 'C:\WrongVersion\uninstall.exe /S'
+        },
+        @{
+          DisplayName          = 'Scoped Product wrong publisher'
+          DisplayVersion       = '2.4.1'
+          PSChildName          = 'WrongPublisher'
+          Publisher            = 'Other Publisher'
+          QuietUninstallString = 'C:\WrongPublisher\uninstall.exe /S'
+        }
+      )
+
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = 'Scoped Product*' } `
+        -Filter @(
+          @{ Property = 'Publisher'; Method = 'Exact'; Query = 'Scoped Publisher' }
+          @{ Property = 'DisplayVersion'; Method = 'Regex'; Query = '^2\.' }
+        )
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.removed.key_name | Should -Be 'SelectedProduct'
+      $Result.retained.key_name | Should -Contain 'WrongVersion'
+      $Result.retained.key_name | Should -Contain 'WrongPublisher'
+      $global:StartUninstallerProcessCalls | Should -HaveCount 1
+    }
+
+    It 'resolves tuple keys methods and duplicate property names case-insensitively' -Tag 'CaseResolutionWatch' {
+      $global:StartUninstallerRegistry[$script:Native] = @(
+        @{
+          DisplayName          = 'Case Product selected'
+          PSChildName          = 'CaseSelected'
+          Publisher            = 'Selected Publisher'
+          QuietUninstallString = 'C:\CaseSelected\uninstall.exe /S'
+        },
+        @{
+          DisplayName          = 'Case Product retained'
+          PSChildName          = 'CaseRetained'
+          Publisher            = 'Selected Other'
+          QuietUninstallString = 'C:\CaseRetained\uninstall.exe /S'
+        }
+      )
+
+      $Json = & $script:ScriptPath `
+        -Family @{ METHOD = 'simple'; QUERY = 'case product*' } `
+        -Filter @(
+          @{ PROPERTY = 'publisher'; METHOD = 'SIMPLE'; QUERY = 'selected*' }
+          @{ Property = 'PUBLISHER'; Method = 'regex'; Query = '^selected publisher$' }
+        )
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.removed.key_name | Should -Be 'CaseSelected'
+      $Result.retained.key_name | Should -Contain 'CaseRetained'
+      $global:StartUninstallerProcessCalls | Should -HaveCount 1
+    }
+
+    It 'lets any matching exclusion beat inclusion' {
+      $global:StartUninstallerRegistry[$script:Native] = @(
+        @{
+          DisplayName          = 'Excluded Product'
+          PSChildName          = 'ExcludedProduct'
+          Publisher            = 'Selected Publisher'
+          QuietUninstallString = 'C:\Excluded\uninstall.exe /S'
+        }
+      )
+
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Exact'; Query = 'Excluded Product' } `
+        -Filter @(
+          @{ Property = 'Publisher'; Method = 'Simple'; Query = 'Selected*' }
+        ) `
+        -Exclude @(
+          @{ Property = 'Publisher'; Method = 'Exact'; Query = 'Selected Publisher' }
+          @{ Property = 'Publisher'; Method = 'Exact'; Query = 'Not This Publisher' }
+        )
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.changed | Should -BeFalse
+      $Result.removed | Should -HaveCount 0
+      $Result.retained.key_name | Should -Be 'ExcludedProduct'
+      $global:StartUninstallerProcessCalls | Should -HaveCount 0
+    }
+
+    It 'treats absent and null properties as no match for filters and excludes' {
+      $global:StartUninstallerRegistry[$script:Native] = @(
+        @{
+          DisplayName          = 'Property Product absent'
+          PSChildName          = 'AbsentProperty'
+          QuietUninstallString = 'C:\Absent\uninstall.exe /S'
+        },
+        @{
+          DisplayName          = 'Property Product null'
+          OptionalValue        = $Null
+          PSChildName          = 'NullProperty'
+          QuietUninstallString = 'C:\Null\uninstall.exe /S'
+        },
+        @{
+          DisplayName          = 'Property Product selected'
+          OptionalValue        = 'Present'
+          PSChildName          = 'PresentProperty'
+          QuietUninstallString = 'C:\Present\uninstall.exe /S'
+        }
+      )
+
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = 'Property Product*' } `
+        -Filter @(
+          @{ Property = 'OptionalValue'; Method = 'Simple'; Query = '*' }
+        ) `
+        -Exclude @(
+          @{ Property = 'MissingValue'; Method = 'Simple'; Query = '*' }
+          @{ Property = 'OptionalValue'; Method = 'Exact'; Query = 'Never' }
+        )
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.removed.key_name | Should -Be 'PresentProperty'
+      $Result.retained.key_name | Should -Contain 'AbsentProperty'
+      $Result.retained.key_name | Should -Contain 'NullProperty'
+      $global:StartUninstallerProcessCalls | Should -HaveCount 1
+    }
+
+    It 'converges honestly when a filter property is globally absent' {
+      $global:StartUninstallerRegistry[$script:Native] = @(
+        @{
+          DisplayName          = 'Absent Product one'
+          PSChildName          = 'AbsentOne'
+          QuietUninstallString = 'C:\AbsentOne\uninstall.exe /S'
+        },
+        @{
+          DisplayName          = 'Absent Product two'
+          PSChildName          = 'AbsentTwo'
+          QuietUninstallString = 'C:\AbsentTwo\uninstall.exe /S'
+        }
+      )
+
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = 'Absent Product*' } `
+        -Filter @(
+          @{ Property = 'NeverPresent'; Method = 'Simple'; Query = '*' }
+        )
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.changed | Should -BeFalse
+      $Result.removed | Should -HaveCount 0
+      $Result.retained | Should -HaveCount 2
+      $global:StartUninstallerProcessCalls | Should -HaveCount 0
+    }
+
+    It 'compares DWORD and QWORD values as invariant text' {
+      $global:StartUninstallerRegistry[$script:Native] = @(
+        @{
+          DisplayName          = 'Numeric Product'
+          EstimatedSize        = [System.Int64]4294967296
+          PSChildName          = 'NumericProduct'
+          QuietUninstallString = 'C:\Numeric\uninstall.exe /S'
+          WindowsInstaller     = [System.Int32]1
+        }
+      )
+
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Exact'; Query = 'Numeric Product' } `
+        -Filter @(
+          @{ Property = 'WindowsInstaller'; Method = 'Exact'; Query = '1' }
+          @{ Property = 'EstimatedSize'; Method = 'Regex'; Query = '^4294967296$' }
+        )
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.removed.key_name | Should -Be 'NumericProduct'
+      $global:StartUninstallerProcessCalls | Should -HaveCount 1
+    }
+
+    It 'resolves synthesized property names case-insensitively' {
+      $global:StartUninstallerRegistry[$script:Native] = @(
+        @{
+          DisplayName          = 'Synthesized Product'
+          PSChildName          = 'SynthesizedKey'
+          QuietUninstallString = 'C:\Synthesized\uninstall.exe /S'
+        }
+      )
+
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Exact'; Query = 'Synthesized Product' } `
+        -Filter @(
+          @{ Property = 'parentkey'; Method = 'Exact'; Query = 'synthesizedkey' }
+          @{ Property = 'apparch'; Method = 'Regex'; Query = '^x(?:64|86)$' }
+        )
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.removed.key_name | Should -Be 'SynthesizedKey'
+      $global:StartUninstallerProcessCalls | Should -HaveCount 1
+    }
+
+    It 'does not trim queries or admit an empty display name as a registration' {
+      $global:StartUninstallerRegistry[$script:Native] = @(
+        @{
+          DisplayName          = ' Spaced Product '
+          PSChildName          = 'SpacedProduct'
+          QuietUninstallString = 'C:\Spaced\uninstall.exe /S'
+        },
+        @{
+          DisplayName          = 'Spaced Product'
+          PSChildName          = 'TrimmedProduct'
+          QuietUninstallString = 'C:\Trimmed\uninstall.exe /S'
+        },
+        @{
+          DisplayName          = ''
+          PSChildName          = 'EmptyName'
+          QuietUninstallString = 'C:\Empty\uninstall.exe /S'
+        }
+      )
+
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = '*' } `
+        -Filter @(
+          @{ Property = 'ParentKey'; Method = 'Exact'; Query = 'EmptyName' }
+        )
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.changed | Should -BeFalse
+      $Result.msg | Should -Match '^Removed 0 selected registration\(s\)'
+      $Result.removed | Should -HaveCount 0
+      @($global:StartUninstallerRegistry[$script:Native]).PSChildName |
+        Should -Contain 'EmptyName'
+      $global:StartUninstallerProcessCalls | Should -HaveCount 0
+    }
+  }
+
+  Context 'registry-data refusals' -Tag 'WatchedFailure' {
+    It 'refuses an unsupported value type after the full family read and before launch' -Tag 'RegistryDataWatch' {
+      $global:StartUninstallerRegistry[$script:Native] = @(
+        @{
+          BinaryValue          = [System.Byte[]]@(1, 2)
+          DisplayName          = 'Typed Product first'
+          PSChildName          = 'TypedFirst'
+          Publisher            = 'Other Publisher'
+          QuietUninstallString = 'C:\TypedFirst\uninstall.exe /S'
+        },
+        @{
+          DisplayName          = 'Typed Product second'
+          MultiValue           = [System.String[]]@('one', 'two')
+          PSChildName          = 'TypedSecond'
+          Publisher            = 'Selected Publisher'
+          QuietUninstallString = 'C:\TypedSecond\uninstall.exe /S'
+        },
+        @{
+          BinaryValue          = [System.Byte[]]@(3, 4)
+          DisplayName          = 'Typed Product selected'
+          MultiValue           = [System.String[]]@('three', 'four')
+          PSChildName          = 'TypedSelected'
+          Publisher            = 'Selected Publisher'
+          QuietUninstallString = 'C:\TypedSelected\uninstall.exe /S'
+        }
+      )
+
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = 'Typed Product*' } `
+        -Filter @(
+          @{ Property = 'Publisher'; Method = 'Exact'; Query = 'Selected Publisher' }
+          @{ Property = 'MultiValue'; Method = 'Simple'; Query = '*' }
+          @{ Property = 'BinaryValue'; Method = 'Simple'; Query = '*' }
+        )
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $global:StartUninstallerProcessCalls | Should -HaveCount 0
+      $ExitCode | Should -Be 1
+      $Result.changed | Should -BeFalse
+      $Result.failures -join ' ' | Should -Match 'MultiValue'
+      $Result.failures -join ' ' | Should -Match 'Typed Product second'
+      $Result.failures -join ' ' | Should -Match 'BinaryValue'
+      $Result.failures -join ' ' | Should -Match 'Typed Product first'
+      $Result.failures -join "`n" |
+        Should -Match 'Typed Product selected: property MultiValue'
+      $Result.failures -join "`n" |
+        Should -Match 'Typed Product selected: property BinaryValue'
+      $global:StartUninstallerReadRoots | Should -HaveCount 2
+    }
+
+    It 'reports an unsupported value type through the transport in check mode' {
+      $global:StartUninstallerRegistry[$script:Native] = @(
+        @{
+          DisplayName          = 'Typed Check Product'
+          MultiValue           = [System.String[]]@('one', 'two')
+          PSChildName          = 'TypedCheck'
+          QuietUninstallString = 'C:\TypedCheck\uninstall.exe /S'
+        }
+      )
+      $Context = New-AnsibleContext -CheckMode
+
+      $Emitted = & $script:ScriptPath `
+        -Family @{ Method = 'Exact'; Query = 'Typed Check Product' } `
+        -Filter @(
+          @{ Property = 'MultiValue'; Method = 'Simple'; Query = '*' }
+        )
+
+      $Emitted | Should -BeNullOrEmpty
+      $Context.Changed | Should -BeFalse
+      $Context.Failed | Should -BeTrue
+      $Context.Result.failures[0] | Should -Match 'MultiValue'
+      $Context.Result.failures[0] | Should -Match 'Typed Check Product'
+      $global:StartUninstallerReadRoots | Should -HaveCount 2
+      $global:StartUninstallerProcessCalls | Should -HaveCount 0
+    }
+  }
+
+  Context 'selection ceiling' -Tag 'WatchedFailure' {
+    BeforeEach {
+      $global:StartUninstallerRegistry[$script:Native] = @(
+        @{
+          DisplayName          = 'Ceiling Product one'
+          PSChildName          = 'CeilingOne'
+          QuietUninstallString = 'C:\CeilingOne\uninstall.exe /S'
+        },
+        @{
+          DisplayName          = 'Ceiling Product two'
+          PSChildName          = 'CeilingTwo'
+          QuietUninstallString = 'C:\CeilingTwo\uninstall.exe /S'
+        },
+        @{
+          DisplayName          = 'Ceiling Product three'
+          PSChildName          = 'CeilingThree'
+          QuietUninstallString = 'C:\CeilingThree\uninstall.exe /S'
+        }
+      )
+    }
+
+    It 'refuses two selections when MaxRemovals is omitted' -Tag 'CeilingWatch' {
+      $global:StartUninstallerRegistry[$script:Native] = @(
+        $global:StartUninstallerRegistry[$script:Native] | Select-Object -First 2
+      )
+
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = 'Ceiling Product*' }
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $global:StartUninstallerProcessCalls | Should -HaveCount 0
+      $ExitCode | Should -Be 1
+      $Result.changed | Should -BeFalse
+      $Result.failures | Should -HaveCount 2
+      $Result.failures -join ' ' | Should -Match 'Ceiling Product one'
+      $Result.failures -join ' ' | Should -Match 'Ceiling Product two'
+      $global:StartUninstallerReadRoots | Should -HaveCount 2
+    }
+
+    It 'refuses three selections when MaxRemovals is two' -Tag 'CeilingWatch' {
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = 'Ceiling Product*' } `
+        -MaxRemovals 2
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $global:StartUninstallerProcessCalls | Should -HaveCount 0
+      $ExitCode | Should -Be 1
+      $Result.changed | Should -BeFalse
+      $Result.failures | Should -HaveCount 3
+      $Result.failures -join ' ' | Should -Match 'Ceiling Product one'
+      $Result.failures -join ' ' | Should -Match 'Ceiling Product two'
+      $Result.failures -join ' ' | Should -Match 'Ceiling Product three'
+      $global:StartUninstallerReadRoots | Should -HaveCount 2
+    }
+
+    It 'reports a ceiling refusal through the transport in check mode' {
+      $Context = New-AnsibleContext -CheckMode
+
+      $Emitted = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = 'Ceiling Product*' } `
+        -MaxRemovals 2
+
+      $Emitted | Should -BeNullOrEmpty
+      $Context.Changed | Should -BeFalse
+      $Context.Failed | Should -BeTrue
+      $Context.Result.failures | Should -HaveCount 3
+      $global:StartUninstallerReadRoots | Should -HaveCount 2
+      $global:StartUninstallerProcessCalls | Should -HaveCount 0
+    }
+  }
+
+  Context 'declaration refusals' -Tag 'WatchedFailure' {
+    It 'rejects <Name> before a registry read or process launch' -ForEach @(
+      @{
+        Arguments = @{ Family = @{ Method = 'Exact' } }
+        Name      = 'a Family missing Query'
+      }
+      @{
+        Arguments = @{ Family = @{ Method = 'Exact'; Query = 'Product'; Extra = 'x' } }
+        Name      = 'an extra Family key'
+      }
+      @{
+        Arguments = @{ Family = 'not a tuple' }
+        Name      = 'a non-hashtable Family'
+      }
+      @{
+        Arguments = @{ Family = @{ Method = 'Exact'; Query = 1 } }
+        Name      = 'a non-string Family Query'
+      }
+      @{
+        Arguments = @{ Family = @{ Method = 'Exact'; Query = '' } }
+        Name      = 'an empty Family Query'
+      }
+      @{
+        Arguments = @{ Family = @{ Method = 'Exact'; Query = '   ' } }
+        Name      = 'a whitespace Family Query'
+      }
+      @{
+        Arguments = @{ Family = @{ Method = 'Unknown'; Query = 'Product' } }
+        Name      = 'an unknown Family Method'
+      }
+      @{
+        Arguments = @{ Family = @{ Method = 'Regex'; Query = '[invalid' } }
+        Name      = 'an invalid Family Regex'
+      }
+      @{
+        Arguments = @{
+          Family = @{ Method = 'Exact'; Query = 'Product' }
+          Filter = @(@{ Method = 'Exact'; Query = 'Value' })
+        }
+        Name = 'a Filter missing Property'
+      }
+      @{
+        Arguments = @{
+          Family = @{ Method = 'Exact'; Query = 'Product' }
+          Filter = @(@{ Property = 'Publisher'; Query = 'Value' })
+        }
+        Name = 'a Filter missing Method'
+      }
+      @{
+        Arguments = @{
+          Family = @{ Method = 'Exact'; Query = 'Product' }
+          Filter = @(@{ Property = 'Publisher'; Method = 'Exact' })
+        }
+        Name = 'a Filter missing Query'
+      }
+      @{
+        Arguments = @{
+          Family = @{ Method = 'Exact'; Query = 'Product' }
+          Filter = @(@{
+              Property = 'Publisher'
+              Method   = 'Exact'
+              Query    = 'Value'
+              Extra    = 'x'
+            })
+        }
+        Name = 'an extra Filter key'
+      }
+      @{
+        Arguments = @{
+          Family = @{ Method = 'Exact'; Query = 'Product' }
+          Filter = @('not a tuple')
+        }
+        Name = 'a non-hashtable Filter element'
+      }
+      @{
+        Arguments = @{
+          Family = @{ Method = 'Exact'; Query = 'Product' }
+          Filter = @(@{ Property = 1; Method = 'Exact'; Query = 'Value' })
+        }
+        Name = 'a non-string Filter Property'
+      }
+      @{
+        Arguments = @{
+          Family = @{ Method = 'Exact'; Query = 'Product' }
+          Filter = @(@{ Property = ''; Method = 'Exact'; Query = 'Value' })
+        }
+        Name = 'an empty Filter Property'
+      }
+      @{
+        Arguments = @{
+          Family = @{ Method = 'Exact'; Query = 'Product' }
+          Filter = @(@{ Property = '   '; Method = 'Exact'; Query = 'Value' })
+        }
+        Name = 'a whitespace Filter Property'
+      }
+      @{
+        Arguments = @{
+          Family = @{ Method = 'Exact'; Query = 'Product' }
+          Filter = @(@{ Property = 'Publisher'; Method = 'Exact'; Query = 1 })
+        }
+        Name = 'a non-string Filter Query'
+      }
+      @{
+        Arguments = @{
+          Family = @{ Method = 'Exact'; Query = 'Product' }
+          Filter = @(@{ Property = 'Publisher'; Method = 'Exact'; Query = '' })
+        }
+        Name = 'an empty Filter Query'
+      }
+      @{
+        Arguments = @{
+          Family = @{ Method = 'Exact'; Query = 'Product' }
+          Filter = @(@{ Property = 'Publisher'; Method = 'Exact'; Query = '   ' })
+        }
+        Name = 'a whitespace Filter Query'
+      }
+      @{
+        Arguments = @{
+          Family = @{ Method = 'Exact'; Query = 'Product' }
+          Filter = @(@{ Property = 'Publisher'; Method = 'Unknown'; Query = 'Value' })
+        }
+        Name = 'an unknown Filter Method'
+      }
+      @{
+        Arguments = @{
+          Family = @{ Method = 'Exact'; Query = 'Product' }
+          Filter = @(@{ Property = 'Publisher'; Method = 'Regex'; Query = '[invalid' })
+        }
+        Name = 'an invalid Filter Regex'
+      }
+      @{
+        Arguments = @{
+          Exclude = @(@{ Method = 'Exact'; Query = 'Value' })
+          Family  = @{ Method = 'Exact'; Query = 'Product' }
+        }
+        Name = 'an Exclude missing Property'
+      }
+      @{
+        Arguments = @{
+          Exclude = @(@{ Property = 'Publisher'; Query = 'Value' })
+          Family  = @{ Method = 'Exact'; Query = 'Product' }
+        }
+        Name = 'an Exclude missing Method'
+      }
+      @{
+        Arguments = @{
+          Exclude = @(@{ Property = 'Publisher'; Method = 'Exact' })
+          Family  = @{ Method = 'Exact'; Query = 'Product' }
+        }
+        Name = 'an Exclude missing Query'
+      }
+      @{
+        Arguments = @{
+          Exclude = @(@{
+              Property = 'Publisher'
+              Method   = 'Exact'
+              Query    = 'Value'
+              Extra    = 'x'
+            })
+          Family = @{ Method = 'Exact'; Query = 'Product' }
+        }
+        Name = 'an extra Exclude key'
+      }
+      @{
+        Arguments = @{
+          Exclude = @('not a tuple')
+          Family  = @{ Method = 'Exact'; Query = 'Product' }
+        }
+        Name = 'a non-hashtable Exclude element'
+      }
+      @{
+        Arguments = @{
+          Exclude = @(@{ Property = 1; Method = 'Exact'; Query = 'Value' })
+          Family  = @{ Method = 'Exact'; Query = 'Product' }
+        }
+        Name = 'a non-string Exclude Property'
+      }
+      @{
+        Arguments = @{
+          Exclude = @(@{ Property = ''; Method = 'Exact'; Query = 'Value' })
+          Family  = @{ Method = 'Exact'; Query = 'Product' }
+        }
+        Name = 'an empty Exclude Property'
+      }
+      @{
+        Arguments = @{
+          Exclude = @(@{ Property = '   '; Method = 'Exact'; Query = 'Value' })
+          Family  = @{ Method = 'Exact'; Query = 'Product' }
+        }
+        Name = 'a whitespace Exclude Property'
+      }
+      @{
+        Arguments = @{
+          Exclude = @(@{ Property = 'Publisher'; Method = 'Exact'; Query = 1 })
+          Family  = @{ Method = 'Exact'; Query = 'Product' }
+        }
+        Name = 'a non-string Exclude Query'
+      }
+      @{
+        Arguments = @{
+          Exclude = @(@{ Property = 'Publisher'; Method = 'Exact'; Query = '' })
+          Family  = @{ Method = 'Exact'; Query = 'Product' }
+        }
+        Name = 'an empty Exclude Query'
+      }
+      @{
+        Arguments = @{
+          Exclude = @(@{ Property = 'Publisher'; Method = 'Exact'; Query = '   ' })
+          Family  = @{ Method = 'Exact'; Query = 'Product' }
+        }
+        Name = 'a whitespace Exclude Query'
+      }
+      @{
+        Arguments = @{
+          Exclude = @(@{ Property = 'Publisher'; Method = 'Unknown'; Query = 'Value' })
+          Family  = @{ Method = 'Exact'; Query = 'Product' }
+        }
+        Name = 'an unknown Exclude Method'
+      }
+      @{
+        Arguments = @{
+          Exclude = @(@{ Property = 'Publisher'; Method = 'Regex'; Query = '[invalid' })
+          Family  = @{ Method = 'Exact'; Query = 'Product' }
+        }
+        Name = 'an invalid Exclude Regex'
+      }
+      @{
+        Arguments = @{
+          Family = @{ Method = 'Exact'; Query = 'Product' }
+          Filter = @()
+        }
+        Name = 'an explicitly empty Filter'
+      }
+      @{
+        Arguments = @{
+          Exclude = @()
+          Family  = @{ Method = 'Exact'; Query = 'Product' }
+        }
+        Name = 'an explicitly empty Exclude'
+      }
+      @{
+        Arguments = @{
+          Family     = @{ Method = 'Exact'; Query = 'Product' }
+          MaxRemovals = 0
+        }
+        Name = 'zero MaxRemovals'
+      }
+      @{
+        Arguments = @{
+          Family     = @{ Method = 'Exact'; Query = 'Product' }
+          MaxRemovals = -1
+        }
+        Name = 'negative MaxRemovals'
+      }
+    ) {
+      $global:StartUninstallerDeniedRoot = $script:Native
+
+      { & $script:ScriptPath @Arguments 2>$Null } | Should -Throw
+      $global:StartUninstallerReadRoots | Should -HaveCount 0
+      $global:StartUninstallerProcessCalls | Should -HaveCount 0
+    }
+  }
+
   Context 'standalone transport' {
     It 'reports NoChange when only the conforming MSI is present' {
-      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' }
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -315,7 +1105,7 @@ Describe 'Start-Uninstaller' {
 
     It 'removes a conforming MSI registration when RemoveConforming is supplied' {
       $Json = & $script:ScriptPath `
-        -DisplayNamePattern '7-Zip*' `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' } `
         -RemoveConforming
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
@@ -328,7 +1118,8 @@ Describe 'Start-Uninstaller' {
     }
 
     It 'reports NoChange when no registration matches' {
-      $Json = & $script:ScriptPath -DisplayNamePattern 'No Such Product*'
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = 'No Such Product*' }
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -343,8 +1134,10 @@ Describe 'Start-Uninstaller' {
 
     It 'removes the only matching registration and reports an empty second read' {
       $Json = & $script:ScriptPath `
-        -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = 'No matching product code' } `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' } `
+        -Exclude @(
+          @{ Property = 'ParentKey'; Method = 'Exact'; Query = 'No matching product code' }
+        ) `
         -RemoveConforming
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
@@ -370,7 +1163,10 @@ Describe 'Start-Uninstaller' {
         UninstallString = 'C:\Legacy\uninstall.exe /remove'
       }
 
-      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*' -SilentSwitch '/S'
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' } `
+        -MaxRemovals 2 `
+        -SilentSwitch '/S'
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -404,7 +1200,9 @@ Describe 'Start-Uninstaller' {
       }
       $global:StartUninstallerCollateralRemoval = @('DuplicateProductSibling')
 
-      $Json = & $script:ScriptPath -DisplayNamePattern 'Duplicate Product*'
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = 'Duplicate Product*' } `
+        -MaxRemovals 2
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -431,7 +1229,8 @@ Describe 'Start-Uninstaller' {
       $global:StartUninstallerCollateralRemoval = @($script:WrongProductCode)
 
       $Json = & $script:ScriptPath `
-        -DisplayNamePattern 'Collateral Product*' `
+        -Family @{ Method = 'Simple'; Query = 'Collateral Product*' } `
+        -MaxRemovals 2 `
         -RemoveConforming
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
@@ -453,7 +1252,8 @@ Describe 'Start-Uninstaller' {
         UninstallString = '"C:\Program Files\7-Zip\Uninstall.exe"'
       }
 
-      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' }
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -471,7 +1271,8 @@ Describe 'Start-Uninstaller' {
         QuietUninstallString = '"C:\Program Files\7-Zip\Uninstall.exe" /S'
       }
 
-      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' }
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -488,7 +1289,8 @@ Describe 'Start-Uninstaller' {
       }
       $global:StartUninstallerExitCode = 5
 
-      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' }
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -505,7 +1307,8 @@ Describe 'Start-Uninstaller' {
       }
       $global:StartUninstallerPersistRegistration = $True
 
-      $Json = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' }
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -530,9 +1333,10 @@ Describe 'Start-Uninstaller' {
       }
 
       $Json = & $script:ScriptPath `
-        -DisplayNamePattern 'Legacy Product' `
-        -Include @{ Publisher = 'Legacy' } `
-        -Property ($script:DefaultProperty + 'Publisher')
+        -Family @{ Method = 'Exact'; Query = 'Legacy Product' } `
+        -Filter @(
+          @{ Property = 'Publisher'; Method = 'Exact'; Query = 'Legacy' }
+        )
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -555,7 +1359,8 @@ Describe 'Start-Uninstaller' {
         Values      = @{ DisplayName = 'Unrelated Product' }
       }
 
-      $Json = & $script:ScriptPath -DisplayNamePattern 'Legacy Product'
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Exact'; Query = 'Legacy Product' }
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -573,8 +1378,10 @@ Describe 'Start-Uninstaller' {
       }
 
       $Json = & $script:ScriptPath `
-        -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = 'No matching product code' } `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' } `
+        -Exclude @(
+          @{ Property = 'ParentKey'; Method = 'Exact'; Query = 'No matching product code' }
+        ) `
         -RemoveConforming
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
@@ -589,21 +1396,27 @@ Describe 'Start-Uninstaller' {
     It 'fails closed when either uninstall root cannot be read' {
       $global:StartUninstallerDeniedRoot = $script:Wow
 
-      { & $script:ScriptPath -DisplayNamePattern '7-Zip*' 2>$Null } |
+      {
+        & $script:ScriptPath `
+          -Family @{ Method = 'Simple'; Query = '7-Zip*' } `
+          2>$Null
+      } |
         Should -Throw '*Registry access denied*'
       $global:StartUninstallerProcessCalls | Should -HaveCount 0
     }
 
     It 'rejects a whitespace family pattern before starting a process' {
-      { & $script:ScriptPath -DisplayNamePattern '   ' 2>$Null } |
-        Should -Throw '*must contain a non-whitespace wildcard pattern*'
+      { & $script:ScriptPath -Family @{ Method = 'Simple'; Query = '   ' } 2>$Null } |
+        Should -Throw '*Query must be a non-whitespace string*'
       $global:StartUninstallerProcessCalls | Should -HaveCount 0
     }
 
     It 'retains a conforming registration whose exclusion matches' {
       $Json = & $script:ScriptPath `
-        -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = $script:ProductCode } `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' } `
+        -Exclude @(
+          @{ Property = 'ParentKey'; Method = 'Exact'; Query = $script:ProductCode }
+        ) `
         -RemoveConforming
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
@@ -623,8 +1436,10 @@ Describe 'Start-Uninstaller' {
       }
 
       $Json = & $script:ScriptPath `
-        -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = $script:ProductCode } `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' } `
+        -Exclude @(
+          @{ Property = 'ParentKey'; Method = 'Exact'; Query = $script:ProductCode }
+        ) `
         -RemoveConforming
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
@@ -653,9 +1468,10 @@ Describe 'Start-Uninstaller' {
       }
 
       $Json = & $script:ScriptPath `
-        -DisplayNamePattern '7-Zip*' `
-        -Property @($script:DefaultProperty + 'Publisher') `
-        -Include @{ Publisher = 'Selected*' }
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' } `
+        -Filter @(
+          @{ Property = 'Publisher'; Method = 'Simple'; Query = 'Selected*' }
+        )
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -678,8 +1494,10 @@ Describe 'Start-Uninstaller' {
       }
 
       $Json = & $script:ScriptPath `
-        -DisplayNamePattern '7-Zip*' `
-        -Include @{ AppArch = 'x86' }
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' } `
+        -Filter @(
+          @{ Property = 'AppArch'; Method = 'Exact'; Query = 'x86' }
+        )
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
 
@@ -692,20 +1510,28 @@ Describe 'Start-Uninstaller' {
     It 'rejects a malformed criterion before starting a process' {
       {
         & $script:ScriptPath `
-          -DisplayNamePattern '7-Zip*' `
-          -Exclude @{ ParentKey = '[invalid' } `
+          -Family @{ Method = 'Simple'; Query = '7-Zip*' } `
+          -Exclude @(
+            @{ Property = 'ParentKey'; Method = 'Regex'; Query = '[invalid' }
+          ) `
           2>$Null
-      } | Should -Throw '*criterion ParentKey is not a valid wildcard pattern*'
+      } | Should -Throw '*Query is not a valid regular expression*'
       $global:StartUninstallerProcessCalls | Should -HaveCount 0
     }
 
-    It 'rejects a criterion for a property that was not loaded' {
-      {
-        & $script:ScriptPath `
-          -DisplayNamePattern '7-Zip*' `
-          -Exclude @{ ProductCode = $script:ProductCode } `
-          2>$Null
-      } | Should -Throw '*names unloaded property ProductCode*'
+    It 'converges when a criterion names a property that is not present' {
+      $Json = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' } `
+        -Filter @(
+          @{ Property = 'ProductCode'; Method = 'Exact'; Query = $script:ProductCode }
+        )
+      $ExitCode = $LASTEXITCODE
+      $Result = $Json | ConvertFrom-Json
+
+      $ExitCode | Should -Be 0
+      $Result.changed | Should -BeFalse
+      $Result.removed | Should -HaveCount 0
+      $Result.retained.key_name | Should -Be $script:ProductCode
       $global:StartUninstallerProcessCalls | Should -HaveCount 0
     }
 
@@ -717,8 +1543,10 @@ Describe 'Start-Uninstaller' {
       }
 
       $Json = & $script:ScriptPath `
-        -DisplayNamePattern '7-Zip*' `
-        -Exclude @{ ParentKey = $script:ProductCode } `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' } `
+        -Exclude @(
+          @{ Property = 'ParentKey'; Method = 'Exact'; Query = $script:ProductCode }
+        ) `
         -RemoveConforming
       $ExitCode = $LASTEXITCODE
       $Result = $Json | ConvertFrom-Json
@@ -739,7 +1567,8 @@ Describe 'Start-Uninstaller' {
       }
       $Context = New-AnsibleContext -CheckMode
 
-      $Emitted = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
+      $Emitted = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' }
 
       $Emitted | Should -BeNullOrEmpty
       $Context.Changed | Should -BeTrue
@@ -757,7 +1586,8 @@ Describe 'Start-Uninstaller' {
       }
       $Context = New-AnsibleContext
 
-      $Emitted = & $script:ScriptPath -DisplayNamePattern '7-Zip*'
+      $Emitted = & $script:ScriptPath `
+        -Family @{ Method = 'Simple'; Query = '7-Zip*' }
 
       $Emitted | Should -BeNullOrEmpty
       $Context.Changed | Should -BeTrue

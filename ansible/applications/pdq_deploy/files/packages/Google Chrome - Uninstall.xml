@@ -36,13 +36,13 @@
           <Files>$(Repository)\~resources\Start-Uninstaller.ps1</Files>
           <Script>Try {
   &amp; ".\Start-Uninstaller.ps1" `
-  -DebugLevel '103' `
-  -DisplayNamePattern 'Google Chrome' `
-  -LogLevel '002223' `
-  -Property @('DisplayName', 'ParentKey', 'QuietUninstallString', 'UninstallString', 'AppArch') `
+  -DebugLevel:'103' `
+  -Family:@{ Method = 'Exact'; Query = 'Google Chrome' } `
+  -LogLevel:'002223' `
+  -MaxRemovals:1 `
   -RemoveConforming `
-  -SilentSwitch '--force-uninstall' `
-  -SuccessExitCode @(0, 1641, 3010)
+  -SilentSwitch:'--force-uninstall' `
+  -SuccessExitCode:@(0, 1641, 3010)
 } Catch {
   Write-Error -Message:('Start-Uninstaller.ps1 failed: {0}' -f $PSItem.Exception.Message) -ErrorAction:'Continue'
   Exit 3

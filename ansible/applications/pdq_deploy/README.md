@@ -78,7 +78,9 @@ not configuration: pinning each one here would make a converge the only way to p
 The role therefore mirrors the application repository bucket into it, and the host reads the
 bucket itself, through its instance profile, rather than receiving gigabytes through the
 controller.
-The sync fetches each object as parallel parts where the installed module offers them.
+The sync fetches objects through ten 8 MiB ranged requests at once, whichever module is installed.
+A refresh can hold one temporary copy of every object it is refreshing at once, so the repository
+volume needs free space for the objects being refreshed (a full refresh: the repository's size again).
 
 The mirror is one scheduled task, `PDQ Repository Sync`, with no schedule of its own. It runs as
 the Background Service User with its elevated token, logged on without a stored password. Each

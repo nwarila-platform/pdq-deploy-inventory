@@ -27,15 +27,15 @@
     -- the comparison the vendor's own sync makes. A converge that finds the repository already
     current fetches nothing, removes nothing, and reports no change, so this can run on every
     deployment.
-    Where the installed module offers it, object fetches use parallel parts.
+    Object fetches use parallel 8 MiB ranged requests, with up to ten requests in flight.
 
     Nothing here carries a credential: the host reads the bucket through the instance profile it
     was launched with.
 
-    The bucket is read through AWS.Tools.S3 where the host has it, and otherwise through
-    AWSPowerShell, the monolithic module stock Windows Server 2019 carries instead; the two
-    cmdlets used take the same parameters in both. With neither installed, the run fails naming
-    both.
+    The bucket is listed through AWS.Tools.S3 where the host has it, and otherwise through
+    AWSPowerShell, the monolithic module stock Windows Server 2019 carries instead; Get-S3Object
+    takes the same parameters in both. Object bodies are downloaded through the SDK client the
+    selected module provides. With neither installed, the run fails naming both.
 
 .PARAMETER Bucket
     The application repository bucket, without a scheme or prefix.
@@ -46,6 +46,9 @@
 .PARAMETER LogLevel
     Six digits, one per stream, in the order the LOG_LEVELS table names them.
 
+.PARAMETER PartFetcher
+    Hidden seam that starts one part request for the spec.
+
 .PARAMETER Path
     The local repository directory the bucket is mirrored into.
 
@@ -53,8 +56,8 @@
     The region the bucket lives in.
 
 .OUTPUTS
-    One object carrying changed, check_mode, bucket, path, fetched, removed, swept, present and msg.
-    Run outside the module, it is written as one line of JSON.
+    One object carrying changed, check_mode, bucket, path, fetched, removed, skipped, swept,
+    present and msg. Run outside the module, it is written as one line of JSON.
 #>
 
 [CmdletBinding(
@@ -101,6 +104,17 @@ Param (
   $LogLevel = '002223',
 
   [Parameter(
+    DontShow = $True,
+    Mandatory = $False,
+    ParameterSetName = 'default',
+    ValueFromPipeline = $False,
+    ValueFromPipelineByPropertyName = $False
+  )]
+  [ValidateNotNull()]
+  [System.Management.Automation.ScriptBlock]
+  $PartFetcher,
+
+  [Parameter(
     DontShow = $False,
     Mandatory = $True,
     ParameterSetName = 'default',
@@ -132,12 +146,22 @@ Write-Debug -Message:'Entering Stage: Initialization'
 [System.String]$Script:EventLogName = 'Application'
 [System.String]$Script:EventSource = 'PDQ Repository Sync'
 [System.Collections.Hashtable]$Script:Message = @{
+  'Set-RepositoryContent.ArchiveSkipped'   = 'Skipping {0}: storage class {1} must be restored before it can be downloaded.'
+  'Set-RepositoryContent.ArchiveSummary'   = '; {0} archived object(s) skipped'
   'Set-RepositoryContent.Changed'          = '{0} of {1} object(s) fetched from {2}, {3} local file(s) removed'
   'Set-RepositoryContent.Current'          = '{0} object(s) already current from {1}'
   'Set-RepositoryContent.Failure'          = '[{0:0000}] {1} [{2}]'
-  'Set-RepositoryContent.FetchRetry'       = 'Fetching {0} failed ({1}); attempt {2} of 3 follows.'
+  'Set-RepositoryContent.FetchFailed'      = 'Object download failed: {0}'
+  'Set-RepositoryContent.FetchFailedItem'  = '{0}: {1}'
+  'Set-RepositoryContent.FetchRetry'       = 'Fetching {0} ({1}) failed during {2} ({3}); attempt {4} of 5 follows.'
   'Set-RepositoryContent.KeyOutsideRoot'   = 'The key {0} resolves outside the repository: {1}'
   'Set-RepositoryContent.NoS3Module'       = 'Neither AWS.Tools.S3 nor AWSPowerShell is installed, and the bucket is read through one of them.'
+  'Set-RepositoryContent.PartCleanup'      = '{0}; deleting the temporary file also failed: {1}'
+  'Set-RepositoryContent.PartCopied'       = 'copied {0} byte(s), expected {1}'
+  'Set-RepositoryContent.PartExhausted'    = '{0}: {1} (5 attempts exhausted)'
+  'Set-RepositoryContent.PartLength'       = 'response length {0}, expected {1}'
+  'Set-RepositoryContent.PartPrecondition' = '{0}: object changed since listing (HTTP 412 PreconditionFailed): {1}'
+  'Set-RepositoryContent.PromotionFailed'  = 'promotion failed: {0}'
   'Set-RepositoryContent.ReparsePoint'     = 'The repository holds a reparse point: {0}. Remove it before syncing.'
   'Set-RepositoryContent.VolumeNotMounted' = 'The repository directory is not there: {0}. The volume holding it is not mounted.'
 }
@@ -160,6 +184,8 @@ $WhatIfPreference = $False
 # An S3 key always separates with '/'. Translating to the platform's own separator is what lets
 # this script's spec run on the Linux CI leg as well as on the host it deploys to.
 [System.String]$Private:PATH_SEPARATOR = [System.String][System.IO.Path]::DirectorySeparatorChar
+[System.Int64]$Private:PART_SIZE = 8MB
+[System.Int32]$Private:TRANSFER_CONCURRENCY = 10
 
 # Configure log levels based on the LogLevel parameter.
 For ($L = 0; $L -lt 6; $L++) {
@@ -231,11 +257,14 @@ Write-Debug -Message:'Entering Stage: Main'
 
 # Initialize Variable(s)
 [System.Boolean]$Private:Changed = $False
+[System.Object]$Private:Client = $Null
 [System.Object[]]$Private:Content = @()
 [System.String]$Private:Current = [System.String]::Empty
+[System.Int32]$Private:CurrentCount = 0
 [System.Collections.Generic.List[System.String]]$Private:Directories = [System.Collections.Generic.List[System.String]]::new()
 [System.Boolean]$Private:DryRun = $False
 [System.IO.FileSystemInfo]$Private:Existing = $Null
+[System.Collections.Generic.List[System.String]]$Private:Fetched = [System.Collections.Generic.List[System.String]]::new()
 # Everything the bucket says this volume should hold. Compared case-insensitively because the
 # filesystem is: two keys differing only in case cannot both exist here, and treating them as
 # distinct would delete whichever arrived second on every run.
@@ -244,7 +273,6 @@ Write-Debug -Message:'Entering Stage: Main'
 )
 [System.Boolean]$Private:IsCurrent = $False
 [System.String]$Private:LocalPath = [System.String]::Empty
-[System.Collections.Hashtable]$Private:Multipart = @{}
 [System.Object[]]$Private:Objects = @()
 [System.String]$Private:Parent = [System.String]::Empty
 [System.Collections.Generic.List[System.Object]]$Private:Pending = [System.Collections.Generic.List[System.Object]]::new()
@@ -253,6 +281,9 @@ Write-Debug -Message:'Entering Stage: Main'
 [System.Collections.Generic.List[System.String]]$Private:Removable = [System.Collections.Generic.List[System.String]]::new()
 [PSCustomObject]$Private:Result = $Null
 [System.String]$Private:Root = [System.String]::Empty
+[System.Collections.Generic.List[System.String]]$Private:Skipped = [System.Collections.Generic.List[System.String]]::new()
+[System.String]$Private:StorageClass = [System.String]::Empty
+[System.String]$Private:Summary = [System.String]::Empty
 [System.Collections.Generic.List[System.String]]$Private:Surplus = [System.Collections.Generic.List[System.String]]::new()
 [System.Collections.Generic.Stack[System.String]]$Private:Unvisited = [System.Collections.Generic.Stack[System.String]]::new()
 
@@ -265,13 +296,8 @@ If (Get-Module -ListAvailable -Name:'AWS.Tools.S3') {
 }
 
 # Set before the first S3 call: .NET Framework otherwise fixes the service point at its default
-# of two connections, while multipart download runs ten parts at once.
-[System.Net.ServicePointManager]::DefaultConnectionLimit = 10
-# Multipart download fetches parallel parts pinned to one version, then swaps in the whole file.
-# It is conditional because modules before AWS Tools 5.0.208 do not expose the switch.
-If ((Get-Command -Name:'Read-S3Object').Parameters.ContainsKey('UseMultipartDownload')) {
-  $Multipart['UseMultipartDownload'] = $True
-}
+# of two connections, while the ranged download runs ten parts at once.
+[System.Net.ServicePointManager]::DefaultConnectionLimit = $TRANSFER_CONCURRENCY
 
 # The repository lives on a volume of its own, so a missing directory means that volume is not
 # mounted. Filling the same path on the system disk instead would hide the fault behind a drive
@@ -308,6 +334,16 @@ ForEach ($Object In $Content) {
   }
 
   [void]$Expected.Add($LocalPath)
+  $StorageClass = [System.String]$Object.StorageClass
+  If ($StorageClass -in @('GLACIER', 'DEEP_ARCHIVE')) {
+    [void]$Skipped.Add([System.String]$Object.Key)
+    [System.String]$Private:ArchiveSkipped = $Script:Message['Set-RepositoryContent.ArchiveSkipped'] -f
+    $Object.Key, $StorageClass
+    Write-Warning -Message:$ArchiveSkipped
+    [void](Write-EventLog -EntryType:'Warning' -EventId:1003 -LogName:$Script:EventLogName -Message:$ArchiveSkipped -Source:$Script:EventSource)
+    Continue
+  }
+
   $Existing = Get-Item -LiteralPath:$LocalPath -ErrorAction:'SilentlyContinue'
   $IsCurrent = (
     $Null -ne $Existing -and
@@ -315,7 +351,13 @@ ForEach ($Object In $Content) {
     $Existing.LastWriteTimeUtc -ge $Object.LastModified.ToUniversalTime()
   )
   If (-not $IsCurrent) {
-    [void]$Pending.Add([PSCustomObject]@{ Key = [System.String]$Object.Key; Local = [System.String]$LocalPath })
+    [void]$Pending.Add([PSCustomObject]@{
+        ETag         = [System.String]$Object.ETag
+        Key          = [System.String]$Object.Key
+        LastModified = [System.DateTime]$Object.LastModified.ToUniversalTime()
+        Local        = [System.String]$LocalPath
+        Size         = [System.Int64]$Object.Size
+      })
   }
 }
 
@@ -364,6 +406,12 @@ $Changed = [System.Boolean](($Pending.Count + $Surplus.Count + $Removable.Count)
 # Either source of "change nothing": the module's check mode, or a -WhatIf a person typed.
 $DryRun = [System.Boolean]($Ansible.CheckMode -or $RequestedWhatIf)
 
+If ($DryRun) {
+  ForEach ($Fetch In $Pending) {
+    [void]$Fetched.Add([System.String]$Fetch.Key)
+  }
+}
+
 If (-not $DryRun) {
   # Removal runs BEFORE the fetch. A surplus file sitting where a key needs a directory otherwise
   # wedges the host: creating the directory over it is a silent no-op, the fetch then fails, and
@@ -374,29 +422,360 @@ If (-not $DryRun) {
     Remove-Item -Force -LiteralPath:$Remove -ErrorAction:'Stop'
   }
 
-  ForEach ($Fetch In $Pending) {
-    $Parent = Split-Path -Path:($Fetch.Local) -Parent
-    If (-not (Test-Path -LiteralPath:$Parent -PathType:'Container')) {
-      [void](New-Item -Force -ItemType:'Directory' -Path:$Parent)
+  If ($Pending.Count -gt 0) {
+    # One FIFO holds every object's parts in listing order. A retry returns to its tail with a
+    # ready-at time, so other ready work can use the ten transfer slots during its backoff.
+    [System.Collections.Generic.Queue[System.Object]]$Private:PartQueue = [System.Collections.Generic.Queue[System.Object]]::new()
+    [System.Collections.Generic.List[System.Object]]$Private:DownloadStates = [System.Collections.Generic.List[System.Object]]::new()
+    ForEach ($Fetch In $Pending) {
+      [System.Int32]$Private:PartCount = If ($Fetch.Size -eq 0) {
+        1
+      } Else {
+        [System.Int32][System.Math]::Ceiling([System.Double]$Fetch.Size / [System.Double]$PART_SIZE)
+      }
+      [PSCustomObject]$Private:DownloadState = [PSCustomObject]@{
+        Cause        = [System.String]::Empty
+        Cleaned      = $False
+        Created      = $False
+        ETag         = [System.String]$Fetch.ETag
+        Failed       = $False
+        InFlight     = 0
+        Key          = [System.String]$Fetch.Key
+        LastModified = [System.DateTime]$Fetch.LastModified
+        Local        = [System.String]$Fetch.Local
+        Size         = [System.Int64]$Fetch.Size
+        Succeeded    = 0
+        Temp         = [System.String]($Fetch.Local + '.sync-part')
+        Total        = [System.Int32]$PartCount
+      }
+      [void]$DownloadStates.Add($DownloadState)
+
+      For ([System.Int32]$Private:PartIndex = 0; $PartIndex -lt $PartCount; $PartIndex++) {
+        [System.Int64]$Private:PartStart = [System.Int64]$PartIndex * $PART_SIZE
+        [System.Int64]$Private:PartEnd = If ($Fetch.Size -eq 0) {
+          -1
+        } Else {
+          [System.Math]::Min([System.Int64]$Fetch.Size, $PartStart + $PART_SIZE) - 1
+        }
+        [System.Int64]$Private:PartLength = If ($Fetch.Size -eq 0) { 0 } Else { $PartEnd - $PartStart + 1 }
+        [System.String]$Private:PartRange = If ($Fetch.Size -eq 0) {
+          'unranged'
+        } Else {
+          'bytes={0}-{1}' -f $PartStart, $PartEnd
+        }
+        $PartQueue.Enqueue([PSCustomObject]@{
+            Attempt  = 0
+            End      = [System.Int64]$PartEnd
+            Length   = [System.Int64]$PartLength
+            Range    = [System.String]$PartRange
+            ReadyAt  = [System.DateTime]::MinValue
+            Start    = [System.Int64]$PartStart
+            State    = $DownloadState
+            Unranged = [System.Boolean]($Fetch.Size -eq 0)
+          })
+      }
     }
-    # The module retries a part only up to its headers, so a connection dropped mid-body fails the
-    # object; retrying that object keeps one drop from failing the sync.
-    For ($Attempt = 1; ; $Attempt++) {
-      Try {
-        Read-S3Object -BucketName:$Bucket -File:($Fetch.Local) -Key:($Fetch.Key) -Region:$Region @Multipart | Out-Null
-        Break
-      } Catch {
-        If ($Attempt -ge 3) { Throw }
-        [System.String]$Private:FetchRetry = $Script:Message['Set-RepositoryContent.FetchRetry'] -f $Fetch.Key, $PSItem.Exception.Message, ($Attempt + 1)
+
+    # A failed request either makes its object terminal or goes back to the common queue. The
+    # timestamp, rather than a sleep, provides the 2/4/8/16-second retry schedule.
+    [ScriptBlock]$Private:FailPart = {
+      Param (
+        [Parameter(
+          DontShow = $False,
+          Mandatory = $True,
+          ParameterSetName = 'default',
+          ValueFromPipeline = $False,
+          ValueFromPipelineByPropertyName = $False
+        )]
+        [System.Exception]
+        $Failure,
+
+        [Parameter(
+          DontShow = $False,
+          Mandatory = $True,
+          ParameterSetName = 'default',
+          ValueFromPipeline = $False,
+          ValueFromPipelineByPropertyName = $False
+        )]
+        [System.Object]
+        $FailedPart,
+
+        [Parameter(
+          DontShow = $False,
+          Mandatory = $True,
+          ParameterSetName = 'default',
+          ValueFromPipeline = $False,
+          ValueFromPipelineByPropertyName = $False
+        )]
+        [ValidateSet('body', 'local', 'request')]
+        [System.String]
+        $Stage
+      )
+
+      If ($FailedPart.State.Failed) { Return }
+
+      [System.Exception]$Private:ClassifiedFailure = $Null
+      [System.Exception]$Private:CurrentFailure = $Failure
+      [System.Int32]$Private:StatusCode = 0
+      [System.String]$Private:ErrorCode = [System.String]::Empty
+      While ($Null -ne $CurrentFailure -and $Null -eq $ClassifiedFailure) {
+        If (
+          $CurrentFailure.PSObject.Properties.Name -contains 'StatusCode' -or
+          $CurrentFailure.PSObject.Properties.Name -contains 'ErrorCode'
+        ) {
+          $ClassifiedFailure = $CurrentFailure
+        } Else {
+          $CurrentFailure = $CurrentFailure.InnerException
+        }
+      }
+      [System.Exception]$Private:ReportedFailure = If ($Null -ne $ClassifiedFailure) {
+        $ClassifiedFailure
+      } Else {
+        $Failure.GetBaseException()
+      }
+      If ($ReportedFailure.PSObject.Properties.Name -contains 'StatusCode') {
+        $StatusCode = [System.Int32]$ReportedFailure.StatusCode
+      }
+      If ($ReportedFailure.PSObject.Properties.Name -contains 'ErrorCode') {
+        $ErrorCode = [System.String]$ReportedFailure.ErrorCode
+      }
+
+      If (
+        $StatusCode -eq [System.Int32][System.Net.HttpStatusCode]::PreconditionFailed -or
+        $ErrorCode -eq 'PreconditionFailed'
+      ) {
+        $FailedPart.State.Failed = $True
+        $FailedPart.State.Cause = $Script:Message['Set-RepositoryContent.PartPrecondition'] -f
+        $FailedPart.Range, $ReportedFailure.Message
+      } ElseIf ($FailedPart.Attempt -ge 5) {
+        $FailedPart.State.Failed = $True
+        $FailedPart.State.Cause = $Script:Message['Set-RepositoryContent.PartExhausted'] -f
+        $FailedPart.Range, $ReportedFailure.Message
+      } Else {
+        [System.String]$Private:FetchRetry = $Script:Message['Set-RepositoryContent.FetchRetry'] -f
+        $FailedPart.State.Key, $FailedPart.Range, $Stage, $ReportedFailure.Message, ($FailedPart.Attempt + 1)
         Write-Warning -Message:$FetchRetry
         [void](Write-EventLog -EntryType:'Warning' -EventId:1001 -LogName:$Script:EventLogName -Message:$FetchRetry -Source:$Script:EventSource)
-        Start-Sleep -Seconds:10
-        Get-ChildItem -LiteralPath:$Parent -File -Force |
-          Where-Object -FilterScript:({
-              $PSItem.Name.StartsWith([System.IO.Path]::GetFileName($Fetch.Local) + '.s3tmp.', [System.StringComparison]::OrdinalIgnoreCase) -and -not $Expected.Contains($PSItem.FullName)
-            }) |
-          ForEach-Object -Process:({ Remove-Item -Force -LiteralPath:($PSItem.FullName) })
+        $FailedPart.ReadyAt = [System.DateTime]::UtcNow.AddSeconds(
+          [System.Math]::Pow(2, [System.Double]$FailedPart.Attempt)
+        )
+        $PartQueue.Enqueue($FailedPart)
       }
+    }
+
+    # A failed object's file cannot be removed until its already-dispatched parts have closed
+    # their streams. Remaining queued parts are discarded by the dispatcher below.
+    [ScriptBlock]$Private:CleanFailed = {
+      ForEach ($FailedState In $DownloadStates) {
+        If ($FailedState.Failed -and $FailedState.InFlight -eq 0 -and -not $FailedState.Cleaned) {
+          Try {
+            If ([System.IO.File]::Exists($FailedState.Temp)) {
+              Remove-Item -Force -LiteralPath:($FailedState.Temp) -ErrorAction:'Stop'
+            }
+          } Catch {
+            $FailedState.Cause = $Script:Message['Set-RepositoryContent.PartCleanup'] -f
+            $FailedState.Cause, $PSItem.Exception.Message
+          }
+          $FailedState.Cleaned = $True
+        }
+      }
+    }
+
+    [System.Collections.Generic.List[System.Object]]$Private:InFlight = [System.Collections.Generic.List[System.Object]]::new()
+    [System.Collections.Generic.List[System.Threading.Tasks.Task]]$Private:WaitTasks = [System.Collections.Generic.List[System.Threading.Tasks.Task]]::new()
+    If ($Null -eq $PartFetcher) {
+      $Client = [Amazon.S3.AmazonS3Client]::new([Amazon.RegionEndpoint]::GetBySystemName($Region))
+    }
+    Try {
+      While ($PartQueue.Count -gt 0 -or $InFlight.Count -gt 0) {
+        [System.DateTime]$Private:NextReady = [System.DateTime]::MaxValue
+        [System.Int32]$Private:DispatchScan = $PartQueue.Count
+        While ($InFlight.Count -lt $TRANSFER_CONCURRENCY -and $DispatchScan -gt 0) {
+          [System.Object]$Private:Part = $PartQueue.Dequeue()
+          $DispatchScan--
+          If ($Part.State.Failed) { Continue }
+          If ($Part.ReadyAt -gt [System.DateTime]::UtcNow) {
+            If ($Part.ReadyAt -lt $NextReady) { $NextReady = $Part.ReadyAt }
+            $PartQueue.Enqueue($Part)
+            Continue
+          }
+
+          $Part.Attempt++
+          [System.IO.FileStream]$Private:CreateStream = $Null
+          [System.String]$Private:DispatchStage = 'local'
+          Try {
+            # Creation is deliberately coupled to the first dispatch, rather than queue setup.
+            If (-not $Part.State.Created) {
+              $Parent = Split-Path -Path:($Part.State.Local) -Parent
+              If (-not (Test-Path -LiteralPath:$Parent -PathType:'Container')) {
+                [void](New-Item -Force -ItemType:'Directory' -Path:$Parent)
+              }
+              $CreateStream = [System.IO.FileStream]::new(
+                $Part.State.Temp,
+                [System.IO.FileMode]::Create,
+                [System.IO.FileAccess]::Write,
+                [System.IO.FileShare]::ReadWrite
+              )
+              $CreateStream.SetLength([System.Int64]$Part.State.Size)
+              $Part.State.Created = $True
+            }
+
+            $DispatchStage = 'request'
+            [System.Threading.Tasks.Task]$Private:GetTask = If ($Null -ne $PartFetcher) {
+              & $PartFetcher -Bucket:$Bucket -End:($Part.End) -ETag:($Part.State.ETag) -Key:($Part.State.Key) -Start:($Part.Start) -Unranged:($Part.Unranged)
+            } Else {
+              [Amazon.S3.Model.GetObjectRequest]$Private:GetRequest = [Amazon.S3.Model.GetObjectRequest]::new()
+              $GetRequest.BucketName = $Bucket
+              $GetRequest.Key = $Part.State.Key
+              $GetRequest.EtagToMatch = $Part.State.ETag
+              If (-not $Part.Unranged) {
+                $GetRequest.ByteRange = [Amazon.S3.Model.ByteRange]::new($Part.Start, $Part.End)
+              }
+              $Client.GetObjectAsync($GetRequest)
+            }
+            $Part.State.InFlight++
+            [void]$InFlight.Add([PSCustomObject]@{
+                File     = $Null
+                Part     = $Part
+                Response = $Null
+                Stage    = 'get'
+                Task     = $GetTask
+              })
+          } Catch {
+            [System.Exception]$Private:DispatchFailure = $PSItem.Exception
+            . $FailPart -Failure:$DispatchFailure -FailedPart:$Part -Stage:$DispatchStage
+          } Finally {
+            If ($Null -ne $CreateStream) { $CreateStream.Dispose() }
+          }
+        }
+
+        . $CleanFailed
+
+        $WaitTasks.Clear()
+        ForEach ($Transfer In $InFlight) {
+          [void]$WaitTasks.Add([System.Threading.Tasks.Task]$Transfer.Task)
+        }
+        If ($InFlight.Count -lt $TRANSFER_CONCURRENCY -and $NextReady -ne [System.DateTime]::MaxValue) {
+          [System.Int32]$Private:DelayMilliseconds = [System.Math]::Max(
+            1,
+            [System.Int32][System.Math]::Ceiling(($NextReady - [System.DateTime]::UtcNow).TotalMilliseconds)
+          )
+          [void]$WaitTasks.Add([System.Threading.Tasks.Task]::Delay($DelayMilliseconds))
+        }
+        If ($WaitTasks.Count -eq 0) { Continue }
+
+        [System.Int32]$Private:CompletedIndex = [System.Threading.Tasks.Task]::WaitAny($WaitTasks.ToArray())
+        If ($CompletedIndex -ge $InFlight.Count) { Continue }
+
+        [System.Object]$Private:Completed = $InFlight[$CompletedIndex]
+        [System.Exception]$Private:PartFailure = $Null
+        If ($Completed.Stage -eq 'get') {
+          [System.Object]$Private:PartResponse = $Null
+          [System.IO.FileStream]$Private:PartFile = $Null
+          [System.String]$Private:GetFailureStage = 'request'
+          Try {
+            $PartResponse = $Completed.Task.GetAwaiter().GetResult()
+            If ([System.Int64]$PartResponse.ContentLength -ne [System.Int64]$Completed.Part.Length) {
+              Throw ([System.IO.InvalidDataException]::new(
+                  ($Script:Message['Set-RepositoryContent.PartLength'] -f $PartResponse.ContentLength, $Completed.Part.Length)
+                ))
+            }
+            $GetFailureStage = 'local'
+            $PartFile = [System.IO.FileStream]::new(
+              $Completed.Part.State.Temp,
+              [System.IO.FileMode]::Open,
+              [System.IO.FileAccess]::Write,
+              [System.IO.FileShare]::ReadWrite,
+              1MB,
+              $True
+            )
+            $PartFile.Position = $Completed.Part.Start
+            $GetFailureStage = 'body'
+            $Completed.Response = $PartResponse
+            $Completed.File = $PartFile
+            $Completed.Stage = 'copy'
+            $Completed.Task = $PartResponse.ResponseStream.CopyToAsync($PartFile, 1MB)
+            $PartResponse = $Null
+            $PartFile = $Null
+          } Catch {
+            $PartFailure = $PSItem.Exception
+          } Finally {
+            If ($Null -ne $PartFile) { $PartFile.Dispose() }
+            If ($Null -ne $PartResponse) { $PartResponse.Dispose() }
+          }
+
+          If ($Null -eq $PartFailure) { Continue }
+
+          $Completed.Part.State.InFlight--
+          $InFlight.RemoveAt($CompletedIndex)
+          . $FailPart -Failure:$PartFailure -FailedPart:($Completed.Part) -Stage:$GetFailureStage
+          . $CleanFailed
+          Continue
+        }
+
+        [System.Int64]$Private:Copied = 0
+        Try {
+          [void]$Completed.Task.GetAwaiter().GetResult()
+          $Copied = [System.Int64]$Completed.File.Position - [System.Int64]$Completed.Part.Start
+          If ($Copied -ne [System.Int64]$Completed.Part.Length) {
+            Throw ([System.IO.InvalidDataException]::new(
+                ($Script:Message['Set-RepositoryContent.PartCopied'] -f $Copied, $Completed.Part.Length)
+              ))
+          }
+        } Catch {
+          $PartFailure = $PSItem.Exception
+        } Finally {
+          If ($Null -ne $Completed.File) { $Completed.File.Dispose() }
+          If ($Null -ne $Completed.Response) { $Completed.Response.Dispose() }
+        }
+
+        $Completed.Part.State.InFlight--
+        $InFlight.RemoveAt($CompletedIndex)
+        If ($Null -ne $PartFailure) {
+          . $FailPart -Failure:$PartFailure -FailedPart:($Completed.Part) -Stage:'body'
+        } ElseIf (-not $Completed.Part.State.Failed) {
+          $Completed.Part.State.Succeeded++
+          If ($Completed.Part.State.Succeeded -eq $Completed.Part.State.Total) {
+            Try {
+              [System.IO.File]::SetLastWriteTimeUtc(
+                $Completed.Part.State.Temp,
+                [System.DateTime]$Completed.Part.State.LastModified
+              )
+              If ([System.IO.File]::Exists($Completed.Part.State.Local)) {
+                [System.IO.File]::Replace(
+                  $Completed.Part.State.Temp,
+                  $Completed.Part.State.Local,
+                  [System.Management.Automation.Language.NullString]::Value
+                )
+              } Else {
+                [System.IO.File]::Move($Completed.Part.State.Temp, $Completed.Part.State.Local)
+              }
+              [void]$Fetched.Add([System.String]$Completed.Part.State.Key)
+            } Catch {
+              $Completed.Part.State.Failed = $True
+              $Completed.Part.State.Cause = $Script:Message['Set-RepositoryContent.PromotionFailed'] -f
+              $PSItem.Exception.Message
+            }
+          }
+        }
+        . $CleanFailed
+      }
+    } Finally {
+      # Normal completions dispose at their stage boundary; this protects the same resources if
+      # diagnostics or local I/O aborts the coordinator itself.
+      ForEach ($Transfer In $InFlight) {
+        If ($Null -ne $Transfer.File) { $Transfer.File.Dispose() }
+        If ($Null -ne $Transfer.Response) { $Transfer.Response.Dispose() }
+      }
+      If ($Null -ne $Client) { $Client.Dispose() }
+    }
+
+    [System.Object[]]$Private:FailedStates = @($DownloadStates | Where-Object -FilterScript:({ $PSItem.Failed }))
+    If ($FailedStates.Count -gt 0) {
+      [System.String[]]$Private:FailedItems = @($FailedStates | ForEach-Object -Process:({
+            $Script:Message['Set-RepositoryContent.FetchFailedItem'] -f $PSItem.Key, $PSItem.Cause
+          }))
+      Throw ($Script:Message['Set-RepositoryContent.FetchFailed'] -f ($FailedItems -join '; '))
     }
   }
 
@@ -413,20 +792,27 @@ If (-not $DryRun) {
 #region ------ [ Output ] ------------------------------------------------------------------- #
 Write-Debug -Message:'Entering Stage: Output'
 
+$CurrentCount = [System.Int32]($Content.Count - $Skipped.Count)
+$Summary = If ($Changed) {
+  $Script:Message['Set-RepositoryContent.Changed'] -f
+  $Fetched.Count, $Content.Count, $Bucket, $Surplus.Count
+} Else {
+  $Script:Message['Set-RepositoryContent.Current'] -f $CurrentCount, $Bucket
+}
+If ($Skipped.Count -gt 0) {
+  $Summary += $Script:Message['Set-RepositoryContent.ArchiveSummary'] -f $Skipped.Count
+}
+
 $Result = [PSCustomObject]@{
   bucket     = [System.String]$Bucket
   changed    = [System.Boolean]$Changed
   check_mode = [System.Boolean]$DryRun
-  fetched    = [System.String[]]@($Pending | ForEach-Object -Process:({ $PSItem.Key }))
-  msg        = If ($Changed) {
-    $Script:Message['Set-RepositoryContent.Changed'] -f
-    $Pending.Count, $Content.Count, $Bucket, $Surplus.Count
-  } Else {
-    $Script:Message['Set-RepositoryContent.Current'] -f $Content.Count, $Bucket
-  }
+  fetched    = [System.String[]]@($Fetched)
+  msg        = [System.String]$Summary
   path       = [System.String]$Path
   present    = [System.Int32]$Content.Count
   removed    = [System.String[]]@($Surplus)
+  skipped    = [System.Int32]$Skipped.Count
   swept      = [System.String[]]@($Removable)
 }
 
@@ -436,8 +822,9 @@ $Ansible.Result = $Result
 [void](Write-EventLog -EntryType:'Information' -EventId:1000 -LogName:$Script:EventLogName -Message:(
     [PSCustomObject]@{
       changed = [System.Boolean]$Result.changed
-      fetched = [System.Int32]$Pending.Count
+      fetched = [System.Int32]$Fetched.Count
       removed = [System.Int32]$Surplus.Count
+      skipped = [System.Int32]$Skipped.Count
       swept   = [System.Int32]$Removable.Count
       present = [System.Int32]$Content.Count
     } | ConvertTo-Json -Compress

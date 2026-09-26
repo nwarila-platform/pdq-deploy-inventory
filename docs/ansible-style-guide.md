@@ -213,6 +213,9 @@ clobber, verified at the module source). These stay `quiet: true` with an action
   acquisition belongs to the caller; document that the ambient identity itself holds
   each required grant, because assuming another identity couples the role to one caller
   shape.
+- A utility whose purpose is credential acquisition may try, in the caller's order, the
+  credential sets the caller declares and adopt the first that works; it is the only role
+  that writes connection credentials, and it never changes a play's escalation switch.
 - Never widen a grant for a module's convenience lookup; use its documented
   narrow-permission option.
 - Define an account shared by independent roles
@@ -270,7 +273,7 @@ restarts exactly once. That is the only thing a PROCESS `always:` does; cleanup 
 - Transport: **SSH** (org standard; key auth, one transport story across the fleet).
   `ansible_shell_type: powershell`; target's OpenSSH `DefaultShell` = PowerShell.
 - `become: false` at play level (framework chassis `become=sudo` is POSIX-only;
-  built-in administrator over SSH is already elevated). Revisit for least-privilege
+  the connection identity is already elevated). Revisit for least-privilege
   runs (runas) when a non-admin service account is introduced — TBD.
 - Declare
   connection settings PER GROUP and give the controller its own inventory host; do not

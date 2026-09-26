@@ -84,20 +84,24 @@ The mirror is one scheduled task, `PDQ Repository Sync`, with no schedule of its
 the Background Service User with its elevated token, logged on without a stored password. Each
 converge starts it where the repository is prepared and waits for it as the installation's last
 step, so a first fill that takes hours runs alongside the rest of the converge instead of ahead of
-it; a sync that fails fails the converge, naming its result and quoting its log. A converge that
+it. Each run writes one bounded Information outcome to the Application event log under source
+`PDQ Repository Sync`, and each retried fetch writes a Warning there. A sync that fails writes an
+Error outcome and fails the converge, naming its result and quoting that fresh event. A converge that
 finds a sync already running waits for it to finish before starting its own, and fails at the
 sync's own step if its run cannot start because the service account cannot log on. Task Scheduler
 ends a run after 24 hours. Each of the converge's two waits is bounded by the same limit — one for
 a run already in progress and one for its own — so a converge that meets an existing run can wait
-about twice the limit. A check run validates the task but starts nothing.
+about twice the limit. If no fresh outcome appears, the converge reports the task's last run result:
+the sync either did not start or failed before it could report. A check run validates the task but
+starts nothing.
 
 An administrator starts the same task between deployments with `Sync-Repository.bat` —
 right-click, "Run as administrator" — and a start while a sync is running is ignored, so run it
 again once that sync has finished to pick up anything published since it began. The
-launcher, the script the task runs and its log live in `Sync-Repository\` at the root of the
-repository drive: beside the repository rather than in it, so they are neither objects the sync can
-act on nor files inside the network share, and under the repository's own permissions, because the
-volume root lets any authenticated user modify what it holds.
+launcher and the script the task runs live in `Sync-Repository\` at the root of the repository
+drive: beside the repository rather than in it, so they are neither objects the sync can act on nor
+files inside the network share, and under the repository's own permissions, because the volume root
+lets any authenticated user modify what it holds.
 
 The sync is deterministic: afterwards the repository holds what the bucket holds and nothing else.
 The repository layout carries the version in the path so older versions stay addressable for a

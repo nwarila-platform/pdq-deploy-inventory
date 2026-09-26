@@ -129,6 +129,8 @@ Write-Debug -Message:'Entering Stage: Initialization'
 
 # Every user-facing message, in one table. Declared before anything that can fail, because the
 # trap below reports every failure through it.
+[System.String]$Script:EventLogName = 'Application'
+[System.String]$Script:EventSource = 'PDQ Repository Sync'
 [System.Collections.Hashtable]$Script:Message = @{
   'Set-RepositoryContent.Changed'          = '{0} of {1} object(s) fetched from {2}, {3} local file(s) removed'
   'Set-RepositoryContent.Current'          = '{0} object(s) already current from {1}'
@@ -183,19 +185,19 @@ If ($DebugLevel.Substring(2, 1) -eq '0') {
 
 # Universal trap: log diagnostics, rethrow so the task fails honestly. The warning comes first
 # and reads only the failing record, so no diagnostic after it can silence it: a background
-# run's log is the only place its cause is kept. An error PowerShell raises itself -- a Throw,
+# run's Error event is the durable place its cause is kept. An error PowerShell raises itself -- a Throw,
 # a provider error -- carries no inner invocation, so the diagnostic reads one only where it
 # exists. Wrapped so a partial error record can never replace the original failure with a
 # StrictMode property error.
 Trap {
   Try {
-    Write-Warning -Message:(
-      $Script:Message['Set-RepositoryContent.Failure'] -f @(
-        [System.Int64]$PSItem.InvocationInfo.ScriptLineNumber
-        [System.String]$PSItem.Exception.Message
-        [System.String]$PSItem.Exception.GetBaseException().GetType().FullName
-      )
+    [System.String]$Private:Failure = $Script:Message['Set-RepositoryContent.Failure'] -f @(
+      [System.Int64]$PSItem.InvocationInfo.ScriptLineNumber
+      [System.String]$PSItem.Exception.Message
+      [System.String]$PSItem.Exception.GetBaseException().GetType().FullName
     )
+    Write-Warning -Message:$Failure
+    [void](Write-EventLog -EntryType:'Error' -EventId:1002 -LogName:$Script:EventLogName -Message:$Failure -Source:$Script:EventSource)
     If (
       $PSItem.Exception.PSObject.Properties.Name -contains 'ErrorRecord' -and
       $Null -ne $PSItem.Exception.ErrorRecord.InvocationInfo
@@ -385,7 +387,9 @@ If (-not $DryRun) {
         Break
       } Catch {
         If ($Attempt -ge 3) { Throw }
-        Write-Warning -Message:($Script:Message['Set-RepositoryContent.FetchRetry'] -f $Fetch.Key, $PSItem.Exception.Message, ($Attempt + 1))
+        [System.String]$Private:FetchRetry = $Script:Message['Set-RepositoryContent.FetchRetry'] -f $Fetch.Key, $PSItem.Exception.Message, ($Attempt + 1)
+        Write-Warning -Message:$FetchRetry
+        [void](Write-EventLog -EntryType:'Warning' -EventId:1001 -LogName:$Script:EventLogName -Message:$FetchRetry -Source:$Script:EventSource)
         Start-Sleep -Seconds:10
         Get-ChildItem -LiteralPath:$Parent -File -Force |
           Where-Object -FilterScript:({
@@ -429,7 +433,16 @@ $Result = [PSCustomObject]@{
 $Ansible.Changed = $Result.changed
 $Ansible.Result = $Result
 
-# One line, so a log that captures every stream still ends with the whole result.
+[void](Write-EventLog -EntryType:'Information' -EventId:1000 -LogName:$Script:EventLogName -Message:(
+    [PSCustomObject]@{
+      changed = [System.Boolean]$Result.changed
+      fetched = [System.Int32]$Pending.Count
+      removed = [System.Int32]$Surplus.Count
+      swept   = [System.Int32]$Removable.Count
+      present = [System.Int32]$Content.Count
+    } | ConvertTo-Json -Compress
+  ) -Source:$Script:EventSource)
+# One line, so a standalone caller receives the whole result as one object.
 If ($StandaloneRun) {
   $Ansible.Result | ConvertTo-Json -Depth:4 -Compress
 }

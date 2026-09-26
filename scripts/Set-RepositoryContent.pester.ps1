@@ -25,6 +25,8 @@
     SETS Changed rather than inheriting a default. The context lives in this file's
     script scope, where the script finds it by name, and is removed after every case.
 #>
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidGlobalVars', '', Justification = 'Pester-generated scopes share the event recorder only through uniquely named process-local test state.')]
+Param ()
 
 Set-StrictMode -Version:'Latest'
 $ErrorActionPreference = 'Stop'
@@ -39,6 +41,26 @@ BeforeAll {
     [OutputType([System.Void])]
     Param ([Parameter(DontShow = $False, Mandatory = $False, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)][System.Int32]$Seconds)
     [void]$Seconds
+  }
+
+  Function Write-EventLog {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'The spec records event-log writes on Linux, where the cmdlet is absent.')]
+    [CmdletBinding(ConfirmImpact = 'None', DefaultParameterSetName = 'default', HelpUri = '', PositionalBinding = $False, SupportsPaging = $False, SupportsShouldProcess = $False)]
+    [OutputType([PSCustomObject])]
+    Param (
+      [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)][System.String]$EntryType,
+      [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)][System.Int64]$EventId,
+      [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)][System.String]$LogName,
+      [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)][System.String]$Message,
+      [Parameter(DontShow = $False, Mandatory = $True, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)][System.String]$Source
+    )
+    Write-Debug -Message:'[Write-EventLog] Entering'
+    [PSCustomObject]$Private:Result = $Null
+    If ($Global:RepositorySyncFailEventId -eq $EventId) { Throw 'fake event-log failure' }
+    [void]$Global:RepositorySyncEventLog.Add([PSCustomObject]@{ EntryType = $EntryType; EventId = $EventId; LogName = $LogName; Message = $Message; Source = $Source })
+    [PSCustomObject]$Result = [PSCustomObject]@{ Sentinel = $True }
+    $Result
+    Write-Debug -Message:'[Write-EventLog] Exiting'
   }
 
   Function New-AnsibleContext {
@@ -352,6 +374,8 @@ BeforeAll {
 Describe 'Set-RepositoryContent' {
 
   BeforeEach {
+    [System.Collections.Generic.List[System.Object]]$Global:RepositorySyncEventLog = [System.Collections.Generic.List[System.Object]]::new()
+    [System.Int64]$Global:RepositorySyncFailEventId = 0
     $Script:Sandbox = Join-Path -Path:([System.IO.Path]::GetTempPath()) -ChildPath:('repo-' + [System.Guid]::NewGuid().ToString('N'))
     $Script:Repository = Join-Path -Path:$Script:Sandbox -ChildPath:'Repository'
     [void](New-Item -ItemType:'Directory' -Path:$Script:Repository -Force)
@@ -493,6 +517,9 @@ Describe 'Set-RepositoryContent' {
       @(Get-FakeS3Log -Name:'Fetched').Count | Should -Be 2
       @(Get-ChildItem -Path:$Script:Repository -Recurse -Filter:'*.s3tmp.*').Count | Should -Be 0
       Get-Content -LiteralPath:$Log -Raw | Should -BeLike "*$Key*"
+      @($Global:RepositorySyncEventLog | Where-Object -Property:'EventId' -EQ -Value:1001).Count | Should -Be 1
+      @($Global:RepositorySyncEventLog | Where-Object -Property:'EventId' -EQ -Value:1001)[0].Message | Should -BeLike "*$Key*"
+      @($Global:RepositorySyncEventLog | Where-Object -Property:'EventId' -EQ -Value:1001)[0].EntryType | Should -BeExactly 'Warning'
     }
 
     It 'surfaces the third fetch failure unchanged after three attempts' {
@@ -503,6 +530,9 @@ Describe 'Set-RepositoryContent' {
       $Thrown.Exception.Message | Should -BeExactly 'fake fetch failure 3'
       $Thrown.Exception.GetType().FullName | Should -BeExactly 'System.Management.Automation.RuntimeException'
       @(Get-FakeS3Log -Name:'Fetched').Count | Should -Be 3
+      @($Global:RepositorySyncEventLog | Where-Object -Property:'EventId' -EQ -Value:1002).Count | Should -Be 1
+      @($Global:RepositorySyncEventLog | Where-Object -Property:'EventId' -EQ -Value:1002)[0].Message | Should -BeLike '*fake fetch failure 3*'
+      @($Global:RepositorySyncEventLog | Where-Object -Property:'EventId' -EQ -Value:1002)[0].EntryType | Should -BeExactly 'Error'
     }
 
     It 'keeps an expected temp-shaped sibling while cleaning the failed attempt' {
@@ -816,6 +846,26 @@ Describe 'Set-RepositoryContent' {
   }
 
   Context 'what it reports' {
+
+    It 'writes one bounded success event carrying counts' {
+      Set-FakeBucket -Entry:@((New-S3Entry -Key:'Vendor/App/1.0/app.exe'))
+      [void](New-AnsibleContext)
+      & $Script:ScriptPath -Bucket:$Script:Bucket -Path:$Script:Repository -Region:$Script:Region
+      $SuccessEvent = @($Global:RepositorySyncEventLog | Where-Object -Property:'EventId' -EQ -Value:1000)
+      $SuccessEvent | Should -HaveCount 1
+      $SuccessEvent[0].EntryType | Should -BeExactly 'Information'
+      $SuccessEvent[0].LogName | Should -BeExactly 'Application'
+      $SuccessEvent[0].Source | Should -BeExactly 'PDQ Repository Sync'
+      $SuccessEvent[0].Message | Should -BeExactly '{"changed":true,"fetched":1,"removed":0,"swept":0,"present":1}'
+    }
+
+    It 'preserves the original failure when its failure event cannot be written' {
+      $Global:RepositorySyncFailEventId = 1002
+      $Missing = Join-Path -Path:$Script:Sandbox -ChildPath:'NoSuchVolume'
+      [void](New-AnsibleContext)
+      $Thrown = { & $Script:ScriptPath -Bucket:$Script:Bucket -Path:$Missing -Region:$Script:Region } | Should -Throw -PassThru
+      $Thrown.Exception.Message | Should -BeLike '*repository directory is not there*'
+    }
 
     It 'emits the result as JSON when run outside the module' {
       Set-FakeBucket -Entry:@((New-S3Entry -Key:'Vendor/App/1.0/app.exe'))

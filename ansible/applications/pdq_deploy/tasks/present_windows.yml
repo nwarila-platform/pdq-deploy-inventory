@@ -92,15 +92,14 @@
     __repository_dir__: >-
       {{ pdq_deploy_running.repository.drive }}:\{{ pdq_deploy_running.repository.directory }}
     # The repository sync: its scheduled task, the limit Task Scheduler holds one run to -- which
-    # also bounds the converge's wait for it -- and the directory holding its script, launcher
-    # and log, beside the repository rather than in it, so neither the sync nor the share reaches
+    # also bounds the converge's wait for it -- and the directory holding its script and launcher
+    # beside the repository rather than in it, so neither the sync nor the share reaches
     # them.
     __sync_task__: 'PDQ Repository Sync'
     __sync_limit_days__: 1
     __sync_dir__: "{{ pdq_deploy_running.repository.drive }}:\\Sync-Repository"
     __sync_script__: "{{ __sync_dir__ }}\\Set-RepositoryContent.ps1"
     __sync_launcher__: "{{ __sync_dir__ }}\\Sync-Repository.bat"
-    __sync_log__: "{{ __sync_dir__ }}\\Sync-Repository.log"
     # Anchored on THIS role. A bare 'packages/*.xml' is resolved against the whole search path, so
     # a role whose own files/ did not arrive silently matches another tree's -- measured 2026-08-25,
     # it returned a file from the playbook's files/ directory.
@@ -419,7 +418,7 @@
     # MATERIALIZED from scripts/ by scripts/materialize-role-scripts.sh (the role tracks only
     # files/Set-RepositoryAcl.ps1.stub); run it before this role.
     #
-    # The sync directory takes the same list, before its script, launcher and log are written
+    # The sync directory takes the same list, before its script and launcher are written
     # into it: the volume root lets any authenticated user modify what it holds, and those are
     # files an administrator's elevated token runs.
 
@@ -627,6 +626,16 @@
         src: "{{ role_path }}/files/Set-RepositoryContent.ps1"
 
     # ----------------------------------------------------------------------------------------- #
+    # Application exists; category_file, message_file and parameter_file are omitted for direct strings.
+    # maximum_size, overflow_action and retention_days are omitted because the STIG/GPO owns them.
+
+    - name: 'PROCESS | Register The Repository Sync Event Source'
+      ansible.windows.win_eventlog:
+        name: 'Application'
+        sources: [ 'PDQ Repository Sync' ]
+        state: 'present'
+
+    # ----------------------------------------------------------------------------------------- #
     # The task runs as the Background Service User rather than SYSTEM, which the job does not
     # need. That account is an Administrator by vendor requirement and the repository admits it
     # only through that membership, so it runs with its elevated token. S4U logs it on without
@@ -640,12 +649,12 @@
     # rotation cannot break a task that stores none.
     #
     # A start while a run is in progress is ignored, so a run is never stopped mid-transfer and
-    # nothing races the running one for its log; hard termination is what lets the time limit
+    # nothing races the running one for the repository; hard termination is what lets the time limit
     # end the process. Priority 5 is normal: the module's default of 7 would run a ten-hour first
     # fill at below-normal CPU and low I/O. A failed run is not restarted: it fails the converge
     # that awaits it. The script runs as a script block, as the converge runs every script it
     # carries, so an execution policy that refuses unsigned files cannot stop the task when it
-    # does not stop the converge; every stream it writes goes to the log.
+    # does not stop the converge.
     #
     # The module compares every argument it is given with the stored task, so what is left unset
     # is left unset on purpose: the display name, author, date, source and version are
@@ -665,7 +674,7 @@
               ([ScriptBlock]::Create((Get-Content -LiteralPath '{{ __sync_script__ }}' -Raw)))
               -Bucket '{{ pdq_deploy_running.repository.bucket }}'
               -Path '{{ __repository_dir__ }}'
-              -Region '{{ pdq_deploy_running.repository.region }}' *> '{{ __sync_log__ }}'"
+              -Region '{{ pdq_deploy_running.repository.region }}'"
             path: 'powershell.exe'
         allow_demand_start: true
         allow_hard_terminate: true
@@ -673,6 +682,7 @@
         description: >-
           Mirrors the application repository bucket into {{ __repository_dir__ }}. Started on
           demand, by every deployment and by {{ __sync_launcher__ }}; it has no schedule.
+          Application event source PDQ Repository Sync gets results and retries; no event means no start or early failure, so check the last run result.
         disallow_start_if_on_batteries: false
         enabled: true
         execution_time_limit: "P{{ __sync_limit_days__ }}D"
@@ -697,7 +707,7 @@
 
     # ----------------------------------------------------------------------------------------- #
     # The same start for an administrator publishing new content between deployments: the
-    # launcher asks Task Scheduler to run the task above, and the log says how the run went.
+    # launcher asks Task Scheduler to run the task above, and the Application event log says how it went.
 
     - name: 'PROCESS | Write The Repository Sync Launcher'
       ansible.windows.win_template:
@@ -728,6 +738,26 @@
       community.windows.win_scheduled_task_stat:
         name: "{{ __sync_task__ }}"
         path: '\'
+
+    # ----------------------------------------------------------------------------------------- #
+    # Record numbers grow while the Application log is not cleared; this outcome is the boundary.
+    # Both reads use argv literally, so cmd and the free form are omitted; changed_when is false.
+    # chdir, creates, removes, stdin and output_encoding_override are omitted because none is needed.
+
+    - name: 'PROCESS | Read The Newest Repository Sync Outcome Before The Start'
+      changed_when: false
+      register: '__pdq_deploy_sync_outcome_before__'
+      when: not ansible_check_mode
+
+      ansible.windows.win_command:
+        argv:
+          - 'wevtutil.exe'
+          - 'qe'
+          - 'Application'
+          - '/q:*[System[Provider[@Name=''PDQ Repository Sync''] and (EventID=1000 or EventID=1002)]]'
+          - '/c:1'
+          - '/rd:true'
+          - '/f:xml'
 
     # ----------------------------------------------------------------------------------------- #
 
@@ -781,10 +811,11 @@
     # there, where any authenticated user can modify a file an administrator runs elevated; the
     # .cmd cannot work at all, calling an AWS command line this image does not ship.
 
-    - name: 'PROCESS | Remove The Superseded Repository Sync Scripts'
+    - name: 'PROCESS | Remove The Superseded Repository Sync Files'
       loop:
         - 'Sync-Repository.bat'
         - 'Sync-Repository.cmd'
+        - 'Sync-Repository\Sync-Repository.log'
       loop_control:
         label: "{{ item }}"
 
@@ -1481,42 +1512,61 @@
         path: '\'
 
     # ----------------------------------------------------------------------------------------- #
-    # A run that never launched writes no log, and the report must still name its result.
+    # A run that ends before it can report has no fresh outcome, and the report still names its result.
 
-    - name: 'PROCESS | Read The Repository Sync Log'
-      failed_when: false
+    - name: 'PROCESS | Read The Repository Sync Outcome'
+      changed_when: false
       register: '__pdq_deploy_sync_log__'
+      vars:
+        __sync_record_id__: >-
+          {{ __pdq_deploy_sync_outcome_before__.stdout | regex_search(
+             '<EventRecordID[^>]*>(\d+)</EventRecordID>', '\1')
+             | default([], true) | first | default('') | default('0', true) | int }}
       when: not ansible_check_mode
 
-      ansible.builtin.slurp:
-        src: "{{ __sync_log__ }}"
+      ansible.windows.win_command:
+        argv:
+          - 'wevtutil.exe'
+          - 'qe'
+          - 'Application'
+          - '/q:*[System[Provider[@Name=''PDQ Repository Sync''] and (EventID=1000 or EventID=1002) and EventRecordID > {{ __sync_record_id__ }}]]'
+          - '/c:1'
+          - '/rd:true'
+          - '/f:xml'
 
     # ----------------------------------------------------------------------------------------- #
     # The result is Task Scheduler's: the process's exit code, or why it never launched as a
-    # negative HRESULT, shown here the way Windows prints one. The log is UTF-16, as Windows
-    # PowerShell writes a redirect, and is quoted as last written: a run that never launched
-    # leaves the previous run's in place. On success its last line is the script's own result, so
-    # the change reported is the sync's, and a success whose last line does not parse fails.
+    # negative HRESULT, shown here the way Windows prints one. ID-1000 carries the bounded success
+    # JSON and ID-1002 the failure; an absent event is never replaced with an earlier run's outcome.
 
     - name: 'PROCESS | Report The Repository Sync Result'
       changed_when: >-
         __pdq_deploy_sync__.state.last_task_result == 0
-        and ((__log__ | trim).splitlines() | last | from_json).changed
+        and __outcome_id__ == '1000' and (__log__ | from_json).changed
       vars:
+        __outcome_id__: >-
+          {{ __pdq_deploy_sync_log__.stdout | regex_search(
+             '<EventID[^>]*>(\d+)</EventID>', '\1')
+             | default([], true) | first | default('') }}
         __log__: >-
-          {{ __pdq_deploy_sync_log__.content | default('')
-             | b64decode(encoding='utf-16') }}
+          {{ __pdq_deploy_sync_log__.stdout | regex_search('(?s)<Data>(.*?)</Data>', '\1')
+             | default([], true) | first | default('')
+             | replace('&lt;', '<') | replace('&gt;', '>') | replace('&quot;', '"')
+             | replace('&apos;', "'") | replace('&amp;', '&') }}
       when: not ansible_check_mode
 
       ansible.builtin.assert:
         fail_msg: >-
+          {% if __pdq_deploy_sync__.state.last_task_result == 0 %}The repository sync succeeded but wrote no readable outcome.{% else %}
           The repository sync failed with result
           {{ '0x%08X' | format(__pdq_deploy_sync__.state.last_task_result % 4294967296) }}.
-          {{ 'The log as last written: ' ~ (__log__ | trim)
-             if __pdq_deploy_sync_log__.content is defined
-             else 'No log exists at ' ~ __sync_log__ ~ '.' }}
+          {{ "The Application event log reported: '" ~ __log__ ~ "'."
+             if __outcome_id__ == '1002'
+             else 'The sync ended without writing an outcome.' }}
+          {% endif %}
         quiet: true
-        that: [ __pdq_deploy_sync__.state.last_task_result == 0 ]
+        that: [ __pdq_deploy_sync__.state.last_task_result == 0, __outcome_id__ == '1000',
+                (__log__ | from_json).changed is boolean ]
 
     #endregion --- [ Process: Await The Repository Sync ] ------------------------------------- #
 

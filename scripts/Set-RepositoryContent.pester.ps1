@@ -33,6 +33,13 @@ BeforeAll {
   $Script:ScriptPath = Join-Path -Path:$PSScriptRoot -ChildPath:'Set-RepositoryContent.ps1'
   $Script:Bucket = 'nwarila-apprepo'
   $Script:Region = 'us-east-1'
+  Function Start-Sleep {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'The retry spec shadows sleep so it does not wait.')]
+    [CmdletBinding(ConfirmImpact = 'None', DefaultParameterSetName = 'default', HelpUri = '', PositionalBinding = $False, SupportsPaging = $False, SupportsShouldProcess = $False)]
+    [OutputType([System.Void])]
+    Param ([Parameter(DontShow = $False, Mandatory = $False, ParameterSetName = 'default', ValueFromPipeline = $False, ValueFromPipelineByPropertyName = $False)][System.Int32]$Seconds)
+    [void]$Seconds
+  }
 
   Function New-AnsibleContext {
     [CmdletBinding(
@@ -254,6 +261,13 @@ BeforeAll {
     Add-Content -LiteralPath:'{State}/Fetched.log' -Value:$Key
     Add-Content -LiteralPath:'{State}/Multipart.log' -Value:($PSBoundParameters.ContainsKey('UseMultipartDownload'))
     Add-Content -LiteralPath:'{State}/Served.log' -Value:($MyInvocation.MyCommand.Module.Name)
+    If (Test-Path -LiteralPath:'{State}/FailFetches.txt') {
+      If ([System.Int32](Get-Content -LiteralPath:'{State}/FailFetches.txt') -gt 0) {
+        Set-Content -LiteralPath:'{State}/FailFetches.txt' -Value:([System.Int32](Get-Content -LiteralPath:'{State}/FailFetches.txt') - 1)
+        [System.IO.File]::WriteAllBytes($File + '.s3tmp.TEST0001', [System.Byte[]]@(1))
+        Throw ('fake fetch failure {0}' -f @(Get-Content -LiteralPath:'{State}/Fetched.log' | Where-Object -FilterScript:({ $PSItem -eq $Key })).Count)
+      }
+    }
     $Entry = @(Import-Clixml -LiteralPath:'{State}/Bucket.xml' | Where-Object -FilterScript:({ $PSItem.Key -eq $Key }))[0]
     [System.IO.File]::WriteAllBytes($File, [System.Byte[]]::new($Entry.Size))
     Get-Item -LiteralPath:$File
@@ -466,6 +480,42 @@ Describe 'Set-RepositoryContent' {
       @(Get-FakeS3Log -Name:'Fetched').Count | Should -Be 2
       $Ctx.Changed | Should -BeTrue
       $Ctx.Result.fetched | Should -Contain 'Vendor/App/1.0/app.exe'
+    }
+
+    It 'retries one failed fetch, warns with its key and removes its temporary file' {
+      $Key = 'Vendor/App/1.0/app.exe'
+      Set-FakeBucket -Entry:@((New-S3Entry -Key:$Key))
+      Set-Content -LiteralPath:(Join-Path -Path:$Script:FakeS3 -ChildPath:'FailFetches.txt') -Value:1
+      [void](New-AnsibleContext)
+      $Log = Join-Path -Path:$Script:Sandbox -ChildPath:'Retry.log'
+      & $Script:ScriptPath -Bucket:$Script:Bucket -Path:$Script:Repository -Region:$Script:Region 3> $Log
+      (Join-Path -Path:$Script:Repository -ChildPath:$Key) | Should -Exist
+      @(Get-FakeS3Log -Name:'Fetched').Count | Should -Be 2
+      @(Get-ChildItem -Path:$Script:Repository -Recurse -Filter:'*.s3tmp.*').Count | Should -Be 0
+      Get-Content -LiteralPath:$Log -Raw | Should -BeLike "*$Key*"
+    }
+
+    It 'surfaces the third fetch failure unchanged after three attempts' {
+      Set-FakeBucket -Entry:@((New-S3Entry -Key:'Vendor/App/1.0/app.exe'))
+      Set-Content -LiteralPath:(Join-Path -Path:$Script:FakeS3 -ChildPath:'FailFetches.txt') -Value:3
+      [void](New-AnsibleContext)
+      $Thrown = { & $Script:ScriptPath -Bucket:$Script:Bucket -Path:$Script:Repository -Region:$Script:Region } | Should -Throw -PassThru
+      $Thrown.Exception.Message | Should -BeExactly 'fake fetch failure 3'
+      $Thrown.Exception.GetType().FullName | Should -BeExactly 'System.Management.Automation.RuntimeException'
+      @(Get-FakeS3Log -Name:'Fetched').Count | Should -Be 3
+    }
+
+    It 'keeps an expected temp-shaped sibling while cleaning the failed attempt' {
+      $Key = 'Vendor/App/1.0/app.exe'
+      Set-FakeBucket -Entry:@((New-S3Entry -Key:$Key), (New-S3Entry -Key:($Key + '.s3tmp.TEST9999') -Size:3))
+      $Sibling = Set-LocalCopy -Key:($Key + '.s3tmp.TEST9999') -Size:3
+      [System.IO.File]::WriteAllBytes($Sibling, [System.Byte[]]@(1, 2, 3))
+      Set-Content -LiteralPath:(Join-Path -Path:$Script:FakeS3 -ChildPath:'FailFetches.txt') -Value:1
+      $Ctx = New-AnsibleContext
+      & $Script:ScriptPath -Bucket:$Script:Bucket -Path:$Script:Repository -Region:$Script:Region
+      [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($Sibling)) | Should -BeExactly 'AQID'
+      $Ctx.Result.fetched | Should -Not -Contain ($Key + '.s3tmp.TEST9999')
+      $Ctx.Result.removed | Should -Not -Contain $Sibling
     }
 
     It 'uses multipart download for every fetch when the module offers it' {

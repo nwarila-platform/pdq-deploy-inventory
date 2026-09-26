@@ -133,6 +133,7 @@ Write-Debug -Message:'Entering Stage: Initialization'
   'Set-RepositoryContent.Changed'          = '{0} of {1} object(s) fetched from {2}, {3} local file(s) removed'
   'Set-RepositoryContent.Current'          = '{0} object(s) already current from {1}'
   'Set-RepositoryContent.Failure'          = '[{0:0000}] {1} [{2}]'
+  'Set-RepositoryContent.FetchRetry'       = 'Fetching {0} failed ({1}); attempt {2} of 3 follows.'
   'Set-RepositoryContent.KeyOutsideRoot'   = 'The key {0} resolves outside the repository: {1}'
   'Set-RepositoryContent.NoS3Module'       = 'Neither AWS.Tools.S3 nor AWSPowerShell is installed, and the bucket is read through one of them.'
   'Set-RepositoryContent.ReparsePoint'     = 'The repository holds a reparse point: {0}. Remove it before syncing.'
@@ -376,7 +377,23 @@ If (-not $DryRun) {
     If (-not (Test-Path -LiteralPath:$Parent -PathType:'Container')) {
       [void](New-Item -Force -ItemType:'Directory' -Path:$Parent)
     }
-    Read-S3Object -BucketName:$Bucket -File:($Fetch.Local) -Key:($Fetch.Key) -Region:$Region @Multipart | Out-Null
+    # The module retries a part only up to its headers, so a connection dropped mid-body fails the
+    # object; retrying that object keeps one drop from failing the sync.
+    For ($Attempt = 1; ; $Attempt++) {
+      Try {
+        Read-S3Object -BucketName:$Bucket -File:($Fetch.Local) -Key:($Fetch.Key) -Region:$Region @Multipart | Out-Null
+        Break
+      } Catch {
+        If ($Attempt -ge 3) { Throw }
+        Write-Warning -Message:($Script:Message['Set-RepositoryContent.FetchRetry'] -f $Fetch.Key, $PSItem.Exception.Message, ($Attempt + 1))
+        Start-Sleep -Seconds:10
+        Get-ChildItem -LiteralPath:$Parent -File -Force |
+          Where-Object -FilterScript:({
+              $PSItem.Name.StartsWith([System.IO.Path]::GetFileName($Fetch.Local) + '.s3tmp.', [System.StringComparison]::OrdinalIgnoreCase) -and -not $Expected.Contains($PSItem.FullName)
+            }) |
+          ForEach-Object -Process:({ Remove-Item -Force -LiteralPath:($PSItem.FullName) })
+      }
+    }
   }
 
   # Deepest-first, so a parent emptied by its own child's removal goes in the same pass. The

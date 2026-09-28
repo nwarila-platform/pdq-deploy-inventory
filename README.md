@@ -177,3 +177,18 @@ deterministic in CI, but is held out of the converge for now: it drives the prod
 once per object, at 7–18 seconds a launch, and cost 30.8 minutes of a single deploy. The import and
 its prune are held together, because a prune without its import would empty the product. See
 TD-007 in [`docs/TECH-DEBT.md`](docs/TECH-DEBT.md).
+
+## Repository-owned loader and disk contracts
+
+The generic loader looks for role overlays only at these six paths, in ascending precedence:
+`vars/<os_family>.yml`, `vars/<os_family>_<env>.yml`,
+`vars/<os_family>_<distribution>.yml`, `vars/<os_family>_<distribution>_<env>.yml`,
+`vars/<os_family>_<distribution>_<major_version>.yml`, and
+`vars/<os_family>_<distribution>_<major_version>_<env>.yml`. Family and distribution are lower-case
+with spaces replaced by underscores; `<env>` is the trimmed, lower-case `ENV`, and major version is
+used as reported. `ENV` is required and validated; each optional file is recursively merged, with
+lists replaced rather than appended.
+
+The `windows_disk_manager` declaration in `ansible/playbooks/pdq-aws.yml` is complete for all three
+data disks. Each disk is selected exclusively by its AWS EBS `Function` tag; no declaration uses a
+disk number or volume size as identity.

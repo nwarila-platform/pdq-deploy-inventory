@@ -2,22 +2,15 @@
 # File: 'ansible/playbooks/pdq-aws.yml'
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
-# Brings the EPHEMERAL EC2 instance from "the API says it exists" to a domain-joined host with
-# its data disks provisioned. The two product roles follow, one product at a time, Inventory
-# first -- see the third play, where that order is a dependency rather than a preference.
+# Brings the ephemeral EC2 instances from "the API says they exist" to domain-joined hosts, then
+# provisions the server's data disks and configures both products in dependency order.
 #
-# Runs from the COMPOSED tree only: the workflow overlays this repository onto the pinned
-# ansible-framework and runs this against a dynamic EC2 inventory filtered to one run.
+# The inventory decides how each host is reached; this play's ordered credential sets decide
+# who logs on. A new image uses its image identity first, then the automation identity after
+# the join.
 #
-# The role order in the second play is the design. Each one is a precondition for the next: the
-# host must answer before it can be repaired, be repaired before a module runs, be on the network
-# before it can resolve a realm, be in the realm before it is a host worth provisioning, and have
-# its volumes lettered before a product is told to put a database on one.
-#
-# gather_facts and become are absent throughout because the framework's ansible.cfg makes
-# gathering explicit and escalation off. Both matter here: implicit gathering would run a module
-# over the shell os_bootstrap has not yet fixed, and the products escalate per task to the
-# background service user rather than running the whole play as somebody.
+# Runs from the composed tree: the workflow overlays this repository onto the pinned framework
+# and uses its configuration, role search path, connection defaults, and explicit fact gathering.
 #
 # =========================================================================================== #
 ---
@@ -67,81 +60,358 @@
 
 #endregion --- [ Play: Inventory Contract ] --------------------------------------------------- #
 
-#region ------ [ Play: Configure The Guest ] -------------------------------------------------- #
+#region ------ [ Play: Configure The Hosts ] -------------------------------------------------- #
 
-- name: 'PLAY | Configure The Guest (ephemeral AWS)'
-  hosts: 'pdq_servers'
+- name: 'PLAY | Configure The Hosts (ephemeral AWS)'
+  hosts: 'pdq_servers:domain_workstations'
   any_errors_fatal: true
-  # Declared once here and reused by the two later plays.
-  vars: &domain_directory
-    # Every OU in every play is written relative to this directory base.
-    domain_base_dn: 'DC=tcn,DC=trinitytechnicalservices,DC=com'
-
-    # The same directory by its DNS name, which addresses joins and directory binds.
-    domain_realm: 'tcn.trinitytechnicalservices.com'
-
-    # The join password is resolved on the controller at use and verified against its digest, so a
-    # replaced object fails at the read rather than at the join.
+  vars:
+    <<: &domain_directory
+      domain_base_dn: 'DC=tcn,DC=trinitytechnicalservices,DC=com'
+      domain_realm: 'tcn.trinitytechnicalservices.com'
     domain_join_user: "svc-domainjoin@{{ domain_realm }}"
-    domain_join_password: >-
-      {{ lookup('secret',
-                's3://' ~ aws_account_id ~ '-ansible/host_roles/domain_member/svc-domainjoin-password.txt',
-                '07493ed779c2962bff0b5e19cfa00b8cdb95defcf477f6b5bac36ddef55087ae') }}
+    domain_join_password: "{{ lookup('secret',\n          's3://' ~ aws_account_id ~ \
+      '-ansible/host_roles/domain_member/svc-domainjoin-password.txt',\n          \
+      '07493ed779c2962bff0b5e19cfa00b8cdb95defcf477f6b5bac36ddef55087ae') }}"
+    domain_automation_user: 'tcn\jenkins_runner'
+    domain_automation_password: "{{ lookup('secret',\n          's3://' ~ aws_account_id ~ \
+      '-ansible/host_roles/domain_member/jenkins_runner-password.txt',\n          \
+      '088a652ed843f0fa702a23d1f3ebe2e62c187c4c07f563e12c174e1d17945b03') }}"
+    domain_automation_private_key: "{{ lookup('secret',\n          's3://' ~ aws_account_id ~ \
+      '-ansible/host_roles/domain_member/jenkins_runner-ssh-private-key',\n          \
+      'be4cb9ba3d7835827b2c3677c8cf1df3aafee8a3698537c040cd6f986049d5b7') }}"
+    domain_automation_public_key: "{{ lookup('secret',\n          's3://' ~ aws_account_id ~ \
+      '-ansible/host_roles/domain_member/jenkins_runner-ssh-public-key',\n          \
+      'ad00b8b65b2d19f31595d4b62eaa79bccd05842d67cbe9b5c3d1ce4095f59281') }}"
+    ssh_trusted_principals:
+      - user: "{{ domain_automation_user }}"
+        public_key: "{{ domain_automation_public_key }}"
+    launch_key_file: "{{ lookup('ansible.builtin.env', 'CI_PRIVATE_KEY') \
+      | default('~/.ssh/nwarila-ec2-key', true) | expanduser }}"
+    connection_sets:
+      ssh:
+        - name: 'domain-automation'
+          connection: 'ssh'
+          user: "{{ domain_automation_user }}"
+          private_key: "{{ domain_automation_private_key }}"
+        - name: 'image-administrator'
+          connection: 'ssh'
+          user: 'Administrator'
+          private_key_file: "{{ launch_key_file }}"
+      winrm:
+        - name: 'domain-automation'
+          connection: 'winrm'
+          user: "{{ domain_automation_user }}"
+          password: "{{ domain_automation_password }}"
+          transport: 'ntlm'
+        - name: 'image-administrator'
+          connection: 'winrm'
+          user: 'Administrator'
+          password: "{{ __launch_password__.stdout }}"
+          transport: 'ntlm'
+    credential_resolver_candidates: "{{ connection_sets[connection_transport] }}"
+    credential_resolver_require_elevated: true
+    identity_wait_rounds: 60
+    identity_wait_pause_seconds: 10
+    # OU=Test is under OU=Domain Servers, whose Inventory container scans with svc-pdq-ms.
+    # Policy 8992C makes svc-pdq-ms a local administrator there (measured 2026-09-27).
+    domain_computer_ou: >-
+      {{ 'OU=PDQ' if inventory_hostname in groups['pdq_servers'] else 'OU=Test' }},OU=Domain
+      Servers,{{ domain_base_dn }}
+    domain_membership:
+      realm: "{{ domain_realm }}"
+      user: "{{ domain_join_user }}"
+      password: "{{ domain_join_password }}"
+      computer_ou: "{{ domain_computer_ou }}"
+      registration_address: "{{ aws_private_ip_address }}"
+
+  #region ------ [ Pre Tasks ] ---------------------------------------------------------------- #
+  pre_tasks:
+    - name: 'BEGIN | Record The Transport The Inventory Declares'
+      tags: ['always']
+      ansible.builtin.set_fact:
+        cacheable: false
+        connection_transport: "{{ ansible_connection }}"
+
+    - name: 'BEGIN | Wait For The Launch Password Data'
+      changed_when: false
+      check_mode: false
+      delegate_to: 'localhost'
+      tags: ['always']
+      when: connection_transport == 'winrm'
+      ansible.builtin.command:
+        argv: ['aws', 'ec2', 'wait', 'password-data-available',
+               '--instance-id', "{{ aws_instance_id }}", '--region', "{{ aws_region }}"]
+        expand_argument_vars: false
+        stdin_add_newline: true
+        strip_empty_ends: true
+
+    - name: 'BEGIN | Decrypt The Launch Password'
+      no_log: true
+      tags: ['always']
+      when: connection_transport == 'winrm'
+      block:
+        - name: 'BEGIN | Read The Decrypted Launch Password'
+          changed_when: false
+          check_mode: false
+          delegate_to: 'localhost'
+          register: '__launch_password__'
+          ansible.builtin.command:
+            argv: ['aws', 'ec2', 'get-password-data', '--instance-id', "{{ aws_instance_id }}",
+                   '--priv-launch-key', "{{ launch_key_file }}", '--region', "{{ aws_region }}",
+                   '--query', 'PasswordData', '--output', 'text']
+            expand_argument_vars: false
+            stdin_add_newline: true
+            strip_empty_ends: true
+
+    - name: 'BEGIN | Validate The Credential Sets'
+      tags: ['always']
+      ansible.builtin.include_role:
+        allow_duplicates: true
+        apply: {tags: ['always']}
+        defaults_from: 'main'
+        name: 'credential_resolver'
+        public: false
+        rescuable: true
+        rolespec_validate: true
+        tasks_from: 'validate'
+
+    # measured: 2026-09-26 -- a fresh host first answered at round 11 (resolver case 3b).
+    - name: 'BEGIN | Wait Until The Host Answers As One Of Its Sets'
+      become: false
+      changed_when: false
+      check_mode: false
+      ignore_errors: true
+      ignore_unreachable: true
+      loop: >-
+        {{ range(identity_wait_rounds | int)
+           | product(range(credential_resolver_candidates | length)) | list }}
+      loop_control:
+        break_when:
+          - __identity_first_answer__ is not unreachable
+          - __identity_first_answer__ is not failed
+        label: "round {{ item.0 + 1 }}: {{ credential_resolver_candidates[item.1].name }}"
+        pause: "{{ identity_wait_pause_seconds | int }}"
+      register: '__identity_first_answer__'
+      tags: ['always']
+      vars:
+        __identity_set__: "{{ credential_resolver_candidates[item.1] }}"
+        ansible_become: false
+        ansible_connection: "{{ __identity_set__.connection }}"
+        ansible_control_path: 'none'
+        ansible_password: null
+        ansible_port: "{{ __identity_set__.port | default(None) }}"
+        ansible_private_key: "{{ __identity_set__.private_key | default(None) }}"
+        ansible_private_key_file: >-
+          {{ __identity_set__.private_key_file | default(None) }}
+        ansible_ssh_password: "{{ __identity_set__.password | default(None) }}"
+        ansible_ssh_use_tty: false
+        ansible_user: "{{ __identity_set__.user }}"
+        ansible_winrm_message_encryption: >-
+          {{ None if __identity_set__.connection != 'winrm'
+             else 'always' if (__identity_set__.port | default(5986) | int) == 5985
+             else 'auto' }}
+        ansible_winrm_password: "{{ __identity_set__.password | default(None) }}"
+        ansible_winrm_scheme: >-
+          {{ None if __identity_set__.connection != 'winrm'
+             else 'http' if (__identity_set__.port | default(5986) | int) == 5985
+             else 'https' }}
+        ansible_winrm_transport: "{{ __identity_set__.transport | default(None) }}"
+      ansible.builtin.raw: 'echo ready'
+
+    - name: 'BEGIN | Require An Answer From One Of The Sets'
+      tags: ['always']
+      ansible.builtin.assert:
+        that:
+          - (__identity_first_answer__.results | last) is not unreachable
+          - (__identity_first_answer__.results | last) is not failed
+        fail_msg: >-
+          No credential set answered in {{ identity_wait_rounds }} rounds of
+          {{ credential_resolver_candidates | length }} sets, {{ identity_wait_pause_seconds }}
+          seconds between attempts; each attempt's answer is in the task above.
+        quiet: true
+        success_msg: 'A credential set answered.'
+
+    - name: 'BEGIN | Resolve The Connection Identity'
+      tags: ['always']
+      ansible.builtin.include_role:
+        allow_duplicates: true
+        apply: {tags: ['always']}
+        defaults_from: 'main'
+        name: 'credential_resolver'
+        public: false
+        rescuable: true
+        rolespec_validate: true
+        tasks_from: 'main'
+
+  #endregion --- [ Pre Tasks ] ---------------------------------------------------------------- #
 
   #region ------ [ Roles ] -------------------------------------------------------------------- #
   roles:
-
-    #region ------ [ Roles: Host Readiness ] -------------------------------------------------- #
-    # Waits for the connection itself, never a port: a TCP connect cannot speak for a connection
-    # reaching its target through a proxy or a tunnel, and this inventory can select those. It
-    # then waits out EC2Launch, detecting the platform itself rather than being told.
+    # Waits for the selected connection rather than a port, then waits out EC2Launch after
+    # detecting the platform (measured 2026-09-27).
     - role: 'host_readiness'
-    #endregion --- [ Roles: Host Readiness ] -------------------------------------------------- #
 
-    #region ------ [ Roles: OS Bootstrap ] ---------------------------------------------------- #
-    # Flips OpenSSH's DefaultShell to PowerShell and proves the session is elevated. Every module
-    # after it depends on that. Pass it NO vars: role params outrank the connection scoping it
-    # relies on, and a stray one silently re-breaks the pre-flip stage.
-
+    # Windows SSH needs its DefaultShell repaired before modules run (measured 2026-09-26).
+    # Role parameters would outrank the connection scoping that protects the pre-repair stage.
     - role: 'os_bootstrap'
 
-    #endregion --- [ Roles: OS Bootstrap ] ---------------------------------------------------- #
-
-    #region ------ [ Roles: Remote Client ] --------------------------------------------------- #
-    # Site policy: the role defaults every value remote_client needs, so this play states none.
-    # 'aws_account_id' is an extra-var -- only the pipeline knows which account it deploys into.
-    # Skipped when the products are being removed: an uninstall is not a reason to rebuild a
-    # tunnel the host is about to stop needing.
-
+    # Removing the products does not justify rebuilding the tunnel they are about to stop using.
     - role: 'remote_client'
       when: (state | default('present') | string | lower | trim) != 'absent'
 
-    #endregion --- [ Roles: Remote Client ] --------------------------------------------------- #
-
-    #region ------ [ Roles: Domain Member ] --------------------------------------------------- #
-    # Wraps the platform's join mechanism and defaults the site's realm, account and secret. Only
-    # two things are this repository's to say: the account it deploys into, and where a PDQ server
-    # is filed -- its own OU, not the deployment servers'.
-
+    # The join schedules its restart without waiting; the tasks below adopt the new identity.
     - role: 'domain_member'
       when: (state | default('present') | string | lower | trim) != 'absent'
       vars:
-        domain_member:
-          realm: "{{ domain_realm }}"
-          user: "{{ domain_join_user }}"
-          password: "{{ domain_join_password }}"
-          computer_ou: "OU=PDQ,OU=Domain Servers,{{ domain_base_dn }}"
-          registration_address: "{{ aws_private_ip_address }}"
+        domain_member: "{{ domain_membership | combine({'restart_wait': false}) }}"
 
-    #endregion --- [ Roles: Domain Member ] --------------------------------------------------- #
+  #endregion --- [ Roles ] -------------------------------------------------------------------- #
 
-    #region ------ [ Roles: Windows Disk Manager ] -------------------------------------------- #
-    # `function` names each EBS volume's Function tag from terraform/aws.tfvars, and the role
-    # resolves it to the attached disk itself -- a volume id only exists after apply. The letters
-    # are the contract this play publishes to the products below: Inventory's database on D,
-    # Deploy's on E, and the shared package repository on F.
+  #region ------ [ Tasks ] -------------------------------------------------------------------- #
+  tasks:
+    - name: 'PROCESS | Expect The Automation Identity After The Restart'
+      no_log: true
+      tags: ['always']
+      vars:
+        __identity_set__: "{{ connection_sets[connection_transport][0] }}"
+      when: __domain_member_boot_time__ is defined
+      block:
+        - name: 'PROCESS | Publish The Automation Identity'
+          ansible.builtin.set_fact:
+            cacheable: false
+            ansible_connection: "{{ __identity_set__.connection }}"
+            ansible_password: null
+            ansible_port: "{{ __identity_set__.port | default(None) }}"
+            ansible_private_key: "{{ __identity_set__.private_key | default(None) }}"
+            ansible_private_key_file: >-
+              {{ __identity_set__.private_key_file | default(None) }}
+            ansible_ssh_password: "{{ __identity_set__.password | default(None) }}"
+            ansible_user: "{{ __identity_set__.user }}"
+            ansible_winrm_message_encryption: >-
+              {{ None if __identity_set__.connection != 'winrm'
+                 else 'always' if (__identity_set__.port | default(5986) | int) == 5985
+                 else 'auto' }}
+            ansible_winrm_password: "{{ __identity_set__.password | default(None) }}"
+            ansible_winrm_scheme: >-
+              {{ None if __identity_set__.connection != 'winrm'
+                 else 'http' if (__identity_set__.port | default(5986) | int) == 5985
+                 else 'https' }}
+            ansible_winrm_transport: "{{ __identity_set__.transport | default(None) }}"
 
-    - role: 'windows_disk_manager'
+    # measured: 8df5615 -- the join restart is scheduled 5 s out; the old boot may answer first.
+    - name: 'PROCESS | Wait Until The Automation Identity Is Elevated On The New Boot'
+      become: false
+      changed_when: false
+      check_mode: false
+      ignore_errors: true
+      ignore_unreachable: true
+      loop: "{{ range(identity_wait_rounds | int) | list }}"
+      loop_control:
+        break_when:
+          - >-
+            __identity_post_join__ is skipped
+            or (__identity_post_join__ is not unreachable
+                and __identity_post_join__ is not failed
+                and __identity_post_join__.stdout is search('S-1-16-12288')
+                and (__identity_post_join__.stdout_lines | last | default('0') | int)
+                    > (__domain_member_boot_time__ | int))
+        label: "attempt {{ item + 1 }}"
+        pause: "{{ identity_wait_pause_seconds | int }}"
+      register: '__identity_post_join__'
+      tags: ['always']
+      vars:
+        ansible_become: false
+        ansible_control_path: 'none'
+        ansible_ssh_use_tty: false
+      when:
+        - __domain_member_boot_time__ is defined
+        - connection_transport == 'ssh'
+      ansible.builtin.raw: >-
+        powershell -NoProfile -NonInteractive -Command "whoami /groups /fo csv /nh;
+        (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToFileTimeUtc()"
+
+    - name: 'PROCESS | Require An Answer From The Automation Identity'
+      tags: ['always']
+      when:
+        - __domain_member_boot_time__ is defined
+        - connection_transport == 'ssh'
+      ansible.builtin.assert:
+        that:
+          - (__identity_post_join__.results | last) is not unreachable
+          - (__identity_post_join__.results | last) is not failed
+          - (__identity_post_join__.results | last).stdout is search('S-1-16-12288')
+          - >-
+            ((__identity_post_join__.results | last).stdout_lines | last | default('0') | int)
+            > (__domain_member_boot_time__ | int)
+        fail_msg: >-
+          After {{ identity_wait_rounds }} attempts {{ identity_wait_pause_seconds }} seconds
+          apart the automation identity never answered over SSH with a High-integrity token on
+          a boot newer than the join's restart; the last attempt's answer is in the task above.
+        quiet: true
+        success_msg: 'The automation identity is elevated on the new boot.'
+
+    # measured: 8df5615 -- the join restart is scheduled 5 s out; delay skips the old boot.
+    - name: 'PROCESS | Wait Until The Automation Identity Logs On After The Restart'
+      tags: ['always']
+      when:
+        - __domain_member_boot_time__ is defined
+        - connection_transport == 'winrm'
+      ansible.builtin.wait_for_connection:
+        connect_timeout: 5
+        delay: 60
+        sleep: "{{ identity_wait_pause_seconds | int }}"
+        timeout: "{{ (identity_wait_rounds | int) * (identity_wait_pause_seconds | int) }}"
+
+    - name: 'PROCESS | Resolve The Automation Identity On The New Boot'
+      tags: ['always']
+      vars:
+        credential_resolver_boot_time_after: "{{ __domain_member_boot_time__ }}"
+        credential_resolver_candidates: ["{{ connection_sets[connection_transport][0] }}"]
+      when: __domain_member_boot_time__ is defined
+      ansible.builtin.include_role:
+        allow_duplicates: true
+        apply: {tags: ['always']}
+        defaults_from: 'main'
+        name: 'credential_resolver'
+        public: false
+        rescuable: true
+        rolespec_validate: true
+        tasks_from: 'main'
+
+    - name: 'PROCESS | Confirm The Host Is Ready On The New Boot'
+      when: __domain_member_boot_time__ is defined
+      ansible.builtin.include_role:
+        allow_duplicates: true
+        defaults_from: 'main'
+        name: 'host_readiness'
+        public: false
+        rescuable: true
+        rolespec_validate: true
+        tasks_from: 'main'
+
+    - name: 'PROCESS | Confirm The Join On The New Boot'
+      vars:
+        domain_member: "{{ domain_membership }}"
+      when: __domain_member_boot_time__ is defined
+      ansible.builtin.include_role:
+        allow_duplicates: true
+        defaults_from: 'main'
+        handlers_from: 'main'
+        name: 'domain_member'
+        public: false
+        rescuable: true
+        rolespec_validate: true
+        tasks_from: 'main'
+        vars_from: 'main'
+
+  #endregion --- [ Tasks ] -------------------------------------------------------------------- #
+
+  #region ------ [ Post Tasks ] --------------------------------------------------------------- #
+  post_tasks:
+    # Function names map the EBS tags to the attached disks; the letters are the contract handed
+    # to the products below for their databases and shared repository.
+    - name: 'PROCESS | Provision The Data Disks'
       vars:
         windows_disk_manager:
           platform: 'aws'
@@ -158,84 +428,26 @@
               drive_letter: 'F'
               label: 'PDQREPO'
               allocation_unit: 65536
+      when: inventory_hostname in groups['pdq_servers']
+      ansible.builtin.include_role:
+        allow_duplicates: true
+        defaults_from: 'main'
+        name: 'windows_disk_manager'
+        public: false
+        rescuable: true
+        rolespec_validate: true
+        tasks_from: 'main'
+        vars_from: 'main'
 
-    #endregion --- [ Roles: Windows Disk Manager ] -------------------------------------------- #
-
-  #endregion --- [ Roles ] -------------------------------------------------------------------- #
-
-#endregion --- [ Play: Configure The Guest ] -------------------------------------------------- #
-
-#region ------ [ Play: Configure The Target ] -------------------------------------------------- #
-
-# The scan and deploy TARGET. It gets onto the network and into the directory and stops there:
-# no product is installed on it, because a machine that runs PDQ is not a machine PDQ reaches.
-# The roles are the guest play's minus the disks -- this host has none.
-- name: 'PLAY | Configure The Target (ephemeral AWS)'
-  hosts: 'domain_workstations'
-  any_errors_fatal: true
-  vars: *domain_directory
-
-  #region ------ [ Roles ] -------------------------------------------------------------------- #
-  roles:
-
-    #region ------ [ Roles: Host Readiness ] -------------------------------------------------- #
-    # Needs a description here.
-    - role: 'host_readiness'
-
-    #endregion --- [ Roles: Host Readiness ] -------------------------------------------------- #
-
-    #region ------ [ Roles: OS Bootstrap ] ---------------------------------------------------- #
-    # Server 2022, not 2025. The inventory names the release's bootstrap role in
-    # 'os_bootstrap_role' rather than this play passing it, because a role parameter outranks the
-    # connection scoping the pre-flip stage depends on. Pass it NO vars here either.
-
-    - role: 'os_bootstrap'
-
-    #endregion --- [ Roles: OS Bootstrap ] ---------------------------------------------------- #
-
-    #region ------ [ Roles: Remote Client ] --------------------------------------------------- #
-    # Needs a description here.
-
-    - role: 'remote_client'
-      when: (state | default('present') | string | lower | trim) != 'absent'
-
-    #endregion --- [ Roles: Remote Client ] --------------------------------------------------- #
-
-    #region ------ [ Roles: Domain Member ] --------------------------------------------------- #
-    # 'OU=Domain Workstations' matches the Inventory sync container that assigns a newly added
-    # workstation its workstation-class scan account.
-
-    - role: 'domain_member'
-      when: (state | default('present') | string | lower | trim) != 'absent'
-      vars:
-        domain_member:
-          realm: "{{ domain_realm }}"
-          user: "{{ domain_join_user }}"
-          password: "{{ domain_join_password }}"
-          computer_ou: "OU=Domain Workstations,{{ domain_base_dn }}"
-          registration_address: "{{ aws_private_ip_address }}"
-
-    #endregion --- [ Roles: Domain Member ] --------------------------------------------------- #
-
-  #endregion --- [ Roles ] -------------------------------------------------------------------- #
-
-  #region ------ [ Post Tasks ] --------------------------------------------------------------- #
-  # A target is not managed because it is domain-joined; it is managed because the console can
-  # reach it. PDQ copies a package to ADMIN$ and starts its runner there, both over SMB, and a
-  # Windows image ships every File and Printer Sharing inbound rule DISABLED -- measured on this
-  # bed: SMB listening, nine rules present, none enabled, so the console's connection is dropped
-  # by the target itself long after the network permits it.
-  #
-  # Scoped to the console's own address rather than the subnet: the subnet is the boundary
-  # terraform can express, this is the boundary the host can, and only one machine on it has any
-  # business opening ADMIN$ here. Runs after the roles because joining the domain is what applies
-  # the profile this rule lands in.
-  post_tasks:
-
+    # This bed's Windows image had nine disabled SMB rules (measured 2026-09-09). Limit ADMIN$
+    # access to the console's address after the join applies the domain firewall profile.
     - name: 'PROCESS | Let The Console Reach This Target Over SMB'
+      when: inventory_hostname in groups['domain_workstations']
       community.windows.win_firewall_rule:
         action: 'allow'
-        description: 'Inbound SMB from the PDQ console, which reaches ADMIN$ to copy a package and start its runner'
+        description: >-
+          Inbound SMB from the PDQ console, which reaches ADMIN$ to copy a package and start its
+          runner
         direction: 'in'
         enabled: true
         localport: '445'
@@ -247,7 +459,7 @@
 
   #endregion --- [ Post Tasks ] --------------------------------------------------------------- #
 
-#endregion --- [ Play: Configure The Target ] ------------------------------------------------- #
+#endregion --- [ Play: Configure The Hosts ] -------------------------------------------------- #
 
 #region ------ [ Play: PDQ Deploy And Inventory ] --------------------------------------------- #
 # One all-in-one Central Server: both products co-located, in the same operating mode, under one

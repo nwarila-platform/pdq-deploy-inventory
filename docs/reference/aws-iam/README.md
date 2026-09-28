@@ -1,6 +1,6 @@
 # AWS IAM reference
 
-The IAM this deployment runs with, **exported from the live account** on 2026-09-14. The account
+The IAM this deployment runs with, **exported from the live account** on 2026-09-27. The account
 id is the only substitution, written as `<account-id>`. [`manifest.json`](manifest.json) records the
 default version of every policy exported.
 
@@ -37,12 +37,11 @@ None of the roles carries an inline policy.
   `ec2.amazonaws.com`.
 - **KMS** cryptographic use is conditioned on `kms:ViaService` for EC2 in `us-east-1`.
 
-## Proposed, not yet applied
+## Applied helper-script publication grant
 
-`…_runner_s3` carries one statement the live account does not have yet:
-**`PublishTheTwoHelperScriptsPackagesRun`**. Everything else in this directory is an export.
-`manifest.json` records the difference; clear that block once the statement is applied and the
-documents are re-exported.
+`…_runner_s3` carries the live **`PublishTheTwoHelperScriptsPackagesRun`** statement, with an
+`aws:ResourceAccount` condition limiting its S3 actions to this account. Everything in this
+directory is a live export, and `manifest.json` records no proposed policy block.
 
 It exists because deploy packages call helper scripts by path — `$(Repository)\~resources\`
 — and nothing puts them there. The repository sync is a deterministic pull from the bucket, so

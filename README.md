@@ -55,10 +55,15 @@ flowchart LR
 ## Domain integration
 
 Both hosts join the directory: the PDQ server is filed under `OU=PDQ,OU=Domain Servers` and the
-test target under `OU=Domain Workstations`, each publishing its VPC address as its name. The
+test target under `OU=Test,OU=Domain Servers`, each publishing its VPC address as its name. The
 products' background services stay under one **local** account (`.\svc-pdq`). Inventory also holds
 that account as its default fallback; what reaches a target in one of the managed OUs is that OU's
 **domain** class account.
+
+The inventory names the transport and address, but no login user. The playbook tries the image
+identity on a new host, publishes the domain automation identity after the join, and starts later
+runs with that automation identity. An ad-hoc command passes the generated identity JSON, as both
+CI ad-hoc proofs do, instead of relying on inventory credentials.
 
 The three domain accounts are created once, by the separate elevated `pdq_ad_config` role against
 a domain controller: one per machine class (`svc-pdq-ws`, `-ms`, `-dc`). Each Inventory sync
@@ -102,6 +107,8 @@ host. A push to `main` proves it immediately;
 
 Locally, `scripts/compose-and-run.sh` builds the same composed tree and runs the play against a
 chosen inventory (`COMPOSE_INVENTORY=ansible/inventory/aws_ec2.yml`), given live AWS credentials.
+`ANSIBLE_SSH_AGENT` or its `SSH_AUTH_SOCK` fallback must name an agent holding the launch key
+before an SSH host is contacted. A passphrase-protected key must already be in the agent.
 
 ## OS-drive replacement
 

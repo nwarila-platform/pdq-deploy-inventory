@@ -39,18 +39,6 @@
       "Sid": "ReadAppRepoByExactPathOnlyNoListing"
     },
     {
-      "Action": [
-        "s3:GetObjectTagging",
-        "s3:PutObject"
-      ],
-      "Effect": "Allow",
-      "Resource": [
-        "arn:aws:s3:::<account-id>-apprepo/~resources/Get-InstalledSoftware.ps1",
-        "arn:aws:s3:::<account-id>-apprepo/~resources/Start-Uninstaller.ps1"
-      ],
-      "Sid": "PublishTheTwoHelperScriptsPackagesRun"
-    },
-    {
       "Action": "s3:GetObject",
       "Condition": {
         "StringEquals": {
@@ -95,9 +83,29 @@
       "Effect": "Allow",
       "Resource": [
         "arn:aws:s3:::<account-id>-ansible/host_roles/domain_member/svc-domainjoin-password.txt",
-        "arn:aws:s3:::<account-id>-ansible/host_roles/remote_client/aws-ec2-test.ovpn"
+        "arn:aws:s3:::<account-id>-ansible/host_roles/remote_client/aws-ec2-test.ovpn",
+        "arn:aws:s3:::<account-id>-ansible/host_roles/domain_member/jenkins_runner-ssh-private-key",
+        "arn:aws:s3:::<account-id>-ansible/host_roles/domain_member/jenkins_runner-password.txt",
+        "arn:aws:s3:::<account-id>-ansible/host_roles/domain_member/jenkins_runner-ssh-public-key"
       ],
       "Sid": "ReadOnlyTheDomainJoinAndOpenVpnCredentials"
+    },
+    {
+      "Action": [
+        "s3:GetObjectTagging",
+        "s3:PutObject"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "<account-id>"
+        }
+      },
+      "Effect": "Allow",
+      "Resource": [
+        "arn:aws:s3:::<account-id>-apprepo/~resources/Get-InstalledSoftware.ps1",
+        "arn:aws:s3:::<account-id>-apprepo/~resources/Start-Uninstaller.ps1"
+      ],
+      "Sid": "PublishTheTwoHelperScriptsPackagesRun"
     }
   ],
   "Version": "2012-10-17"

@@ -3,9 +3,8 @@
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
 # The dynamic EC2 inventory, and the only one: the deployment is ephemeral, so an instance id
-# written into a static file here would be wrong the moment its run ended. This finds the instance
-# the current run created and derives every connection setting from that instance, which is why the
-# playbook declares no connection variables of its own.
+# written into a static file here would be wrong the moment its run ended. This finds this run's
+# instances. The inventory says how to reach a host; the playbook's sets decide who logs on.
 #
 # =========================================================================================== #
 ---
@@ -110,7 +109,8 @@ compose:
   # and a newline landing inside the quoted ProxyCommand would split it into two shell commands --
   # the second failing, the first silently losing its port. Breaks between fragments are harmless.
   ansible_ssh_common_args: >-
-    '-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=20'
+    '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+    ~ ' -o ServerAliveInterval=30 -o ServerAliveCountMax=20'
     ~ (
       ((aws_ec2_tags.Connection | default('ssh-direct', true)) == 'ssh-ssm') |
         ternary(
@@ -122,11 +122,7 @@ compose:
 
   #endregion --- [ Reaching the host ] -------------------------------------------------------- #
 
-  #region ------ [ Logging in ] --------------------------------------------------------------- #
-  ansible_user: >-
-    (aws_platform_details | lower is search('windows'))
-      | ternary('Administrator', 'ec2-user')
-
+  #region ------ [ Running commands ] --------------------------------------------------------- #
   # Over SSH on Windows the bootstrap flips OpenSSH's DefaultShell to PowerShell before any non-raw
   # work begins. The value is correct before that flip too, where only raw tasks run and the
   # registry reads the bootstrap uses parse under either shell. A WinRM leg is different rather than
@@ -139,11 +135,6 @@ compose:
         | ternary('powershell', 'sh')
       )
 
-  # The workflow stages its key and names it;
-  ansible_ssh_private_key_file: >-
-    lookup('ansible.builtin.env', 'CI_PRIVATE_KEY')
-    | default('~/.ssh/nwarila-ec2-key', true)
-
   # Linux interpreter: RHEL converges on platform-python, the interpreter its system packages
   # target; every other distribution uses the standard python3. Windows connections ignore
   # this variable. A task needing a newer boto3 than the pinned interpreter carries overrides
@@ -152,43 +143,25 @@ compose:
     (aws_platform_details | lower is search('red hat'))
       | ternary('/usr/libexec/platform-python', '/usr/bin/python3')
 
-  #endregion --- [ Logging in ] --------------------------------------------------------------- #
+  #endregion --- [ Running commands ] --------------------------------------------------------- #
 
   #region ------ [ WinRM only ] --------------------------------------------------------------- #
-  # The SSH legs are what this repository deploys over and what its proofs cover. A WinRM leg needs
-  # three things this repository does not supply: pywinrm on the controller, a password (WinRM has
-  # no key authentication), and a listener on the target. These are what it would connect with.
-
-  # NTLM rather than basic: the credential never crosses the wire in a header, and it works against
-  # the workgroup-joined local Administrator a freshly launched instance is.
+  # The play supplies the password (the launch password, then the automation identity's); a WinRM
+  # leg still needs pywinrm on the controller and a listener on the target, and is proven on the
+  # local bed only. NTLM avoids Basic's header for workgroup Administrator (measured 2026-09-27).
   ansible_winrm_transport: "'ntlm'"
 
   # An EC2 Windows image generates its 5986 certificate on the instance, so there is nothing to
   # chain to. A real downgrade against the SSH legs, which authenticate the host key.
   ansible_winrm_server_cert_validation: "'ignore'"
 
-  # Where the launch password comes from on a WinRM leg. The play that fetches it gates on
-  # 'ec2'; every other leg composes empty, so SSH-only repositories never trip that play.
-  windows_password_source: >-
-    ((aws_ec2_tags.Connection | default('ssh-direct', true)) == 'winrm-direct')
-    | ternary('ec2', '')
-
   #endregion --- [ WinRM only ] --------------------------------------------------------------- #
 
   #region ------ [ Framework inputs ] --------------------------------------------------------- #
-  # The bootstrap dispatcher reads this to pick a bootstrap role WITHOUT running a fact module
-  # first, which on Windows would precede the transport repair the bootstrap exists to perform.
+  # host_readiness reads this family before os_bootstrap repairs the module transport.
   platform: >-
     (aws_platform_details | lower is search('windows'))
       | ternary('Windows', 'Linux')
-
-  # 'platform' resolves a FAMILY, and the dispatcher's map holds one role per family -- so it
-  # cannot tell Server 2022 from Server 2025, and both are deployed here. This names the role
-  # outright for the hosts that are not on the default release. Empty falls through to the map,
-  # which is what every PDQ host wants.
-  os_bootstrap_role: >-
-    ((aws_ec2_tags.Function | default('', true)) == 'workstation')
-      | ternary('Windows_Server_2022', '')
 
   # The framework loader requires a variable NAMED 'ENV' and lower-cases the value itself. Read bare
   # because the Environment filter above admits only instances that carry the tag.

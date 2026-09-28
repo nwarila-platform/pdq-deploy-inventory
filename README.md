@@ -21,6 +21,18 @@ At execution time the two application roles overlay onto a version-pinned
 Each application role is also independently composable with `windows_disk_manager`; the full
 deployment composes both application roles on the same host.
 
+The framework is the execution chassis: it supplies `ansible.cfg`, the generic role loader, lint
+configuration and CI conventions. This repository keeps `.yamllint.yml` and `.editorconfig` beside
+its application roles for local parity; overlaid roles resolve by bare name from the framework's
+`applications/` namespace. The loader requires `ENV` and recursively merges role
+defaults, OS/environment overlays and the caller's role mapping, replacing lists rather than
+appending them.
+
+Provisioning hands the composed host play an installed Windows OS, a reachable inventory-declared
+transport and any attached blank data volumes. Terraform owns disk count, size and attachment;
+the play owns guest state from disk initialization onward. Data volumes are not formatted into the
+source image: `windows_disk_manager` initializes and assigns them on every fresh provision.
+
 This is the production automation for **Trinity Technical Services**, the author's company. The
 directory, accounts and hostnames it names are that company's own.
 
@@ -67,6 +79,8 @@ selects that transport's declarations, obtains an EC2 launch password when a set
 publishes the first working identity. After a join restart, `domain_member` calls the resolver with
 the domain-only set before it resumes its proofs. An ad-hoc command passes the generated identity
 JSON, as both CI ad-hoc proofs do, instead of relying on inventory credentials.
+`credential_resolver` is the only role that publishes connection-credential facts; it does not
+publish or change the play's escalation switch.
 
 The three domain accounts are created once, by the separate elevated `pdq_ad_config` role against
 a domain controller: one per machine class (`svc-pdq-ws`, `-ms`, `-dc`). Each Inventory sync
@@ -112,6 +126,8 @@ Locally, `scripts/compose-and-run.sh` builds the same composed tree and runs the
 chosen inventory (`COMPOSE_INVENTORY=ansible/inventory/aws_ec2.yml`), given live AWS credentials.
 `ANSIBLE_SSH_AGENT` or its `SSH_AUTH_SOCK` fallback must name an agent holding the launch key
 before an SSH host is contacted. A passphrase-protected key must already be in the agent.
+The script keeps SSH multiplexing sockets in `.compose/.cp` and clears that directory before each
+run so an interrupted run cannot strand a socket for the next play.
 
 ## OS-drive replacement
 

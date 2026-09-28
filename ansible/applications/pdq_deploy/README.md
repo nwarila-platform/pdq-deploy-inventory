@@ -175,6 +175,9 @@ profile that step runs in `scan_profiles:`.
   same operating mode, under one service account; the mode is written literally, never offered.
 - **One package repository and network share.** Deploy owns their directory, ACL, and share state
   on the caller-supplied repository drive.
+- **Materialized ACL rights.** Windows reads a declared `ReadAndExecute` grant back as
+  `ReadAndExecute, Synchronize`; verification expects that materialized form without widening the
+  declared right.
 - **A local service, authoritative credentials.** The service logs on as a local account; Deploy's
   own credential list may be empty when deployments use Inventory scan credentials.
 - The console port defaults to the product's own **6336**.

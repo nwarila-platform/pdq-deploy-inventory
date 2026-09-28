@@ -18,6 +18,8 @@ result, and destroys the environment.
 At execution time the two application roles overlay onto a version-pinned
 [`ansible-framework`](https://github.com/nwarila-platform/ansible-framework) checkout, whose
 `windows_disk_manager` provisions the disks.
+Each application role is also independently composable with `windows_disk_manager`; the full
+deployment composes both application roles on the same host.
 
 This is the production automation for **Trinity Technical Services**, the author's company. The
 directory, accounts and hostnames it names are that company's own.
@@ -60,10 +62,11 @@ products' background services stay under one **local** account (`.\svc-pdq`). In
 that account as its default fallback; what reaches a target in one of the managed OUs is that OU's
 **domain** class account.
 
-The inventory names the transport and address, but no login user. The playbook tries the image
-identity on a new host, publishes the domain automation identity after the join, and starts later
-runs with that automation identity. An ad-hoc command passes the generated identity JSON, as both
-CI ad-hoc proofs do, instead of relying on inventory credentials.
+The inventory names the transport and address, but no login user. The `credential_resolver` role
+selects that transport's declarations, obtains an EC2 launch password when a set requests one, and
+publishes the first working identity. After a join restart, `domain_member` calls the resolver with
+the domain-only set before it resumes its proofs. An ad-hoc command passes the generated identity
+JSON, as both CI ad-hoc proofs do, instead of relying on inventory credentials.
 
 The three domain accounts are created once, by the separate elevated `pdq_ad_config` role against
 a domain controller: one per machine class (`svc-pdq-ws`, `-ms`, `-dc`). Each Inventory sync
@@ -127,13 +130,13 @@ the rebuilt host with the data preserved.
 | `ansible/applications/pdq_inventory/` | PDQ Inventory application role: credentials, directory sync, collections |
 | `ansible/applications/pdq_deploy/` | PDQ Deploy application role and repository/share owner |
 | `ansible/applications/pdq_ad_config/` | Elevated role run by hand against a domain controller: the PDQ OU and service accounts |
-| `ansible/playbooks/pdq-aws.yml` | Composed play: inventory contract, host readiness, disks, domain join, then both products |
+| `ansible/playbooks/pdq-aws.yml` | Composed play: inventory contract, credential resolution, readiness, bootstrap, domain join, disks, then both products |
 | `ansible/playbooks/ad-config.yml` | The directory objects PDQ depends on, declared once and run by an operator |
 | `ansible/inventory/aws_ec2.yml` | Dynamic AWS inventory (filters this run's instances by tag) |
 | `ansible/inventory/directory.yml` | The domain controller `ad-config.yml` runs against |
 | `terraform/aws.tfvars` | Data-only input to the pinned aws-terraform-framework (no `.tf` files here) |
 | `scripts/` | Composition, script materialization, and the products' PowerShell utilities |
-| `docs/ansible-style-guide.md` | Ansible design and authoring rules |
+| [`nwarila-platform/ansible-style-guide`](https://github.com/nwarila-platform/ansible-style-guide) | Canonical organization Ansible style specification |
 | `docs/TECH-DEBT.md` | Current engineering debt |
 | `docs/reference/` | What the deployment depends on but does not create: IAM exported from the live account, Group Policy, WMI filters |
 

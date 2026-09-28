@@ -4,7 +4,7 @@
 #
 # The dynamic EC2 inventory, and the only one: the deployment is ephemeral, so an instance id
 # written into a static file here would be wrong the moment its run ended. This finds this run's
-# instances. The inventory says how to reach a host; the playbook's sets decide who logs on.
+# instances. The inventory says how to reach a host; credential_resolver selects who logs on.
 #
 # =========================================================================================== #
 ---
@@ -146,9 +146,9 @@ compose:
   #endregion --- [ Running commands ] --------------------------------------------------------- #
 
   #region ------ [ WinRM only ] --------------------------------------------------------------- #
-  # The play supplies the password (the launch password, then the automation identity's); a WinRM
-  # leg still needs pywinrm on the controller and a listener on the target, and is proven on the
-  # local bed only. NTLM avoids Basic's header for workgroup Administrator (measured 2026-09-27).
+  # credential_resolver supplies the launch password, then domain_member reacquires the automation
+  # identity after its restart. A WinRM leg still needs pywinrm on the controller and a listener on
+  # the target. NTLM avoids Basic's header for Administrator (measured 2026-09-27).
   ansible_winrm_transport: "'ntlm'"
 
   # An EC2 Windows image generates its 5986 certificate on the instance, so there is nothing to

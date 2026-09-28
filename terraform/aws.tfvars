@@ -17,9 +17,9 @@
 # repository owns. Direct SSH requires the instance's launch-time public address as well as the
 # runner-scoped security group.
 #
-# readiness_gate is FALSE by design: the playbook owns the bounded connection-readiness check.
-# The OpenSSH DefaultShell boots as cmd; the playbook's bootstrap play flips it to PowerShell on
-# first contact, and every play after that declares the PowerShell shell type.
+# readiness_gate is FALSE by design: credential_resolver owns the bounded-round connection wait.
+# The OpenSSH DefaultShell boots as cmd; os_bootstrap flips it to PowerShell after raw first contact,
+# and every later play declares the PowerShell shell type.
 #
 # =========================================================================================== #
 

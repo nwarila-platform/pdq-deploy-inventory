@@ -154,7 +154,6 @@
 # --- [ allowed: published documentation ] --------------------------------------------------- #
 # Enumerated: local working notes live alongside these on disk and are never published.
 !/docs/TECH-DEBT.md
-!/docs/ansible-style-guide.md
 !/docs/reference/README.md
 !/docs/reference/aws-iam/README.md
 !/docs/reference/aws-iam/instance-profiles/nwarila-ec2-apprepo-profile.json

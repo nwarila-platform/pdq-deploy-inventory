@@ -10,8 +10,8 @@
 #   * Reachability: the PDQ server uses direct SSH to its subnet-assigned public IPv4; the target
 #     uses SSH through Session Manager to its instance id and needs no inbound SSH rule. The
 #     framework adds the run-scoped security group sourced from the runner and optional operator
-#     addresses. This configuration creates no EIP and has no NAT. The playbook performs the
-#     bounded connection-readiness check because readiness_gate remains disabled.
+#     addresses. This configuration creates no EIP and has no NAT. credential_resolver performs
+#     the bounded-round connection wait because readiness_gate remains disabled.
 #   * AWS credentials are exchanged before provisioning and refreshed before eligible teardown.
 #     The initial 7,800-second session covers normal deployment work; the teardown refresh uses a
 #     modest 3,600-second session so long holds do not reach destroy with expired credentials.
@@ -382,8 +382,8 @@ jobs:
             | sha256sum --check --strict
           sudo dpkg --install "${plugin_deb}"
 
-      # Readiness, configuration and the PDQ proof all live in the playbook. The EC2 inventory
-      # plugin filters live AWS instances to this repository and run before exposing one target.
+      # Credential resolution, readiness, configuration and the PDQ proof are role-composed by the
+      # playbook. The EC2 inventory filters live instances to this repository and workflow run.
       #
       # A converge onto a NEW instance measured 32 minutes (2026-08-25): roughly seven waiting for
       # the machine to answer and finish its first boot, seven preparing it, and eight per product.
@@ -743,12 +743,11 @@ jobs:
 
       # OS-DRIVE REPLACEMENT proof (opt-in). Bumping refresh_serial replaces the OS instance in
       # place while the STANDALONE data volumes detach and re-attach to the replacement; the guest
-      # must then resume on its existing databases and repository. The re-converge adopts the
-      # reattached data (the disk role leaves a labelled volume untouched and re-letters it), and a
-      # second post-swap converge must report only the two PROCESS | Enforce The Background Service
-      # Credential changes -- the same bounded idempotency proof, on a host whose OS was rebuilt.
-      # The framework's user_data reinstalls the launch key on the fresh OS, so no key handling is
-      # needed here.
+      # must then resume on its existing databases and repository. credential_resolver uses the
+      # image identity restored by user_data, domain_member reacquires the domain identity after its
+      # restart, and the disk role adopts each labelled volume. A second post-swap converge must
+      # report only the two PROCESS | Enforce The Background Service Credential changes -- the same
+      # bounded idempotency proof, on a host whose OS was rebuilt.
       - name: Replace the OS drive, keeping the data volumes (refresh_serial bump)
         if: inputs.os_swap
         timeout-minutes: 15

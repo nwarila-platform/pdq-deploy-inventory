@@ -24,7 +24,7 @@ colliding with the role input that selects `present_windows.yml` or `absent_wind
 |---|---|
 | Platform family and shell type | inventory, from the instance's `platform_details` |
 | Connection transport, port, address and SSM proxy | inventory, from the `Connection` tag |
-| Login user, private key or password | the playbook's ordered credential sets |
+| Login user, private key or password | `credential_resolver`, from the play's ordered sets |
 | `ENV` (the framework loader's input) | the `Environment` tag |
 
 The `Connection` tag takes four values, and absent means `ssh-direct`:
@@ -37,7 +37,8 @@ The `Connection` tag takes four values, and absent means `ssh-direct`:
 | `winrm-ssm` | WinRM over HTTPS to a local port an SSM port-forwarding session already holds open |
 
 A WinRM host needs pywinrm on the controller and its launch key as an unencrypted PEM named by
-`CI_PRIVATE_KEY`; the play decrypts the launch password, then adopts the automation identity.
+`CI_PRIVATE_KEY`; `credential_resolver` decrypts the launch password, then `domain_member` adopts
+the domain automation identity after its restart.
 
 ## Running the playbook by hand
 

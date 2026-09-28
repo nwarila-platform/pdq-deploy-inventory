@@ -18,6 +18,20 @@ result, and destroys the environment.
 At execution time the two application roles overlay onto a version-pinned
 [`ansible-framework`](https://github.com/nwarila-platform/ansible-framework) checkout, whose
 `windows_disk_manager` provisions the disks.
+Each application role is also independently composable with `windows_disk_manager`; the full
+deployment composes both application roles on the same host.
+
+The framework is the execution chassis: it supplies `ansible.cfg`, the generic role loader, lint
+configuration and CI conventions. This repository keeps `.yamllint.yml` and `.editorconfig` beside
+its application roles for local parity; overlaid roles resolve by bare name from the framework's
+`applications/` namespace. The loader requires `ENV` and recursively merges role
+defaults, OS/environment overlays and the caller's role mapping, replacing lists rather than
+appending them.
+
+Provisioning hands the composed host play an installed Windows OS, a reachable inventory-declared
+transport and any attached blank data volumes. Terraform owns disk count, size and attachment;
+the play owns guest state from disk initialization onward. Data volumes are not formatted into the
+source image: `windows_disk_manager` initializes and assigns them on every fresh provision.
 
 This is the production automation for **Trinity Technical Services**, the author's company. The
 directory, accounts and hostnames it names are that company's own.
@@ -60,10 +74,13 @@ products' background services stay under one **local** account (`.\svc-pdq`). In
 that account as its default fallback; what reaches a target in one of the managed OUs is that OU's
 **domain** class account.
 
-The inventory names the transport and address, but no login user. The playbook tries the image
-identity on a new host, publishes the domain automation identity after the join, and starts later
-runs with that automation identity. An ad-hoc command passes the generated identity JSON, as both
-CI ad-hoc proofs do, instead of relying on inventory credentials.
+The inventory names the transport and address, but no login user. The `credential_resolver` role
+selects that transport's declarations, obtains an EC2 launch password when a set requests one, and
+publishes the first working identity. After a join restart, `domain_member` calls the resolver with
+the domain-only set before it resumes its proofs. An ad-hoc command passes the generated identity
+JSON, as both CI ad-hoc proofs do, instead of relying on inventory credentials.
+`credential_resolver` is the only role that publishes connection-credential facts; it does not
+publish or change the play's escalation switch.
 
 The three domain accounts are created once, by the separate elevated `pdq_ad_config` role against
 a domain controller: one per machine class (`svc-pdq-ws`, `-ms`, `-dc`). Each Inventory sync
@@ -109,6 +126,8 @@ Locally, `scripts/compose-and-run.sh` builds the same composed tree and runs the
 chosen inventory (`COMPOSE_INVENTORY=ansible/inventory/aws_ec2.yml`), given live AWS credentials.
 `ANSIBLE_SSH_AGENT` or its `SSH_AUTH_SOCK` fallback must name an agent holding the launch key
 before an SSH host is contacted. A passphrase-protected key must already be in the agent.
+The script keeps SSH multiplexing sockets in `.compose/.cp` and clears that directory before each
+run so an interrupted run cannot strand a socket for the next play.
 
 ## OS-drive replacement
 
@@ -127,13 +146,13 @@ the rebuilt host with the data preserved.
 | `ansible/applications/pdq_inventory/` | PDQ Inventory application role: credentials, directory sync, collections |
 | `ansible/applications/pdq_deploy/` | PDQ Deploy application role and repository/share owner |
 | `ansible/applications/pdq_ad_config/` | Elevated role run by hand against a domain controller: the PDQ OU and service accounts |
-| `ansible/playbooks/pdq-aws.yml` | Composed play: inventory contract, host readiness, disks, domain join, then both products |
+| `ansible/playbooks/pdq-aws.yml` | Composed play: inventory contract, credential resolution, readiness, bootstrap, domain join, disks, then both products |
 | `ansible/playbooks/ad-config.yml` | The directory objects PDQ depends on, declared once and run by an operator |
 | `ansible/inventory/aws_ec2.yml` | Dynamic AWS inventory (filters this run's instances by tag) |
 | `ansible/inventory/directory.yml` | The domain controller `ad-config.yml` runs against |
 | `terraform/aws.tfvars` | Data-only input to the pinned aws-terraform-framework (no `.tf` files here) |
 | `scripts/` | Composition, script materialization, and the products' PowerShell utilities |
-| `docs/ansible-style-guide.md` | Ansible design and authoring rules |
+| [`nwarila-platform/ansible-style-guide`](https://github.com/nwarila-platform/ansible-style-guide) | Canonical organization Ansible style specification |
 | `docs/TECH-DEBT.md` | Current engineering debt |
 | `docs/reference/` | What the deployment depends on but does not create: IAM exported from the live account, Group Policy, WMI filters |
 
@@ -158,3 +177,18 @@ deterministic in CI, but is held out of the converge for now: it drives the prod
 once per object, at 7–18 seconds a launch, and cost 30.8 minutes of a single deploy. The import and
 its prune are held together, because a prune without its import would empty the product. See
 TD-007 in [`docs/TECH-DEBT.md`](docs/TECH-DEBT.md).
+
+## Repository-owned loader and disk contracts
+
+The generic loader looks for role overlays only at these six paths, in ascending precedence:
+`vars/<os_family>.yml`, `vars/<os_family>_<env>.yml`,
+`vars/<os_family>_<distribution>.yml`, `vars/<os_family>_<distribution>_<env>.yml`,
+`vars/<os_family>_<distribution>_<major_version>.yml`, and
+`vars/<os_family>_<distribution>_<major_version>_<env>.yml`. Family and distribution are lower-case
+with spaces replaced by underscores; `<env>` is the trimmed, lower-case `ENV`, and major version is
+used as reported. `ENV` is required and validated; each optional file is recursively merged, with
+lists replaced rather than appended.
+
+The `windows_disk_manager` declaration in `ansible/playbooks/pdq-aws.yml` is complete for all three
+data disks. Each disk is selected exclusively by its AWS EBS `Function` tag; no declaration uses a
+disk number or volume size as identity.

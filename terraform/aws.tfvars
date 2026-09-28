@@ -7,18 +7,17 @@
 # NO .tf files of its own: resources live in the pinned framework, configuration in the pinned
 # ansible-framework plus this repository's roles.
 #
-# REACHABILITY — DIRECT SSH OVER A PUBLIC IPv4. The workflow discovers the runner's public IPv4
-# and passes it as the framework's runtime-only runner_ip variable. When an operator hostname is
-# configured it resolves that too and passes debug_ip, which adds RDP for a person working on the
-# host. The framework attaches one security group carrying both to every interface. The instance
-# receives a public IPv4 at launch; no Elastic IP is involved. The account has no NAT and no VPC
-# endpoints.
+# REACHABILITY — DIRECT SSH FOR THE SERVER, SESSION MANAGER FOR THE TARGET. The PDQ server uses
+# its public IPv4 and runner-scoped security group. The workstation uses ssh-ssm to its
+# instance id, so CI needs the Session Manager plugin but no inbound SSH rule for that host. An
+# optional operator address still adds RDP to the run-scoped security group. Neither host has an
+# Elastic IP; the account has no NAT and no VPC endpoints.
 #
 # The dependency worth knowing: MapPublicIpOnLaunch is an attribute of a shared subnet no
 # repository owns. Direct SSH requires the instance's launch-time public address as well as the
 # runner-scoped security group.
 #
-# readiness_gate is FALSE by design: the playbook owns the bounded direct-SSH readiness check.
+# readiness_gate is FALSE by design: the playbook owns the bounded connection-readiness check.
 # The OpenSSH DefaultShell boots as cmd; the playbook's bootstrap play flips it to PowerShell on
 # first contact, and every play after that declares the PowerShell shell type.
 #
@@ -229,7 +228,7 @@ all_systems = [
     # is slow enough to make a domain join look like a hang, which is the only reason this is not
     # smaller.
     instance_type   = "t3.medium"
-    connection_type = "ssh"
+    connection_type = "ssh-ssm"
     readiness_user  = null
 
     readiness_gate             = false

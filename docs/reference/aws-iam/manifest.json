@@ -1,5 +1,5 @@
 {
-  "exported": "2026-09-14",
+  "exported": "2026-09-27",
   "instance_profiles": {
     "nwarila-ec2-apprepo-profile": [
       "nwarila-ec2-apprepo-role"
@@ -31,7 +31,7 @@
         },
         {
           "name": "nwarila-platform_pdq-deploy-inventory_runner_ec2",
-          "version": "v9"
+          "version": "v10"
         },
         {
           "name": "nwarila-platform_pdq-deploy-inventory_runner_eni",
@@ -47,7 +47,7 @@
         },
         {
           "name": "nwarila-platform_pdq-deploy-inventory_runner_s3",
-          "version": "v17"
+          "version": "v20"
         },
         {
           "name": "nwarila-platform_pdq-deploy-inventory_runner_sg",
@@ -97,7 +97,7 @@
         },
         {
           "name": "nwarila-platform_pdq-deploy-inventory_runner_ec2",
-          "version": "v9"
+          "version": "v10"
         },
         {
           "name": "nwarila-platform_pdq-deploy-inventory_runner_eni",
@@ -113,7 +113,7 @@
         },
         {
           "name": "nwarila-platform_pdq-deploy-inventory_runner_s3",
-          "version": "v17"
+          "version": "v20"
         },
         {
           "name": "nwarila-platform_pdq-deploy-inventory_runner_sg",
@@ -126,11 +126,5 @@
       ],
       "inline": []
     }
-  },
-  "proposed": {
-    "note": "Documents listed here carry a statement that is NOT yet in the live account. Apply, then re-export and clear this block.",
-    "nwarila-platform_pdq-deploy-inventory_runner_s3": [
-      "PublishTheTwoHelperScriptsPackagesRun"
-    ]
   }
 }

@@ -31,8 +31,9 @@
         3 is the successful empty answer when none of the requested packages exists. Presence is
         decided from each file's own Name element; filenames are presentation only.
 
-        A collection condition and a scan step carry only the numeric ids of the collection and
-        profile they mean. Both are resolved from a NAME against this console's own tables. Current
+        A collection condition carries its collection's name and numeric id, while a scan step
+        carries only the numeric id of the profile named by the caller in ScanProfile. Both are
+        resolved from a NAME against this console's own tables. Current
         condition rows are repaired whenever their id differs, even when their package needs no
         import, because the deployment runner resolves membership by id alone. A scan profile id
         is written into the document that is imported, because that one does travel. A freshly

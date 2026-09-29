@@ -241,13 +241,45 @@ Describe 'Set-PdqPackage' {
     $global:FakeDeployDatabase = $script:DeployDatabase
     $global:FakeInventoryDatabase = $script:InventoryDatabase
     $global:FakeCollectionIds = @{ 'Servers' = '7'; 'Workstations' = '9' }
-    $global:FakeScanProfileIds = @{ 'Standard' = '1'; 'Applications' = '5' }
+    $script:FakeDeployScanProfiles = [System.Collections.Generic.List[System.Object]]::new()
+    $script:FakeDeployScanProfiles.Add([PSCustomObject]@{
+        Id = '1'; IsDefault = '1'; Name = 'Standard'
+      })
+    $script:FakeDeployScanProfiles.Add([PSCustomObject]@{
+        Id = '5'; IsDefault = '0'; Name = 'Applications'
+      })
+    $script:FakeInventoryScanProfiles = [System.Collections.Generic.List[System.Object]]::new()
+    $script:FakeInventoryScanProfiles.Add([PSCustomObject]@{
+        Id = '1'; IsDefault = '1'; Name = 'Standard'
+      })
+    $script:FakeInventoryScanProfiles.Add([PSCustomObject]@{
+        Id = '2'; IsDefault = '0'; Name = 'Applications'
+      })
+    $script:FakeCopyFailureId = [System.String]::Empty
+    $script:FakeCopyReadbackDefault = @{}
+    $script:FakeCopyReadbackIds = [System.Collections.Generic.List[System.String]]::new()
     $global:FakeConditionRows = [System.Collections.Generic.List[System.Object]]::new()
     $global:FakeNextConditionRow = 1
     $global:FakeUnwritableCondition = @()
     $global:FakeUnwritablePlacement = @()
     $global:FakeSqliteCalls = [System.Collections.Generic.List[System.String]]::new()
-    $global:FakeEvent = [System.Collections.Generic.List[System.String]]::new()
+    $script:FakeSqliteArgumentCalls = [System.Collections.Generic.List[System.Object]]::new()
+    $script:FakeEvent = [System.Collections.Generic.List[System.String]]::new()
+    Set-Variable -Name:'FakeDeployScanProfiles' -Scope:'Global' `
+      -Value:$script:FakeDeployScanProfiles
+    Set-Variable -Name:'FakeInventoryScanProfiles' -Scope:'Global' `
+      -Value:$script:FakeInventoryScanProfiles
+    Set-Variable -Name:'FakeCopyFailureId' -Scope:'Global' -Value:$script:FakeCopyFailureId
+    Set-Variable -Name:'FakeCopyReadbackDefault' -Scope:'Global' `
+      -Value:$script:FakeCopyReadbackDefault
+    Set-Variable -Name:'FakeCopyReadbackIds' -Scope:'Global' `
+      -Value:$script:FakeCopyReadbackIds
+    Set-Variable -Name:'FakeSqliteArgumentCalls' -Scope:'Global' `
+      -Value:$script:FakeSqliteArgumentCalls
+    Set-Variable -Name:'FakeEvent' -Scope:'Global' -Value:$script:FakeEvent
+    $script:FakeCliCallList = Get-Variable -Name:'FakeCliCalls' -Scope:'Global' -ValueOnly
+    $script:FakePackageMap = Get-Variable -Name:'FakePackages' -Scope:'Global' -ValueOnly
+    $script:FakeSqliteCallList = Get-Variable -Name:'FakeSqliteCalls' -Scope:'Global' -ValueOnly
     $global:LASTEXITCODE = 0
     Remove-AnsibleContext
 
@@ -482,9 +514,37 @@ Describe 'Set-PdqPackage' {
     } | Out-Null
 
     New-Item -Force -Path:('function:global:' + $script:SqliteCommand) -Value {
-      $Database = [System.String]$args[0]
-      $Sql = [System.String]$args[1]
+      $Argument = [System.String[]]@($args)
+      $Bail = $Argument.Count -eq 3 -and $Argument[0] -ceq '-bail'
+      $ReadOnly = $Argument.Count -eq 3 -and $Argument[0] -ceq '-readonly'
+      $Offset = If ($Bail -or $ReadOnly) { 1 } Else { 0 }
+      If ($Argument.Count -ne ($Offset + 2)) {
+        Throw ('unexpected sqlite arguments: {0}' -f ($Argument -join ' '))
+      }
+      $Database = [System.String]$Argument[$Offset]
+      $Sql = [System.String]$Argument[$Offset + 1]
       $global:FakeSqliteCalls.Add($Sql)
+      $ExitCode = 0
+      $CopyFailureId = Get-Variable -Name:'FakeCopyFailureId' -Scope:'Global' -ValueOnly
+      $CopyReadbackDefault = Get-Variable `
+        -Name:'FakeCopyReadbackDefault' -Scope:'Global' -ValueOnly
+      $CopyReadbackIds = Get-Variable -Name:'FakeCopyReadbackIds' -Scope:'Global' -ValueOnly
+      $DeployDatabase = Get-Variable -Name:'FakeDeployDatabase' -Scope:'Global' -ValueOnly
+      $DeployScanProfiles = Get-Variable `
+        -Name:'FakeDeployScanProfiles' -Scope:'Global' -ValueOnly
+      $CopyEvent = Get-Variable -Name:'FakeEvent' -Scope:'Global' -ValueOnly
+      $InventoryDatabase = Get-Variable -Name:'FakeInventoryDatabase' -Scope:'Global' -ValueOnly
+      $InventoryScanProfiles = Get-Variable `
+        -Name:'FakeInventoryScanProfiles' -Scope:'Global' -ValueOnly
+      $SqliteArgumentCalls = Get-Variable `
+        -Name:'FakeSqliteArgumentCalls' -Scope:'Global' -ValueOnly
+      $SqliteArgumentCalls.Add([PSCustomObject]@{
+          Argument = $Argument
+          Bail     = $Bail
+          Database = $Database
+          ReadOnly = $ReadOnly
+          Sql      = $Sql
+        })
       If ($Sql -like 'SELECT p.PackageId*') {
         If ($Database -cne $global:FakeDeployDatabase) {
           Throw ('the package placement was read from {0}' -f $Database)
@@ -511,13 +571,103 @@ Describe 'Set-PdqPackage' {
         ForEach ($Entry In $global:FakeCollectionIds.GetEnumerator()) {
           Write-Output ('{0}|{1}' -f $Entry.Value, (Get-FakeHex -Text:$Entry.Key))
         }
+      } ElseIf ($Sql -like 'SELECT ScanProfileId*') {
+        If ($Database -cne $InventoryDatabase -or -not $ReadOnly) {
+          Throw ('the Inventory scan profiles were not read-only from {0}' -f $Database)
+        }
+        ForEach ($Row In $InventoryScanProfiles) {
+          Write-Output ('{0}|{1}|{2}' -f @(
+              $Row.Id, (Get-FakeHex -Text:$Row.Name), $Row.IsDefault
+            ))
+        }
+      } ElseIf ($Sql -like 'SELECT InventoryScanProfileId*IsDefault*') {
+        If ($Database -cne $DeployDatabase -or $ReadOnly) {
+          Throw ('the copied scan profiles were read from {0}' -f $Database)
+        }
+        $IdMatch = [Regex]::Match(
+          $Sql,
+          'WHERE InventoryScanProfileId IN \((?<Ids>[0-9, ]+)\) ORDER BY 1;'
+        )
+        If (-not $IdMatch.Success) {
+          Throw ('the copied scan-profile read-back was not id-bound: {0}' -f $Sql)
+        }
+        $Ids = [System.String[]]$IdMatch.Groups['Ids'].Value.Split(',')
+        For ($IdIndex = 0; $IdIndex -lt $Ids.Count; $IdIndex++) {
+          $Ids[$IdIndex] = $Ids[$IdIndex].Trim()
+        }
+        $ReadbackRow = @($DeployScanProfiles | Where-Object {
+            $Ids -contains $PSItem.Id
+          })
+        $ReadbackRow = @($ReadbackRow | Sort-Object { [System.Int64]$PSItem.Id })
+        ForEach ($Row In $ReadbackRow) {
+          $Default = If ($CopyReadbackDefault.ContainsKey($Row.Id)) {
+            [System.String]$CopyReadbackDefault[$Row.Id]
+          } Else {
+            [System.String]$Row.IsDefault
+          }
+          $CopyReadbackIds.Add([System.String]$Row.Id)
+          Write-Output ('{0}|{1}|{2}' -f @(
+              $Row.Id, (Get-FakeHex -Text:$Row.Name), $Default
+            ))
+        }
       } ElseIf ($Sql -like 'SELECT InventoryScanProfileId*') {
         If ($Database -cne $global:FakeDeployDatabase) {
           Throw ('the scan profiles were read from {0}' -f $Database)
         }
-        ForEach ($Entry In $global:FakeScanProfileIds.GetEnumerator()) {
-          Write-Output ('{0}|{1}' -f $Entry.Value, (Get-FakeHex -Text:$Entry.Key))
+        ForEach ($Row In $DeployScanProfiles) {
+          Write-Output ('{0}|{1}' -f $Row.Id, (Get-FakeHex -Text:$Row.Name))
         }
+      } ElseIf ($Sql -like '*INSERT INTO InventoryScanProfiles*') {
+        If ($Database -cne $DeployDatabase -or $ReadOnly) {
+          Throw ('the scan profiles were copied to {0}' -f $Database)
+        }
+        $InsertPattern = (
+          'INSERT INTO InventoryScanProfiles \(InventoryScanProfileId, Name, IsDefault\) ' +
+          "VALUES \((?<Id>[0-9]+), CAST\(X'(?<Hex>(?:[0-9A-Fa-f]{2})*)' AS TEXT\), " +
+          '(?<Default>0|1|NULL)\);'
+        )
+        $Insert = [Regex]::Matches($Sql, $InsertPattern)
+        $InsertCount = [Regex]::Matches(
+          $Sql,
+          'INSERT INTO InventoryScanProfiles'
+        ).Count
+        If ($Insert.Count -ne $InsertCount) {
+          Throw ('an InventoryScanProfiles INSERT was not parsed: {0}' -f $Sql)
+        }
+        $Staged = [System.Collections.Generic.List[System.Object]]::new()
+        $Failed = $False
+        ForEach ($Match In $Insert) {
+          $Id = $Match.Groups['Id'].Value
+          $Conflict = @($DeployScanProfiles | Where-Object {
+              $PSItem.Id -ceq $Id
+            }).Count -gt 0 -or @($Staged | Where-Object {
+              $PSItem.Id -ceq $Id
+            }).Count -gt 0
+          If ($Conflict -or $CopyFailureId -ceq $Id) {
+            $Failed = $True
+            If ($Bail) {
+              Break
+            }
+          } Else {
+            $Staged.Add([PSCustomObject]@{
+                Id        = $Id
+                IsDefault = If ($Match.Groups['Default'].Value -ceq 'NULL') {
+                  [System.String]::Empty
+                } Else {
+                  $Match.Groups['Default'].Value
+                }
+                Name      = Get-FakeText -Hex:$Match.Groups['Hex'].Value
+              })
+          }
+        }
+        $Committed = $Sql -match '(?:^|\s)COMMIT;'
+        If ($Committed -and (-not $Failed -or -not $Bail)) {
+          ForEach ($Row In $Staged) {
+            $DeployScanProfiles.Add($Row)
+            $CopyEvent.Add('Copy:{0}' -f $Row.Name)
+          }
+        }
+        $ExitCode = If ($Failed) { 1 } Else { 0 }
       } ElseIf ($Sql -like 'SELECT c.rowid*') {
         If ($Database -cne $global:FakeDeployDatabase) {
           Throw ('the collection conditions were read from {0}' -f $Database)
@@ -622,7 +772,7 @@ Describe 'Set-PdqPackage' {
       } Else {
         Throw ('unexpected statement: {0}' -f $Sql)
       }
-      $global:LASTEXITCODE = 0
+      $global:LASTEXITCODE = $ExitCode
     } | Out-Null
   }
 
@@ -649,6 +799,7 @@ Describe 'Set-PdqPackage' {
       'FakePackageRows', 'FakeNextPackageId', 'FakeFolders', 'FakeNextFolderId',
       'FakeSqliteCalls', 'FakeEvent' -Scope:'Global' `
       -Force -ErrorAction:'SilentlyContinue'
+    Remove-Variable -Name:'FakeDeployScanProfiles', 'FakeInventoryScanProfiles', 'FakeCopyFailureId', 'FakeCopyReadbackDefault', 'FakeCopyReadbackIds', 'FakeSqliteArgumentCalls' -Scope:'Global' -Force -ErrorAction:'SilentlyContinue'
   }
 
   Context 'the declaration boundary' {
@@ -1432,7 +1583,7 @@ Describe 'Set-PdqPackage' {
       $Context.Result.unchanged | Should -Be @($script:Chrome, $script:Firefox)
       $Context.Result.msg | Should -Be (
         "Would apply: ; would file: ; would remove: ; would repair references: $($script:Chrome); " +
-        'already correct: 2'
+        'would copy scan profiles: ; already correct: 2'
       )
       @($global:FakeConditionRows | ForEach-Object Id) | Should -Be @(6)
       @($global:FakeSqliteCalls -like 'SELECT c.rowid*').Count | Should -Be 1
@@ -1498,6 +1649,122 @@ Describe 'Set-PdqPackage' {
       @($global:FakeCliCalls -like 'ImportPackages*').Count | Should -Be 0
     }
 
+    It 'copies a missing scan profile before importing its package' {
+      $script:FakeDeployScanProfiles.Clear()
+      $Definition = @(
+        New-PackageText -Name:$script:Chrome -ScanProfileId:'9'
+        New-PackageText -Name:$script:Firefox
+      )
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:$Definition `
+        -ScanProfile:@{ $script:Chrome = 'Applications' } | Out-Null
+
+      $Context.Failed | Should -BeFalse
+      $Context.Changed | Should -BeTrue
+      $Context.Result.applied | Should -Be @($script:Chrome)
+      $Context.Result.copied | Should -Be @('Applications')
+      $Context.Result.msg | Should -Match 'copied scan profiles: Applications'
+      $script:FakeDeployScanProfiles.Count | Should -Be 1
+      $script:FakeDeployScanProfiles[0].Id | Should -Be '2'
+      $script:FakeDeployScanProfiles[0].Name | Should -Be 'Applications'
+      $script:FakeDeployScanProfiles[0].IsDefault | Should -Be '0'
+      $script:FakePackageMap[$script:Chrome] | Should -Match `
+        '<InventoryScanProfileId value="2" />'
+      $Copy = @($script:FakeSqliteArgumentCalls | Where-Object {
+          $PSItem.Sql -like '*INSERT INTO InventoryScanProfiles*'
+        })
+      $Copy.Count | Should -Be 1
+      $Copy[0].Bail | Should -BeTrue
+      $Copy[0].Sql | Should -Match 'PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE;'
+      $Copy[0].Sql | Should -Match (
+        "VALUES \(2, CAST\(X'$(Get-FakeHex -Text:'Applications')' AS TEXT\), 0\);"
+      )
+      $script:FakeEvent.IndexOf('Copy:Applications') | Should -BeLessThan `
+        $script:FakeEvent.IndexOf("Import:$($script:Chrome)")
+    }
+
+    It 'reports a copy-only run without an empty package summary' {
+      $script:FakeDeployScanProfiles.Clear()
+      $Definition = @(
+        New-PackageText -Name:$script:Chrome -ScanProfileId:'9'
+        New-PackageText -Name:$script:Firefox
+      )
+      $script:FakePackageMap[$script:Chrome] = $Definition[0]
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:$Definition `
+        -ScanProfile:@{ $script:Chrome = 'Applications' } | Out-Null
+
+      $Context.Failed | Should -BeFalse
+      $Context.Changed | Should -BeTrue
+      $Context.Result.applied.Count | Should -Be 0
+      $Context.Result.copied | Should -Be @('Applications')
+      $Context.Result.msg | Should -Be 'Copied scan profiles: Applications; already correct: 2'
+      $Context.Result.msg | Should -Not -Match '^Applied:'
+      @($script:FakeCliCallList -like 'ImportPackages*').Count | Should -Be 0
+    }
+
+    It 'copies nothing on the converge after filling the scan-profile copy' {
+      $script:FakeDeployScanProfiles.Clear()
+      $Definition = @(
+        New-PackageText -Name:$script:Chrome -ScanProfileId:'9'
+        New-PackageText -Name:$script:Firefox
+      )
+      $Runs = @{ $script:Chrome = 'Applications' }
+      New-AnsibleContext | Out-Null
+      Invoke-Reconcile -Definition:$Definition -ScanProfile:$Runs | Out-Null
+      $CopyCount = @($script:FakeSqliteCallList |
+          Where-Object { $PSItem -like '*INSERT INTO InventoryScanProfiles*' }).Count
+      $ImportCount = @($script:FakeCliCallList -like 'ImportPackages*').Count
+
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:$Definition -ScanProfile:$Runs | Out-Null
+
+      $Context.Failed | Should -BeFalse
+      $Context.Changed | Should -BeFalse
+      $Context.Result.copied.Count | Should -Be 0
+      @($script:FakeSqliteCallList | Where-Object {
+          $PSItem -like '*INSERT INTO InventoryScanProfiles*'
+        }).Count | Should -Be $CopyCount
+      @($script:FakeCliCallList -like 'ImportPackages*').Count | Should -Be $ImportCount
+    }
+
+    It 'stops before mutation when only Inventory lacks the declared scan profile' {
+      $script:FakeDeployScanProfiles.Clear()
+      $Applications = @($script:FakeInventoryScanProfiles | Where-Object {
+          $PSItem.Name -ceq 'Applications'
+        })[0]
+      $Null = $script:FakeInventoryScanProfiles.Remove($Applications)
+
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -ScanProfileId:'9'
+          New-PackageText -Name:$script:Firefox
+        ) -ScanProfile:@{ $script:Chrome = 'Applications' }
+      } | Should -Throw ("*$($script:Chrome) runs the scan profile 'Applications' at the step " +
+        "'Scan After Deployment', which neither PDQ Deploy nor PDQ Inventory holds*")
+      @($script:FakeSqliteCallList -like '*INSERT INTO InventoryScanProfiles*').Count |
+        Should -Be 0
+      @($script:FakeCliCallList -like 'ImportPackages*').Count | Should -Be 0
+    }
+
+    It 'predicts a scan-profile copy in check mode without writing' {
+      $script:FakeDeployScanProfiles.Clear()
+      $Context = New-AnsibleContext -CheckMode
+      Invoke-Reconcile -Definition:@(
+        New-PackageText -Name:$script:Chrome -ScanProfileId:'9'
+        New-PackageText -Name:$script:Firefox
+      ) -ScanProfile:@{ $script:Chrome = 'Applications' } | Out-Null
+
+      $Context.Failed | Should -BeFalse
+      $Context.Changed | Should -BeTrue
+      $Context.Result.copied | Should -Be @('Applications')
+      $Context.Result.msg | Should -Match 'would copy scan profiles: Applications'
+      $script:FakeDeployScanProfiles.Count | Should -Be 0
+      @($script:FakeSqliteCallList -like '*INSERT INTO InventoryScanProfiles*').Count |
+        Should -Be 0
+      @($script:FakeCliCallList -like 'ImportPackages*').Count | Should -Be 0
+    }
+
     It 'rewrites a scan step to this console''s own scan profile' {
       $Definition = @(
         New-PackageText -Name:$script:Chrome -ScanProfileId:'2'
@@ -1509,8 +1776,10 @@ Describe 'Set-PdqPackage' {
 
       $First.Failed | Should -BeFalse
       $First.Result.applied | Should -Be @($script:Chrome)
+      $First.Result.copied.Count | Should -Be 0
       $global:FakePackages[$script:Chrome] | Should -Match '<InventoryScanProfileId value="5" />'
       $global:FakePackages[$script:Chrome] | Should -Not -Match 'value="2"'
+      @($script:FakeSqliteCallList -like 'SELECT ScanProfileId*').Count | Should -Be 0
 
       $Second = New-AnsibleContext
       Invoke-Reconcile -Definition:$Definition -ScanProfile:$Runs | Out-Null
@@ -1548,8 +1817,122 @@ Describe 'Set-PdqPackage' {
           New-PackageText -Name:$script:Firefox
         ) -ScanProfile:@{ $script:Chrome = 'No Such Profile' }
       } | Should -Throw ("*$($script:Chrome) runs the scan profile 'No Such Profile' at the step " +
-        "'Scan After Deployment', which PDQ Deploy does not hold*")
-      @($global:FakeCliCalls -like 'ImportPackages*').Count | Should -Be 0
+        "'Scan After Deployment', which neither PDQ Deploy nor PDQ Inventory holds*")
+      @($script:FakeCliCallList -like 'ImportPackages*').Count | Should -Be 0
+    }
+
+    It 'stops before importing when a copied scan profile does not read back exactly' {
+      $script:FakeDeployScanProfiles.Clear()
+      $script:FakeCopyReadbackDefault['2'] = '1'
+
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -ScanProfileId:'9'
+          New-PackageText -Name:$script:Firefox
+        ) -ScanProfile:@{ $script:Chrome = 'Applications' }
+      } | Should -Throw '*scan profiles did not read back as copied*'
+      $script:FakeDeployScanProfiles.Count | Should -Be 1
+      $script:FakeDeployScanProfiles[0].IsDefault | Should -Be '0'
+      @($script:FakeCliCallList -like 'ImportPackages*').Count | Should -Be 0
+    }
+
+    It 'refuses an Inventory scan-profile id already held by another Deploy name in <Mode> mode' `
+      -TestCases @(
+      @{ Mode = 'apply' }
+      @{ Mode = 'check' }
+    ) {
+      Param ($Mode)
+      $script:FakeDeployScanProfiles.Clear()
+      $script:FakeDeployScanProfiles.Add([PSCustomObject]@{
+          Id = '2'; IsDefault = '0'; Name = 'Other Profile'
+        })
+      New-AnsibleContext -CheckMode:($Mode -ceq 'check') | Out-Null
+
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -ScanProfileId:'9'
+          New-PackageText -Name:$script:Firefox
+        ) -ScanProfile:@{ $script:Chrome = 'Applications' }
+      } | Should -Throw "*PDQ Deploy already holds id 2 as 'Other Profile'*"
+      @($script:FakeSqliteCallList -like '*INSERT INTO InventoryScanProfiles*').Count |
+        Should -Be 0
+      @($script:FakeCliCallList -like 'ImportPackages*').Count | Should -Be 0
+    }
+
+    It 'rolls back every copied scan profile when the second insert fails' {
+      $script:FakeDeployScanProfiles.Clear()
+      $script:FakeCopyFailureId = '1'
+      Set-Variable -Name:'FakeCopyFailureId' -Scope:'Global' -Value:'1'
+
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -ScanProfileId:'9'
+          New-PackageText -Name:$script:Firefox -ScanProfileId:'9'
+        ) -ScanProfile:@{
+          $script:Chrome  = 'Applications'
+          $script:Firefox = 'Standard'
+        }
+      } | Should -Throw '*Copying the declared scan profiles*exited 1*'
+      $Copy = @($script:FakeSqliteArgumentCalls | Where-Object {
+          $PSItem.Sql -like '*INSERT INTO InventoryScanProfiles*'
+        })
+      $Copy.Count | Should -Be 1
+      $Copy[0].Bail | Should -BeTrue
+      [Regex]::Matches($Copy[0].Sql, 'INSERT INTO InventoryScanProfiles').Count |
+        Should -Be 2
+      $script:FakeDeployScanProfiles.Count | Should -Be 0
+      @($script:FakeEvent -like 'Copy:*').Count | Should -Be 0
+      @($script:FakeCliCallList -like 'ImportPackages*').Count | Should -Be 0
+    }
+
+    It 'refuses a declared scan profile Inventory holds more than once' {
+      $script:FakeDeployScanProfiles.Clear()
+      $script:FakeInventoryScanProfiles.Add([PSCustomObject]@{
+          Id = '12'; IsDefault = '0'; Name = 'Applications'
+        })
+
+      {
+        Invoke-Reconcile -Definition:@(
+          New-PackageText -Name:$script:Chrome -ScanProfileId:'9'
+          New-PackageText -Name:$script:Firefox
+        ) -ScanProfile:@{ $script:Chrome = 'Applications' }
+      } | Should -Throw '*PDQ Inventory holds more than once*'
+      @($script:FakeSqliteCallList -like '*INSERT INTO InventoryScanProfiles*').Count |
+        Should -Be 0
+      @($script:FakeCliCallList -like 'ImportPackages*').Count | Should -Be 0
+    }
+
+    It 'copies two distinct scan profiles once in declaration order and reads both back' {
+      $script:FakeDeployScanProfiles.Clear()
+      $Context = New-AnsibleContext
+      Invoke-Reconcile -Definition:@(
+        New-PackageText -Name:$script:Chrome -ScanProfileId:'9'
+        New-PackageText -Name:$script:Firefox -ScanProfileId:'9'
+      ) -ScanProfile:@{
+        $script:Chrome  = 'Applications'
+        $script:Firefox = 'Standard'
+      } | Out-Null
+
+      $Context.Failed | Should -BeFalse
+      $Context.Result.copied | Should -Be @('Applications', 'Standard')
+      $Copy = @($script:FakeSqliteArgumentCalls | Where-Object {
+          $PSItem.Sql -like '*INSERT INTO InventoryScanProfiles*'
+        })
+      $Copy.Count | Should -Be 1
+      $Insert = [Regex]::Matches(
+        $Copy[0].Sql,
+        'INSERT INTO InventoryScanProfiles[^;]+;'
+      )
+      $Insert.Count | Should -Be 2
+      $Insert[0].Value | Should -Match 'VALUES \(2,'
+      $Insert[1].Value | Should -Match 'VALUES \(1,'
+      $script:FakeCopyReadbackIds | Should -Be @('1', '2')
+      @($script:FakeDeployScanProfiles | ForEach-Object Id) |
+        Should -Be @('2', '1')
+      $script:FakeEvent.IndexOf('Copy:Applications') | Should -BeLessThan `
+        $script:FakeEvent.IndexOf("Import:$($script:Chrome)")
+      $script:FakeEvent.IndexOf('Copy:Standard') | Should -BeLessThan `
+        $script:FakeEvent.IndexOf("Import:$($script:Chrome)")
     }
 
     It 'refuses a scan step that no declaration names a profile for' {

@@ -34,11 +34,12 @@
         A collection condition's id and a scan step's profile id belong to the console that
         exported them. Both are resolved from a NAME against this console's own tables. Current
         condition rows are repaired whenever their id differs, even when their package needs no
-        import, because the deployment runner resolves membership by id alone. A scan profile id
-        is written into the document that is imported, because that one does travel. Both are read
-        back after a write and must name what the declaration asked for. A name that resolves to
-        nothing stops the run: a package gated on a collection this console does not hold imports
-        quietly and then fails every deployment before its first step.
+        import, because the deployment runner resolves membership by id alone. A freshly installed
+        Deploy holds no rows in its copy of Inventory's scan profiles when packages are reconciled,
+        and importing a scan-step package that refers to a profile the copy lacks crashes the
+        service. For each declared profile the copy lacks, Inventory's id, name and default flag are
+        copied before any import. Both kinds of reference are read back after a write and must name
+        what the declaration asked for.
 
         A nested step's target id and name are also console output; its target path declares the
         package it means. Every target path must be the canonical prefixless path of another
@@ -74,9 +75,10 @@
 
     .PARAMETER ScanProfile
         The PDQ Inventory scan profile every scan step in a package runs, by package name. A
-        package's export carries only the profile's numeric id, which is local to the console that
-        wrote it, so the name is declared here instead. A package with no scan step has no entry,
-        and a scan step whose package is not named stops the run.
+        package's export carries only the profile's numeric id, so the name is declared here
+        instead. When Deploy's copy lacks that profile, the script copies Inventory's id, name and
+        default flag before importing. A package with no scan step has no entry, and a scan step
+        whose package is not named stops the run.
 
     .PARAMETER CliPath
         Full path to PDQDeploy.exe. Packages are a Deploy concept; Inventory has no equivalent, so
@@ -90,8 +92,9 @@
         .\Set-PdqPackage.ps1 -Definition @((Get-Content -Raw '.\Google Chrome - Install.xml')) -ScanProfile @{} -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe' -InventoryCliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
 
     .OUTPUTS
-        One object carrying applied, filed, repaired, removed, unchanged, ignored, survivors,
-        changed, check_mode and msg.
+        One object carrying applied, copied, filed, repaired, removed, unchanged, ignored,
+        survivors, changed, check_mode and msg. Copied names the scan profiles predicted in check
+        mode and the profiles copied in apply mode.
 #>
 
 [CmdletBinding(
@@ -1077,6 +1080,8 @@ ForEach ($Name In $InitiallyUnchanged) {
   }
 }
 
+$InventoryDatabase = [System.String]::Empty
+$Copied = [System.Collections.Generic.List[System.String]]::new()
 If ($CollectionReference.Count -gt 0) {
   # Deploy holds the condition; Inventory holds the collection and mints the id both agree on.
   If (-not (Test-Path -LiteralPath:$InventoryCliPath -PathType:'Leaf')) {
@@ -1100,10 +1105,15 @@ If ($CollectionReference.Count -gt 0) {
 }
 
 If ($ScanReference.Count -gt 0) {
-  # Deploy mirrors Inventory's scan profiles under ids of its own, so a step's profile is resolved
-  # against the product the step runs in.
+  # A freshly installed Deploy holds no rows in its copy when packages are reconciled. Importing a
+  # package that refers to a profile the copy lacks crashes the service, so each declared profile
+  # the copy lacks is copied from Inventory -- its id, name and default flag -- before any import.
   $ProfileTable = Get-NameToId -Database:$Database -Operation:'Reading the scan profiles' `
     -Statement:'SELECT InventoryScanProfileId, hex(Name) FROM InventoryScanProfiles;'
+  $Missing = [System.Collections.Generic.List[System.String]]::new()
+  $MissingName = [System.Collections.Generic.HashSet[System.String]]::new(
+    [System.StringComparer]::Ordinal
+  )
   ForEach ($Reference In $ScanReference) {
     If ($ProfileTable.Ambiguous.Contains($Reference.Profile)) {
       Throw ('{0} runs the scan profile ''{1}'' at {2}, which PDQ Deploy holds more than once' -f @(
@@ -1111,9 +1121,120 @@ If ($ScanReference.Count -gt 0) {
         ))
     }
     If (-not $ProfileTable.Id.ContainsKey($Reference.Profile)) {
-      Throw ('{0} runs the scan profile ''{1}'' at {2}, which PDQ Deploy does not hold' -f @(
-          $Reference.Package, $Reference.Profile, $Reference.Step
-        ))
+      If ($MissingName.Add($Reference.Profile)) {
+        $Missing.Add($Reference.Profile)
+      }
+    }
+  }
+
+  $ToCopy = [System.Collections.Generic.List[System.Object]]::new()
+  If ($Missing.Count -gt 0) {
+    If ($InventoryDatabase.Length -eq 0) {
+      If (-not (Test-Path -LiteralPath:$InventoryCliPath -PathType:'Leaf')) {
+        Throw ('The PDQ Inventory command line is not at ''{0}''' -f $InventoryCliPath)
+      }
+      $InventoryDatabase = Get-DatabasePath -Path:$InventoryCliPath -Product:'PDQ Inventory'
+    }
+    $InventoryProfile = [System.Collections.Generic.List[System.Object]]::new()
+    $InventoryStatement = (
+      "SELECT ScanProfileId, hex(Name), IFNULL(CAST(IsDefault AS TEXT), '') " +
+      'FROM ScanProfiles;'
+    )
+    ForEach ($Line In (Invoke-NativeCommand -FilePath:$Sqlite `
+          -Operation:'Reading the Inventory scan profiles' `
+          -Argument:@('-readonly', $InventoryDatabase, $InventoryStatement)).Output) {
+      $Parts = ([System.String]$Line).Split('|')
+      If ($Parts.Count -ne 3 -or $Parts[0] -notmatch '^[0-9]+$' -or
+        $Parts[1] -notmatch '^([0-9A-Fa-f]{2})*$' -or $Parts[2] -notmatch '^[01]?$') {
+        Throw ('Reading the Inventory scan profiles: the table did not read back as id, hex name and default flag: {0}' -f $Line)
+      }
+      $InventoryProfile.Add([PSCustomObject]@{
+          Hex       = $Parts[1].ToUpperInvariant()
+          Id        = $Parts[0]
+          IsDefault = $Parts[2]
+          Name      = ConvertFrom-HexText -Hex:$Parts[1]
+        })
+    }
+
+    ForEach ($ProfileName In $Missing) {
+      $Reference = @($ScanReference | Where-Object { $PSItem.Profile -ceq $ProfileName } |
+          Select-Object -First 1)[0]
+      $Rows = @($InventoryProfile | Where-Object { $PSItem.Name -ceq $ProfileName })
+      If ($Rows.Count -gt 1) {
+        Throw ('{0} runs the scan profile ''{1}'' at {2}, which PDQ Inventory holds more than once' -f @(
+            $Reference.Package, $Reference.Profile, $Reference.Step
+          ))
+      }
+      If ($Rows.Count -eq 0) {
+        Throw ('{0} runs the scan profile ''{1}'' at {2}, which neither PDQ Deploy nor PDQ Inventory holds' -f @(
+            $Reference.Package, $Reference.Profile, $Reference.Step
+          ))
+      }
+      $Row = $Rows[0]
+      $Conflict = @($ProfileTable.Id.GetEnumerator() | Where-Object {
+          $PSItem.Value -ceq $Row.Id -and $PSItem.Key -cne $ProfileName
+        } | Select-Object -First 1)
+      If ($Conflict.Count -gt 0) {
+        Throw ('{0} runs the scan profile ''{1}'' at {2}, but PDQ Deploy already holds id {3} as ''{4}''' -f @(
+            $Reference.Package, $Reference.Profile, $Reference.Step, $Row.Id, $Conflict[0].Key
+          ))
+      }
+      $ToCopy.Add($Row)
+    }
+
+    If (-not $Ansible.CheckMode) {
+      $Statements = [System.Collections.Generic.List[System.String]]::new()
+      $Statements.Add('PRAGMA busy_timeout = 5000;')
+      $Statements.Add('BEGIN IMMEDIATE;')
+      ForEach ($Row In $ToCopy) {
+        $Default = If ($Row.IsDefault.Length -eq 0) { 'NULL' } Else { $Row.IsDefault }
+        $Statements.Add((
+            'INSERT INTO InventoryScanProfiles (InventoryScanProfileId, Name, IsDefault) ' +
+            "VALUES ({0}, CAST(X'{1}' AS TEXT), {2});"
+          ) -f @($Row.Id, $Row.Hex, $Default))
+      }
+      $Statements.Add('COMMIT;')
+      $Null = Invoke-NativeCommand -FilePath:$Sqlite `
+        -Operation:'Copying the declared scan profiles' `
+        -Argument:@('-bail', $Database, ($Statements -join ' '))
+
+      $CopiedId = [System.String[]]@($ToCopy | ForEach-Object Id)
+      $ReadBackStatement = (
+        "SELECT InventoryScanProfileId, hex(Name), IFNULL(CAST(IsDefault AS TEXT), '') " +
+        'FROM InventoryScanProfiles WHERE InventoryScanProfileId IN ({0}) ORDER BY 1;' -f `
+        ($CopiedId -join ', ')
+      )
+      $CopiedRow = [System.Collections.Generic.List[System.Object]]::new()
+      ForEach ($Line In (Invoke-NativeCommand -FilePath:$Sqlite `
+            -Operation:'Reading the copied scan profiles' `
+            -Argument:@($Database, $ReadBackStatement)).Output) {
+        $Parts = ([System.String]$Line).Split('|')
+        If ($Parts.Count -ne 3 -or $Parts[0] -notmatch '^[0-9]+$' -or
+          $Parts[1] -notmatch '^([0-9A-Fa-f]{2})*$' -or $Parts[2] -notmatch '^[01]?$') {
+          Throw ('Reading the copied scan profiles: the table did not read back as id, hex name and default flag: {0}' -f $Line)
+        }
+        $CopiedRow.Add([PSCustomObject]@{
+            Hex       = $Parts[1].ToUpperInvariant()
+            Id        = $Parts[0]
+            IsDefault = $Parts[2]
+          })
+      }
+      $ExpectedRow = @($ToCopy | Sort-Object { [System.Int64]$PSItem.Id })
+      $ActualRow = @($CopiedRow | Sort-Object { [System.Int64]$PSItem.Id })
+      $CopyMatches = $ExpectedRow.Count -eq $ActualRow.Count
+      For ($Index = 0; $CopyMatches -and $Index -lt $ExpectedRow.Count; $Index++) {
+        $CopyMatches = $ExpectedRow[$Index].Id -ceq $ActualRow[$Index].Id -and
+        $ExpectedRow[$Index].Hex -ceq $ActualRow[$Index].Hex -and
+        $ExpectedRow[$Index].IsDefault -ceq $ActualRow[$Index].IsDefault
+      }
+      If (-not $CopyMatches) {
+        Throw 'The scan profiles did not read back as copied after the transaction committed.'
+      }
+    }
+
+    ForEach ($Row In $ToCopy) {
+      $ProfileTable.Id.Add($Row.Name, $Row.Id)
+      $Copied.Add($Row.Name)
     }
   }
 
@@ -1139,7 +1260,7 @@ $Removed = [System.Collections.Generic.List[System.String]]::new()
 $Unchanged = [System.Collections.Generic.List[System.String]]::new()
 $Ignored = [System.Collections.Generic.List[System.String]]::new()
 $Survivors = [System.Collections.Generic.List[System.String]]::new()
-$Changed = $ToImport.Count -gt 0 -or $ToFile.Count -gt 0 -or $Extra.Count -gt 0
+$Changed = $ToImport.Count -gt 0 -or $ToFile.Count -gt 0 -or $Extra.Count -gt 0 -or $Copied.Count -gt 0
 
 If ($Ansible.CheckMode) {
   $Applied.AddRange($ToImport.ToArray())
@@ -1389,29 +1510,45 @@ $Result = [PSCustomObject]@{
   applied    = [System.String[]]$Applied
   changed    = [System.Boolean]$Changed
   check_mode = [System.Boolean]$Ansible.CheckMode
+  copied     = [System.String[]]$Copied
   declared   = [System.Int32]$Declared.Count
   filed      = [System.String[]]$Filed
   ignored    = [System.String[]]$Ignored
   msg        = If ($Ansible.CheckMode) {
-    'Would apply: {0}; would file: {1}; would remove: {2}; would repair references: {3}; already correct: {4}' -f @(
+    'Would apply: {0}; would file: {1}; would remove: {2}; would repair references: {3}; would copy scan profiles: {4}; already correct: {5}' -f @(
       ($Applied -join ', '), ($Filed -join ', '), ($Removed -join ', '),
-      ($Repaired -join ', '), $Unchanged.Count
+      ($Repaired -join ', '), ($Copied -join ', '), $Unchanged.Count
     )
   } ElseIf ($Ignored.Count -gt 0 -or $Survivors.Count -gt 0) {
-    'The declared package set did not settle (missing or different: {0}; undeclared still held: {1}; filed: {2})' -f @(
-      ($Ignored -join ', '), ($Survivors -join ', '), ($Filed -join ', ')
+    'The declared package set did not settle (missing or different: {0}; undeclared still held: {1}; filed: {2}; copied scan profiles: {3})' -f @(
+      ($Ignored -join ', '), ($Survivors -join ', '), ($Filed -join ', '), ($Copied -join ', ')
     )
   } ElseIf (-not $Changed) {
     'No package changes; {0} already correct' -f $Unchanged.Count
   } ElseIf ($Applied.Count -eq 0 -and $Filed.Count -eq 0 -and $Removed.Count -eq 0 -and
-    $Repaired.Count -gt 0) {
+    $Repaired.Count -eq 0 -and $Copied.Count -gt 0) {
+    'Copied scan profiles: {0}; already correct: {1}' -f @(
+      ($Copied -join ', '), $Unchanged.Count
+    )
+  } ElseIf ($Applied.Count -eq 0 -and $Filed.Count -eq 0 -and $Removed.Count -eq 0 -and
+    $Repaired.Count -gt 0 -and $Copied.Count -eq 0) {
     'Repaired references: {0}; already correct: {1}' -f @(
       ($Repaired -join ', '), $Unchanged.Count
+    )
+  } ElseIf ($Repaired.Count -gt 0 -and $Copied.Count -gt 0) {
+    'Applied: {0}; filed: {1}; removed: {2}; repaired references: {3}; copied scan profiles: {4}; already correct: {5}' -f @(
+      ($Applied -join ', '), ($Filed -join ', '), ($Removed -join ', '),
+      ($Repaired -join ', '), ($Copied -join ', '), $Unchanged.Count
     )
   } ElseIf ($Repaired.Count -gt 0) {
     'Applied: {0}; filed: {1}; removed: {2}; repaired references: {3}; already correct: {4}' -f @(
       ($Applied -join ', '), ($Filed -join ', '), ($Removed -join ', '),
       ($Repaired -join ', '), $Unchanged.Count
+    )
+  } ElseIf ($Copied.Count -gt 0) {
+    'Applied: {0}; filed: {1}; removed: {2}; copied scan profiles: {3}; already correct: {4}' -f @(
+      ($Applied -join ', '), ($Filed -join ', '), ($Removed -join ', '),
+      ($Copied -join ', '), $Unchanged.Count
     )
   } Else {
     'Applied: {0}; filed: {1}; removed: {2}; already correct: {3}' -f @(

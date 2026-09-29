@@ -398,9 +398,9 @@ pdq_deploy_defaults:
   # and Uninstall are deliberate, standalone operations with no collection gate or scan. Scanning
   # after install work makes the NEXT deployment's gate reflect the resulting state; when no work
   # ran, a scan would add no value and is skipped. The package's native post-deployment scan is
-  # disabled because it cannot share that gate. An install package carries TWO console-specific
-  # ids: a collection condition's InventoryCollectionId and a Scan step's InventoryScanProfileId.
-  # Set-PdqPackage.ps1 resolves both from NAME to the local console's id at import; ids embedded in
+  # disabled because it cannot share that gate. An install package carries TWO ids from the console
+  # that exported it: a collection condition's InventoryCollectionId and a Scan step's
+  # InventoryScanProfileId. Set-PdqPackage.ps1 resolves both from NAME at import; ids embedded in
   # exported definitions are not portable.
   packages:
     - '7-Zip - Install.xml'
@@ -410,14 +410,14 @@ pdq_deploy_defaults:
     - 'Google Chrome - Repair.xml'
     - 'Google Chrome - Uninstall.xml'
 
-  # The scan profile every scan step in a package runs, by PACKAGE name -- the product's own
-  # identity for it, which is what the definition carries and the list above only spells as a file.
-  # A step's export names its profile by a NUMBER that the exporting console minted, so the name is
-  # the only portable half of the reference and it is declared here. A package with no scan step
-  # has no entry; a scan step whose package is not named here stops the converge, because a step
-  # pointed at another console's profile scans the wrong thing rather than failing.
-  # The profile is chosen per package, not defaulted: a change that changes an application is
-  # followed by an application scan, and the console mirrors several profiles, five product-owned.
+  # The scan profile every scan step in a package runs, by PACKAGE name. A step's export carries
+  # only a numeric profile id, so the portable name is declared here. A freshly installed Deploy
+  # holds no rows in its copy of Inventory's scan profiles when packages are reconciled; importing
+  # a scan-step package that refers to a profile the copy lacks crashes the service. Before any
+  # import, Set-PdqPackage.ps1 copies Inventory's id, name and default flag for each declared
+  # profile absent from Deploy's copy. A package with no scan step has no entry; a scan step whose
+  # package is not named here stops the converge. The profile is chosen per package, not defaulted:
+  # a change that changes an application is followed by an application scan.
   scan_profiles:
     '7-Zip - Install': 'Applications'
     'Google Chrome - Install': 'Applications'

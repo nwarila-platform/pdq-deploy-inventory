@@ -626,17 +626,44 @@ Describe 'Set-PdqPackage' {
           "VALUES \((?<Id>[0-9]+), CAST\(X'(?<Hex>(?:[0-9A-Fa-f]{2})*)' AS TEXT\), " +
           '(?<Default>0|1|NULL)\);'
         )
-        $Insert = [Regex]::Matches($Sql, $InsertPattern)
-        $InsertCount = [Regex]::Matches(
-          $Sql,
-          'INSERT INTO InventoryScanProfiles'
-        ).Count
-        If ($Insert.Count -ne $InsertCount) {
-          Throw ('an InventoryScanProfiles INSERT was not parsed: {0}' -f $Sql)
-        }
         $Staged = [System.Collections.Generic.List[System.Object]]::new()
         $Failed = $False
-        ForEach ($Match In $Insert) {
+        $TransactionOpen = $False
+        $Statement = @($Sql.Split(';') | ForEach-Object {
+            If ($PSItem.Trim().Length -gt 0) {
+              $PSItem.Trim() + ';'
+            }
+          })
+        ForEach ($CurrentStatement In $Statement) {
+          If ($CurrentStatement -ceq 'PRAGMA busy_timeout = 5000;') {
+            Continue
+          }
+          If ($CurrentStatement -ceq 'BEGIN IMMEDIATE;') {
+            $TransactionOpen = $True
+            $Staged.Clear()
+            Continue
+          }
+          If ($CurrentStatement -ceq 'COMMIT;') {
+            If ($TransactionOpen) {
+              ForEach ($Row In $Staged) {
+                $DeployScanProfiles.Add($Row)
+                $CopyEvent.Add('Copy:{0}' -f $Row.Name)
+              }
+              $Staged.Clear()
+              $TransactionOpen = $False
+            } Else {
+              $Failed = $True
+              If ($Bail) {
+                Break
+              }
+            }
+            Continue
+          }
+
+          $Match = [Regex]::Match($CurrentStatement, ('^{0}$' -f $InsertPattern))
+          If (-not $Match.Success) {
+            Throw ('an InventoryScanProfiles statement was not parsed: {0}' -f $CurrentStatement)
+          }
           $Id = $Match.Groups['Id'].Value
           $Conflict = @($DeployScanProfiles | Where-Object {
               $PSItem.Id -ceq $Id
@@ -658,13 +685,6 @@ Describe 'Set-PdqPackage' {
                 }
                 Name      = Get-FakeText -Hex:$Match.Groups['Hex'].Value
               })
-          }
-        }
-        $Committed = $Sql -match '(?:^|\s)COMMIT;'
-        If ($Committed -and (-not $Failed -or -not $Bail)) {
-          ForEach ($Row In $Staged) {
-            $DeployScanProfiles.Add($Row)
-            $CopyEvent.Add('Copy:{0}' -f $Row.Name)
           }
         }
         $ExitCode = If ($Failed) { 1 } Else { 0 }
@@ -794,7 +814,7 @@ Describe 'Set-PdqPackage' {
       'FakeExportExtraError', 'FakeExportSuppressMissingError', 'FakeDropNestedReference',
       'FakeKeepOneNestedReference', 'FakeCliCalls', 'FakeCliArgumentCalls',
       'FakeExportBatches', 'FakeImportedNames', 'FakeDeployDatabase',
-      'FakeInventoryDatabase', 'FakeCollectionIds', 'FakeScanProfileIds', 'FakeConditionRows',
+    'FakeInventoryDatabase', 'FakeCollectionIds', 'FakeConditionRows',
       'FakeNextConditionRow', 'FakeUnwritableCondition', 'FakeUnwritablePlacement',
       'FakePackageRows', 'FakeNextPackageId', 'FakeFolders', 'FakeNextFolderId',
       'FakeSqliteCalls', 'FakeEvent' -Scope:'Global' `
@@ -1583,7 +1603,7 @@ Describe 'Set-PdqPackage' {
       $Context.Result.unchanged | Should -Be @($script:Chrome, $script:Firefox)
       $Context.Result.msg | Should -Be (
         "Would apply: ; would file: ; would remove: ; would repair references: $($script:Chrome); " +
-        'would copy scan profiles: ; already correct: 2'
+        'already correct: 2'
       )
       @($global:FakeConditionRows | ForEach-Object Id) | Should -Be @(6)
       @($global:FakeSqliteCalls -like 'SELECT c.rowid*').Count | Should -Be 1
@@ -1861,7 +1881,6 @@ Describe 'Set-PdqPackage' {
 
     It 'rolls back every copied scan profile when the second insert fails' {
       $script:FakeDeployScanProfiles.Clear()
-      $script:FakeCopyFailureId = '1'
       Set-Variable -Name:'FakeCopyFailureId' -Scope:'Global' -Value:'1'
 
       {
@@ -1880,6 +1899,10 @@ Describe 'Set-PdqPackage' {
       $Copy[0].Bail | Should -BeTrue
       [Regex]::Matches($Copy[0].Sql, 'INSERT INTO InventoryScanProfiles').Count |
         Should -Be 2
+      $Copy[0].Sql | Should -Match (
+        'BEGIN IMMEDIATE; INSERT INTO InventoryScanProfiles.*' +
+        'INSERT INTO InventoryScanProfiles.* COMMIT;$'
+      )
       $script:FakeDeployScanProfiles.Count | Should -Be 0
       @($script:FakeEvent -like 'Copy:*').Count | Should -Be 0
       @($script:FakeCliCallList -like 'ImportPackages*').Count | Should -Be 0

@@ -31,15 +31,18 @@
         3 is the successful empty answer when none of the requested packages exists. Presence is
         decided from each file's own Name element; filenames are presentation only.
 
-        A collection condition's id and a scan step's profile id belong to the console that
-        exported them. Both are resolved from a NAME against this console's own tables. Current
+        A collection condition and a scan step carry only the numeric ids of the collection and
+        profile they mean. Both are resolved from a NAME against this console's own tables. Current
         condition rows are repaired whenever their id differs, even when their package needs no
-        import, because the deployment runner resolves membership by id alone. A freshly installed
-        Deploy holds no rows in its copy of Inventory's scan profiles when packages are reconciled,
-        and importing a scan-step package that refers to a profile the copy lacks crashes the
-        service. For each declared profile the copy lacks, Inventory's id, name and default flag are
-        copied before any import. Both kinds of reference are read back after a write and must name
-        what the declaration asked for.
+        import, because the deployment runner resolves membership by id alone. A scan profile id
+        is written into the document that is imported, because that one does travel. A freshly
+        installed Deploy holds no rows in its copy of Inventory's scan profiles when packages are
+        reconciled, and importing a scan-step package that refers to a profile the copy lacks
+        crashes the service. For each declared profile the copy lacks, Inventory's id, name and
+        default flag are copied before any import. Both kinds of reference are read back after a
+        write and must name what the declaration asked for. A name that resolves to nothing stops
+        the run: a package gated on a collection this console does not hold imports quietly and
+        then fails every deployment before its first step.
 
         A nested step's target id and name are also console output; its target path declares the
         package it means. Every target path must be the canonical prefixless path of another
@@ -85,8 +88,8 @@
         this script serves the one product.
 
     .PARAMETER InventoryCliPath
-        Full path to PDQInventory.exe, which is asked where the collections are kept. Read only
-        when a declared package gates a step on a collection.
+        Full path to PDQInventory.exe. PDQ Inventory is read when a declared package gates a step
+        on a collection or when Deploy's copy lacks a declared scan profile.
 
     .EXAMPLE
         .\Set-PdqPackage.ps1 -Definition @((Get-Content -Raw '.\Google Chrome - Install.xml')) -ScanProfile @{} -CliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Deploy\PDQDeploy.exe' -InventoryCliPath 'C:\Program Files (x86)\Admin Arsenal\PDQ Inventory\PDQInventory.exe'
@@ -1506,6 +1509,16 @@ If ($Ansible.CheckMode) {
   }
 }
 
+$CopyClause = If ($Copied.Count -gt 0) {
+  If ($Ansible.CheckMode) {
+    '; would copy scan profiles: {0}' -f ($Copied -join ', ')
+  } Else {
+    '; copied scan profiles: {0}' -f ($Copied -join ', ')
+  }
+} Else {
+  [System.String]::Empty
+}
+
 $Result = [PSCustomObject]@{
   applied    = [System.String[]]$Applied
   changed    = [System.Boolean]$Changed
@@ -1515,14 +1528,14 @@ $Result = [PSCustomObject]@{
   filed      = [System.String[]]$Filed
   ignored    = [System.String[]]$Ignored
   msg        = If ($Ansible.CheckMode) {
-    'Would apply: {0}; would file: {1}; would remove: {2}; would repair references: {3}; would copy scan profiles: {4}; already correct: {5}' -f @(
+    'Would apply: {0}; would file: {1}; would remove: {2}; would repair references: {3}; already correct: {4}' -f @(
       ($Applied -join ', '), ($Filed -join ', '), ($Removed -join ', '),
-      ($Repaired -join ', '), ($Copied -join ', '), $Unchanged.Count
-    )
+      ($Repaired -join ', '), $Unchanged.Count
+    ) + $CopyClause
   } ElseIf ($Ignored.Count -gt 0 -or $Survivors.Count -gt 0) {
-    'The declared package set did not settle (missing or different: {0}; undeclared still held: {1}; filed: {2}; copied scan profiles: {3})' -f @(
-      ($Ignored -join ', '), ($Survivors -join ', '), ($Filed -join ', '), ($Copied -join ', ')
-    )
+    'The declared package set did not settle (missing or different: {0}; undeclared still held: {1}; filed: {2})' -f @(
+      ($Ignored -join ', '), ($Survivors -join ', '), ($Filed -join ', ')
+    ) + $CopyClause
   } ElseIf (-not $Changed) {
     'No package changes; {0} already correct' -f $Unchanged.Count
   } ElseIf ($Applied.Count -eq 0 -and $Filed.Count -eq 0 -and $Removed.Count -eq 0 -and
@@ -1531,29 +1544,19 @@ $Result = [PSCustomObject]@{
       ($Copied -join ', '), $Unchanged.Count
     )
   } ElseIf ($Applied.Count -eq 0 -and $Filed.Count -eq 0 -and $Removed.Count -eq 0 -and
-    $Repaired.Count -gt 0 -and $Copied.Count -eq 0) {
+    $Repaired.Count -gt 0) {
     'Repaired references: {0}; already correct: {1}' -f @(
       ($Repaired -join ', '), $Unchanged.Count
-    )
-  } ElseIf ($Repaired.Count -gt 0 -and $Copied.Count -gt 0) {
-    'Applied: {0}; filed: {1}; removed: {2}; repaired references: {3}; copied scan profiles: {4}; already correct: {5}' -f @(
-      ($Applied -join ', '), ($Filed -join ', '), ($Removed -join ', '),
-      ($Repaired -join ', '), ($Copied -join ', '), $Unchanged.Count
-    )
+    ) + $CopyClause
   } ElseIf ($Repaired.Count -gt 0) {
     'Applied: {0}; filed: {1}; removed: {2}; repaired references: {3}; already correct: {4}' -f @(
       ($Applied -join ', '), ($Filed -join ', '), ($Removed -join ', '),
       ($Repaired -join ', '), $Unchanged.Count
-    )
-  } ElseIf ($Copied.Count -gt 0) {
-    'Applied: {0}; filed: {1}; removed: {2}; copied scan profiles: {3}; already correct: {4}' -f @(
-      ($Applied -join ', '), ($Filed -join ', '), ($Removed -join ', '),
-      ($Copied -join ', '), $Unchanged.Count
-    )
+    ) + $CopyClause
   } Else {
     'Applied: {0}; filed: {1}; removed: {2}; already correct: {3}' -f @(
       ($Applied -join ', '), ($Filed -join ', '), ($Removed -join ', '), $Unchanged.Count
-    )
+    ) + $CopyClause
   }
   repaired   = [System.String[]]$Repaired
   removed    = [System.String[]]$Removed

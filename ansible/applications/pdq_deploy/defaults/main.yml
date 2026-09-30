@@ -413,8 +413,8 @@ pdq_deploy_defaults:
   # The scan profile every scan step in a package runs, by PACKAGE name -- the definition carries
   # only its numeric id and the list above only spells the package as a file. The profile name is
   # the portable half of the reference and is declared here. A freshly installed Deploy holds no
-  # rows in its copy of Inventory's scan profiles when packages are reconciled; importing a
-  # scan-step package that refers to a profile the copy lacks crashes the service. Before any
+  # rows in its copy of Inventory's scan profiles when packages are reconciled;
+  # Set-PdqPackage.ps1 requires that copy to hold every scan step's declared profile. Before any
   # import, Set-PdqPackage.ps1 copies Inventory's id, name and default flag for each declared
   # profile absent from Deploy's copy. A package with no scan step has no entry; a scan step whose
   # package is not named here stops the converge, because a step pointed at another console's

@@ -196,7 +196,7 @@ Exit 0</Script>
     <CustomVariables type="list">
       <CustomVariable>
         <Name>Igor-Pavlov_7-Zip</Name>
-        <Value>@(Igor-Pavlov_7-Zip)</Value>
+        <Value>26.02.00.0</Value>
       </CustomVariable>
     </CustomVariables>
     <PackageDisplaySettings name="DisplaySettings">

@@ -39,9 +39,9 @@
         import, because the deployment runner resolves membership by id alone. A scan profile id
         is written into the document that is imported, because that one does travel. A freshly
         installed Deploy holds no rows in its copy of Inventory's scan profiles when packages are
-        reconciled, and importing a scan-step package that refers to a profile the copy lacks
-        crashes the service. For each declared profile the copy lacks, Inventory's id, name and
-        default flag are copied before any import. Both kinds of reference are read back after a
+        reconciled, and this script requires that copy to hold every scan step's declared profile. For each
+        declared profile the copy lacks, Inventory's id, name and default flag are copied before any import.
+        Both kinds of reference are read back after a
         write and must name what the declaration asked for. A name that resolves to nothing stops
         the run: a package gated on a collection this console does not hold imports quietly and
         then fails every deployment before its first step.
@@ -1110,9 +1110,9 @@ If ($CollectionReference.Count -gt 0) {
 }
 
 If ($ScanReference.Count -gt 0) {
-  # A freshly installed Deploy holds no rows in its copy when packages are reconciled. Importing a
-  # package that refers to a profile the copy lacks crashes the service, so each declared profile
-  # the copy lacks is copied from Inventory -- its id, name and default flag -- before any import.
+  # A freshly installed Deploy holds no rows in its copy when packages are reconciled. This script
+  # requires that copy to hold every scan step's declared profile, so each declared profile the copy
+  # lacks is copied from Inventory -- its id, name and default flag -- before any import.
   $ProfileTable = Get-NameToId -Database:$Database -Operation:'Reading the scan profiles' `
     -Statement:'SELECT InventoryScanProfileId, hex(Name) FROM InventoryScanProfiles;'
   $Missing = [System.Collections.Generic.List[System.String]]::new()

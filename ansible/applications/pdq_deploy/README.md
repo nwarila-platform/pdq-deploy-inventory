@@ -153,9 +153,9 @@ the id null while a deployment resolves membership by id alone — until it is w
 deployment of that package stops before its first step with "Collection not found". A scan step
 carries only the number, so the profile's name is declared in `scan_profiles:` by package name. A
 freshly installed Deploy holds no rows in its copy of Inventory's scan profiles when packages are
-reconciled, and importing a scan-step package that refers to a profile the copy lacks crashes the
-service. Before importing, the role copies Inventory's id, name and default flag for every declared
-profile absent from Deploy's copy, then writes that id into the document. A name that resolves to
+reconciled, and the role requires that copy to hold every scan step's declared profile. Before
+importing, the role copies Inventory's id, name and default flag for every declared profile absent
+from Deploy's copy, then writes that id into the document. A name that resolves to
 nothing stops the converge before any write. A definition that names either kind of reference
 therefore makes PDQ Inventory a precondition for this role, which is why the play converges
 Inventory first.

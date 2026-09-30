@@ -144,18 +144,21 @@ apart, so `defaults/main.yml` names the definitions the role expects under `pack
 converge stops before touching the host if what is on disk is not what is named. An empty
 `packages:` list is how a caller states that the product holds none.
 
-Two ids inside a definition belong to the console it was exported from rather than to the package:
-the collection a condition gates on, and the scan profile a scan step runs. Both are resolved by
-NAME on arrival and read back afterwards. A condition carries its collection's name as well as the
-id, so the definition already says which collection it means; the role asks PDQ Inventory for that
-collection's local id and writes it, because the import keeps the name and leaves the id null while
-a deployment resolves membership by id alone — until it is written, every deployment of that
-package stops before its first step with "Collection not found". A scan step carries only the
-number, so the profile's name is declared in `scan_profiles:` by package name, and this console's
-own id is written into the document before it is imported. A name that resolves to nothing stops
-the converge, rather than importing a package that would fail at deployment time. A definition that
-names a collection therefore makes PDQ Inventory a precondition for this role, which is why the
-play converges Inventory first.
+Two numeric references inside a definition are resolved from names rather than trusted as portable
+package data: the collection a condition gates on, and the scan profile a scan step runs. Both are
+resolved by NAME on arrival and read back afterwards. A condition carries its collection's name as
+well as the id, so the definition already says which collection it means; the role asks PDQ
+Inventory for that collection's local id and writes it, because the import keeps the name and leaves
+the id null while a deployment resolves membership by id alone — until it is written, every
+deployment of that package stops before its first step with "Collection not found". A scan step
+carries only the number, so the profile's name is declared in `scan_profiles:` by package name. A
+freshly installed Deploy holds no rows in its copy of Inventory's scan profiles when packages are
+reconciled, and the role requires that copy to hold every scan step's declared profile. Before
+importing, the role copies Inventory's id, name and default flag for every declared profile absent
+from Deploy's copy, then writes that id into the document. A name that resolves to
+nothing stops the converge before any write. A definition that names either kind of reference
+therefore makes PDQ Inventory a precondition for this role, which is why the play converges
+Inventory first.
 
 Adding a package is therefore three things: export it from the console into `files/packages/`,
 allow that exact filename in `.gitignore` (which tracks nothing it has not been told about by

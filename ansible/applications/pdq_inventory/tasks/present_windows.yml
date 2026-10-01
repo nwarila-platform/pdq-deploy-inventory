@@ -555,6 +555,40 @@
 
     #endregion --- [ Process: Run The Background Service As The Service Account ] ------------- #
 
+    #region ------ [ Process: Prove The Server Is Licensed For Enterprise ] ------------------- #
+    # SystemInfo answers only after first start creates its database; it reads the licence live.
+    # It is a local read needing no console authorisation, unlike service-contacting commands.
+    # Enterprise gates Server mode; Free is broken; proof stops before Enterprise-only commands.
+
+    # measured: a first start answered SystemInfo after 2.1 s (Deploy) and 3.4 s (Inventory),
+    # 2026-09-30.
+    - name: 'PROCESS | Read The Licence Mode From The Product'
+      changed_when: false
+      check_mode: false
+      delay: 5
+      register: '__pdq_inventory_systeminfo__'
+      retries: 24
+      until:
+        - __pdq_inventory_systeminfo__ is succeeded
+        - (__pdq_inventory_systeminfo__.stdout | default('')) is search('LicenseMode\s*:')
+
+      ansible.windows.win_command:
+        argv:
+          - "{{ pdq_inventory_running.cli_path }}"
+          - 'SystemInfo'
+
+    # ----------------------------------------------------------------------------------------- #
+
+    - name: 'PROCESS | Prove The Server Is Licensed For Enterprise'
+      ansible.builtin.assert:
+        fail_msg: >-
+          The console is not licensed for Enterprise. SystemInfo reported:
+          {{ __pdq_inventory_systeminfo__.stdout | trim }}
+        quiet: true
+        that: [ __pdq_inventory_systeminfo__.stdout is search('LicenseMode\s*:\s*Enterprise') ]
+
+    #endregion --- [ Process: Prove The Server Is Licensed For Enterprise ] ------------------- #
+
     #region ------ [ Process: Record The Service Credential With The Product ] ---------------- #
     # Setting the account on the Windows service is not enough: the product keeps its OWN record
     # of that credential, and a console finding it absent runs its initialisation wizard even
@@ -602,10 +636,9 @@
     #endregion --- [ Process: Record The Service Credential With The Product ] ---------------- #
 
     #region ------ [ Process: Apply Any Pending Restart ] ------------------------------------- #
-    # Handlers would otherwise run at the very END of the play, after this role's own proofs.
-    # Flushing here means the product has already restarted by the time END asks it whether it
-    # is licensed and which account it runs as -- so those proofs describe the converged host
-    # rather than the one that existed before the bounce.
+    # Handlers would otherwise run at the very END of the play. Flushing here means the product
+    # has already restarted by the time END proves which account its service runs as, so that
+    # proof describes the converged host rather than the one that existed before the bounce.
 
     - name: 'PROCESS | Apply Any Pending Restart'
       ansible.builtin.meta: 'flush_handlers'
@@ -1111,35 +1144,6 @@
         that: [ not __pdq_inventory_final_arp__.result.action_required ]
 
     #endregion --- [ End: Prove The Product Is Registered ] ----------------------------------- #
-
-    #region ------ [ End: Prove The Server Is Licensed For Enterprise ] ----------------------- #
-    # The registry write is a means, not the goal -- the product either accepts the payload or
-    # stays in Free mode, and only the product can say which. SystemInfo is a local read that
-    # needs no console authorisation, unlike the commands that talk to the background service.
-    # Enterprise also gates Server mode, so a console silently left in Free mode is a broken
-    # build, not a lesser one.
-
-    - name: 'END | Read The Licence Mode From The Product'
-      changed_when: false
-      check_mode: false
-      register: '__pdq_inventory_systeminfo__'
-
-      ansible.windows.win_command:
-        argv:
-          - "{{ pdq_inventory_running.cli_path }}"
-          - 'SystemInfo'
-
-    # ----------------------------------------------------------------------------------------- #
-
-    - name: 'END | Prove The Server Is Licensed For Enterprise'
-      ansible.builtin.assert:
-        fail_msg: >-
-          The console is not licensed for Enterprise. SystemInfo reported:
-          {{ __pdq_inventory_systeminfo__.stdout | trim }}
-        quiet: true
-        that: [ __pdq_inventory_systeminfo__.stdout is search('LicenseMode\s*:\s*Enterprise') ]
-
-    #endregion --- [ End: Prove The Server Is Licensed For Enterprise ] ----------------------- #
 
     #region ------ [ End: Prove The Background Service Exists ] ------------------------------- #
     # The product registers, then its service must exist: a registration without the service is a

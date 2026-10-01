@@ -65,7 +65,7 @@
       },
       "Effect": "Allow",
       "Resource": [
-        "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-password.txt",
+        "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-bsu-password.txt",
         "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-domain-password.txt",
         "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-ws-password.txt",
         "arn:aws:s3:::<account-id>-ansible/applications/pdq/svc-pdq-ms-password.txt",

@@ -59,5 +59,11 @@
                 {{ lookup('secret',
                           's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-dc-password.txt') }}
 
+            - name: 'svc-pdq-bsu'
+              ou: 'OU=Domain Service Accounts,DC=tcn,DC=trinitytechnicalservices,DC=com'
+              password: >-
+                {{ lookup('secret',
+                          's3://' ~ aws_account_id ~ '-ansible/applications/pdq/svc-pdq-bsu-password.txt') }}
+
           # Where a PDQ server is filed. The same OU the deploy playbook names as its join target.
           computer_ou: 'OU=PDQ,OU=Domain Servers,DC=tcn,DC=trinitytechnicalservices,DC=com'

@@ -525,7 +525,7 @@ jobs:
         env: *ansible_env
         run: |
           set -euo pipefail
-          SVC_PW="$(aws s3 cp "s3://${AWS_ACCOUNT_ID}-ansible/applications/pdq/svc-pdq-password.txt" -)"
+          SVC_PW="$(aws s3 cp "s3://${AWS_ACCOUNT_ID}-ansible/applications/pdq/svc-pdq-bsu-password.txt" -)"
           export SVC_PW
           cat > /tmp/add-drift.ps1 <<'PS1'
           $ErrorActionPreference = 'Continue'
@@ -582,7 +582,7 @@ jobs:
           Exit 0
           PS1
           ansible pdq_servers -m ansible.builtin.script -a /tmp/add-drift.ps1 \
-            --become --become-method runas --become-user svc-pdq \
+            --become --become-method runas --become-user 'tcn\svc-pdq-bsu' \
             -e ansible_become_flags=logon_type=batch \
             -e 'ansible_become_password={{ lookup("env", "SVC_PW") }}' \
             -e "@${RUNNER_TEMP}/automation-identity.json" \
@@ -636,7 +636,7 @@ jobs:
         env: *ansible_env
         run: |
           set -euo pipefail
-          SVC_PW="$(aws s3 cp "s3://${AWS_ACCOUNT_ID}-ansible/applications/pdq/svc-pdq-password.txt" -)"
+          SVC_PW="$(aws s3 cp "s3://${AWS_ACCOUNT_ID}-ansible/applications/pdq/svc-pdq-bsu-password.txt" -)"
           export SVC_PW
           cat > /tmp/prove-clean.ps1 <<'PS1'
           $ErrorActionPreference = 'Continue'
@@ -694,7 +694,7 @@ jobs:
           PY
           ansible pdq_servers -m ansible.builtin.script \
             -a /tmp/prove-clean.ps1 \
-            --become --become-method runas --become-user svc-pdq \
+            --become --become-method runas --become-user 'tcn\svc-pdq-bsu' \
             -e ansible_become_flags=logon_type=batch \
             -e 'ansible_become_password={{ lookup("env", "SVC_PW") }}' \
             -e "@${RUNNER_TEMP}/automation-identity.json" \

@@ -6,11 +6,11 @@
 
 This repository automates the full Windows host and **PDQ Deploy and Inventory Central Server**
 configuration lifecycle in an ephemeral AWS environment. Terraform separates the replaceable
-Windows OS disk from three encrypted data volumes that persist across OS replacement. Ansible joins
-the host to the directory, installs and licences both products, runs their services under one
-local account, places their databases, publishes the Deploy repository, makes each credential
-declaration authoritative, points every Inventory sync container at its class account, and
-converges preferences, packages, registration, and console users.
+Windows OS disk from three encrypted data volumes that persist across OS replacement. Ansible
+joins the host to the directory, installs and licences both products, runs their services as one
+declared domain account, places their databases, publishes the Deploy repository, and makes each
+credential declaration authoritative. It points every Inventory sync container at its class
+account and converges preferences, packages, registration, and console users.
 GitHub Actions provisions the host and a test target beside it, can replace the host while
 reattaching the same data volumes, reconverges the applications, proves the bounded idempotency
 result, and destroys the environment.
@@ -69,10 +69,11 @@ flowchart LR
 ## Domain integration
 
 Both hosts join the directory: the PDQ server is filed under `OU=PDQ,OU=Domain Servers` and the
-test target under `OU=Test,OU=Domain Servers`, each publishing its VPC address as its name. The
-products' background services stay under one **local** account (`.\svc-pdq`). Inventory also holds
-that account as its default fallback; what reaches a target in one of the managed OUs is that OU's
-**domain** class account.
+test target under `OU=Test,OU=Domain Servers`, each publishing its VPC address as its name. Both
+products run their background services as the dedicated domain Background Service User
+`tcn\svc-pdq-bsu`. The application roles require the full `DOMAIN\name`, use it verbatim, and
+verify on the host that it resolves to a domain user before changing anything. They deliberately
+provide no default account name.
 
 The inventory names the transport and address, but no login user. The `credential_resolver` role
 selects that transport's declarations, obtains an EC2 launch password when a set requests one, and
@@ -82,21 +83,44 @@ JSON, as both CI ad-hoc proofs do, instead of relying on inventory credentials.
 `credential_resolver` is the only role that publishes connection-credential facts; it does not
 publish or change the play's escalation switch.
 
-The three domain accounts are created once, by the separate elevated `pdq_ad_config` role against
-a domain controller: one per machine class (`svc-pdq-ws`, `-ms`, `-dc`). Each Inventory sync
+The four domain accounts are created once, by the separate elevated `pdq_ad_config` role against
+a domain controller: the Background Service User with no domain rights, plus one account per
+machine class (`svc-pdq-ws`, `-ms`, `-dc`). The PDQ server OU's Background Service User GPO adds
+that account directly to local Administrators and denies it console and RDP logon — not by
+anything here —; the application roles grant only Log On as a Service. Each Inventory sync
 container binds as its matching class account and assigns that credential as the scan user when a
 computer is added from the OU. Each class account is added to its targets' local Administrators by
-that OU's own policy — not by anything here — so a scan or a deployment reaches a workstation, a
-member server or a domain controller as an account that machine admits and no other. Inventory
-holds the three class accounts plus local `.\svc-pdq` as its default fallback. Deploy holds no
-credential and takes a target's scan credential from Inventory at deployment time.
+that OU's own policy — not by anything here —. Both OU policies are maintained outside this
+repository. Inventory holds the three class accounts plus `tcn\svc-pdq-bsu` as its default
+fallback. Deploy holds no target credential and takes a target's scan credential from Inventory
+at deployment time.
 
-Every Inventory credential is written the same way: the account, the password that opens it, and —
-for its local fallback — `is_default`. A bind anywhere in the directory sync is a *name* into that
-list, never a password. The declaration is complete, so an undeclared row is removed and an empty
-list empties the product's credential store. Nothing under `ansible/applications/` names this
-directory, these accounts, or this cloud account; every such fact lives in the playbook, stated
-once.
+Every Inventory credential is written the same way: the account, the password that opens it,
+and — for its default fallback — `is_default`. A bind anywhere in the directory sync is a *name*
+into that list, never a password. The declaration is complete, so an undeclared row is removed
+and an empty list empties the product's credential store. Nothing under `ansible/applications/`
+names this directory, these accounts, or this cloud account; every such fact lives in the
+playbook, stated once.
+
+A password rotation updates the Background Service User object in S3, runs `ad-config.yml`, waits
+for the directory's `pwdLastSet` to advance, and then converges the applications. Each role
+remembers that non-secret timestamp after the product accepts the credential. The converge after
+a rotation sees the newer `pwdLastSet`, re-records the product's stored credential, and restarts
+its service. If it reaches a domain controller that has not replicated the change yet, it
+re-records on the next converge.
+
+### Retiring the local svc-pdq account
+
+For an upgraded server, retire the previous account only after the domain identity is working:
+
+1. Link the PDQ Background Service User GPO, then run
+   `gpupdate /target:computer /force`.
+2. Converge both roles with `background_service_user.username` set to `tcn\svc-pdq-bsu`.
+3. Verify both Windows services' logon accounts and each product's `Background Service Username`
+   read `tcn\svc-pdq-bsu`.
+4. Verify the `PDQ Repository Sync` task runs as `tcn\svc-pdq-bsu` and returns result `0`.
+5. Verify no Windows service or scheduled task still names the old account.
+6. Remove it from an elevated PowerShell session with `Remove-LocalUser -Name svc-pdq`.
 
 ## What it deploys
 
@@ -106,12 +130,12 @@ once.
 | E: | `PDQDEPLOY` | PDQ Deploy database |
 | F: | `PDQREPO` | PDQ Deploy package repository and application share |
 
-Both products run co-located in **Central Server** mode under one shared Background Service User
-(`svc-pdq`). Client consoles connect to PDQ Inventory on TCP **7337** and to PDQ Deploy on TCP
-**6336**. The controller fetches each product's installer, licence, and the service-account password
-from S3 without giving the guest cloud credentials. Installer and licence content is verified
-against pinned SHA-256 values; the password is held in memory, rejected if empty, and represented in
-the repository only by its object location.
+Both products run co-located in **Central Server** mode under one shared domain Background
+Service User (`tcn\svc-pdq-bsu`). Client consoles connect to PDQ Inventory on TCP **7337** and to
+PDQ Deploy on TCP **6336**. The controller fetches each product's installer, licence, and the
+service-account password from S3 without giving the guest cloud credentials. Installer and
+licence content is verified against pinned SHA-256 values; the password is held in memory,
+rejected if empty, and represented in the repository only by its object location.
 
 ## How it runs
 

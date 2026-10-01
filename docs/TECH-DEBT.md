@@ -117,3 +117,35 @@
 - **Exit criteria:** a converged host holds a declared, pinned AWS PowerShell module version; a
   base image without one converges to the same state; and nothing reads the bucket without the
   role that guarantees the module having run.
+
+## TD-009 — OPEN — a managed host's identity is not authenticated before contact
+
+- **Recorded:** 2026-09-30.
+- **Issue:** `ansible/inventory/aws_ec2.yml` connects over SSH with `StrictHostKeyChecking=no` and
+  `UserKnownHostsFile=/dev/null`, so it keeps no record of host keys and accepts an unknown one on
+  every connection, and it skips WinRM certificate validation.
+  `ansible/inventory/directory.yml` uses `StrictHostKeyChecking=accept-new`, so it trusts whichever
+  key answers first. A rebuilt host keeps its name but can present different host keys, so a static
+  known-hosts entry cannot simply be switched on.
+- **Why it is debt rather than a defect today:** the Session Manager path reaches its instance
+  through a channel AWS authenticates. A direct connection, SSH or WinRM, reaches a short-lived host
+  on an address only the run's security group admits, and the domain controller's key, once
+  recorded, is checked on every later connection; both narrow the exposure without authenticating
+  the host. On a direct connection, or at the domain controller's first one, an endpoint answering
+  in a managed host's place could receive the task inputs the run reaches, including secrets such
+  as the product licences.
+- **Correction:** before each play's first connection to a host (in the AWS play, before
+  `credential_resolver`), read the host's public SSH keys over a channel the platform already
+  authenticates: an SSM Run Command document scoped to that read on EC2, VMware Tools through
+  `vmrun` on VMware Workstation, the QEMU guest agent on Proxmox. Write them to a known-hosts file
+  that lives for one run, point every inventory at it, and require `StrictHostKeyChecking=yes`.
+  Roles stay unaware of the platform. Before the domain join, WinRM runs only through the Session
+  Manager tunnel; after it, WinRM forces Kerberos message encryption or validates a CA-issued
+  certificate.
+- **Exit criteria:** every inventory uses the run-scoped known-hosts file with
+  `StrictHostKeyChecking=yes`, never `no` or `accept-new`; every managed host's keys come from its
+  platform's authenticated channel before that host's first credential attempt; a rebuilt host
+  converges without a hand-edited known-hosts file; a host whose key differs from what that channel
+  reported is refused before authentication; WinRM outside the Session Manager tunnel reaches only
+  joined hosts, with Kerberos message encryption forced or a CA-issued certificate validated; and no
+  inventory sets WinRM certificate validation to `ignore` outside that tunnel.

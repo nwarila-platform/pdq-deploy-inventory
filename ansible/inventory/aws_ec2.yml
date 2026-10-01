@@ -152,7 +152,7 @@ compose:
   ansible_winrm_transport: "'ntlm'"
 
   # An EC2 Windows image generates its 5986 certificate on the instance, so there is nothing to
-  # chain to. A real downgrade against the SSH legs, which authenticate the host key.
+  # chain to. The SSH legs also accept unknown host keys (TD-009 in docs/TECH-DEBT.md).
   ansible_winrm_server_cert_validation: "'ignore'"
 
   #endregion --- [ WinRM only ] --------------------------------------------------------------- #

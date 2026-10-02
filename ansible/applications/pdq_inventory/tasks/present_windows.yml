@@ -34,9 +34,13 @@
 
 #region ------ [ Begin: Prove The Background Service User Is A Domain Account ] --------------- #
 
-# The controller can validate only the DOMAIN\name form. This read-only host check proves the
-# resolved principal is a domain user before any change and also runs in check mode.
+# The controller can validate only the DOMAIN\name form. This host check must run as SYSTEM:
+# the connection logon has no credentials the directory accepts, so the check reads it as the
+# computer account before any change and in check mode.
 - name: 'BEGIN | Prove The Background Service User Is A Domain Account'
+  become: true
+  become_method: 'ansible.builtin.runas'
+  become_user: 'SYSTEM'
   changed_when: false
   check_mode: false
   register: '__pdq_inventory_background_user__'

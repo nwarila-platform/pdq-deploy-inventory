@@ -308,7 +308,7 @@ pdq_deploy_defaults:
 
   #region ------ [ Background service user ] ------------------------------------------------- #
 
-  # Written DOMAIN\name and used verbatim; before any change, host proves it is a domain user.
+  # Written DOMAIN\name, used verbatim; before any change, the host proves it is a domain user.
   # Group Policy owns local administration and the deny rights; this role grants service logon.
   # No name is defaulted: a default leaves a caller unsure which account its password belongs to.
   background_service_user:

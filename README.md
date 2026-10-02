@@ -86,14 +86,14 @@ publish or change the play's escalation switch.
 The four domain accounts are created once, by the separate elevated `pdq_ad_config` role against
 a domain controller: the Background Service User with no domain rights, plus one account per
 machine class (`svc-pdq-ws`, `-ms`, `-dc`). The PDQ server OU's Background Service User GPO adds
-that account directly to local Administrators and denies it console and RDP logon — not by
-anything here —; the application roles grant only Log On as a Service. Each Inventory sync
-container binds as its matching class account and assigns that credential as the scan user when a
-computer is added from the OU. Each class account is added to its targets' local Administrators by
-that OU's own policy — not by anything here —. Both OU policies are maintained outside this
-repository. Inventory holds the three class accounts plus `tcn\svc-pdq-bsu` as its default
-fallback. Deploy holds no target credential and takes a target's scan credential from Inventory
-at deployment time.
+that account directly to local Administrators and denies it console and RDP logon; nothing in
+this repository does either, and the application roles grant only Log On as a Service. Each
+Inventory sync container binds as its matching class account and assigns that credential as the
+scan user when a computer is added from the OU. Each class account reaches its targets' local
+Administrators through its OU's own policy; nothing in this repository grants that access. Both
+OU policies are maintained outside this repository. Inventory holds the three class accounts plus
+`tcn\svc-pdq-bsu` as its default fallback. Deploy holds no target credential and takes a target's
+scan credential from Inventory at deployment time.
 
 Every Inventory credential is written the same way: the account, the password that opens it,
 and — for its default fallback — `is_default`. A bind anywhere in the directory sync is a *name*

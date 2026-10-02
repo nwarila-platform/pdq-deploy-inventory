@@ -334,9 +334,9 @@
           # insecure: the directory answers nothing on 636 and refuses an anonymous bind, both
           # measured, so the read is plain LDAP on 389. Said here, in the open, rather than left
           # to a default that quietly downgrades.
-          # Each class account is both the bind and scan identity for its OU. The local service
-          # account is the default fallback for anything outside those OUs and for the console
-          # itself; Deploy asks Inventory for a target's credential at deployment time.
+          # Class accounts are the bind and scan identities for their OUs. The declared domain
+          # Background Service User is the fallback elsewhere and for the console.
+          # Deploy asks Inventory for a separately declared target credential.
           credentials:
             - username: 'tcn\svc-pdq-ws'
               password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-ws-password.txt') }}"
@@ -347,9 +347,9 @@
             - username: 'tcn\svc-pdq-dc'
               password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-dc-password.txt') }}"
               description: 'Domain controller class target authentication'
-            - username: '.\svc-pdq'
-              password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-password.txt') }}"
-              description: 'Local fallback and console authentication'
+            - username: 'tcn\svc-pdq-bsu'
+              password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-bsu-password.txt') }}"
+              description: 'Background Service User and default fallback'
               is_default: true
 
           directory_sync:
@@ -390,10 +390,11 @@
             version: '20.1.8.0'
             sha256: '48a486f3682cc01218993e72a8006163616166dd5f0fdcd1fab36724710fdbbf'
 
-          # The ONE Background Service User both products share, declared exactly as Deploy
+          # The ONE domain Background Service User both products share, declared as Deploy
           # declares it: the account, and the password that opens it.
-          service_account:
-            password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-password.txt') }}"
+          background_service_user:
+            username: 'tcn\svc-pdq-bsu'
+            password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-bsu-password.txt') }}"
 
           # Inventory has its OWN licence, distinct from Deploy's. The lookup verifies the stored
           # bytes against the pinned digest before passing the decoded value to the role. The
@@ -439,13 +440,12 @@
             version: '20.1.8.0'
             sha256: '856dbe3dd4544d4b9ae1f382ee51f2a5f25f41714c462fa4afcff9743cc85eb9'
 
-          # The Windows account the background service runs as, declared the way every account
-          # here is: the account, and the password that opens it. '.\' is how Windows
-          # spells "local to this machine". Both products share this ONE service identity. This
-          # declaration configures service logon only; Inventory separately declares the same
-          # local account as its fallback credential, while Deploy's credential store is empty.
-          service_account:
-            password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-password.txt') }}"
+          # Both products share this domain Background Service User. Group Policy grants local
+          # administration and deny rights; this declaration supplies service logon credentials.
+          # Inventory declares it as a fallback; Deploy's credential store is empty.
+          background_service_user:
+            username: 'tcn\svc-pdq-bsu'
+            password: "{{ lookup('secret', pdq_secret_prefix ~ '/svc-pdq-bsu-password.txt') }}"
 
           # The licence lookup verifies the stored bytes against the pinned digest before passing
           # the decoded value to the role. The licence and its shared registration email are never

@@ -400,9 +400,9 @@ ForEach ($Container In $Declared) {
   # so a helper could only take one too, and wrapping it in a SecureString first would be theatre
   # -- the plaintext is already in the declaration this script was handed. The entry is disposed
   # on every path so a bind is not left open when a container cannot be read.
-  # The realm qualifies the path deliberately. A serverless 'LDAP://<dn>' asks the PROCESS to find
-  # a controller, and this one runs as a local account with no directory context of its own, so it
-  # would fail before the declared credential was ever offered.
+  # A serverless 'LDAP://<dn>' finds a controller through this process's logon context, which is
+  # now the domain Background Service User. The explicit realm keeps the bind independent of the
+  # account running this process.
   # PROOF GAP (2026-09-04): the plain-LDAP path is proven against the live directory; the LDAPS
   # path is NOT. This directory cannot yet serve it -- both controllers present no certificate on
   # 636 and reset the handshake, and no enterprise CA is published -- so the secure branch has been

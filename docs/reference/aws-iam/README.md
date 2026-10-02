@@ -78,7 +78,7 @@ From `…_runner_s3`:
   intent, and the resource is what is deployed.
 - **Licences:** the Deploy and Inventory licence keys and registration emails, plus the two licence
   objects under their earlier names.
-- **Service-account secrets:** the local service account, the directory account, and the three
+- **Service-account secrets:** the Background Service User, the directory account, and the three
   per-class target accounts.
 - **Host credentials:** the domain-join password and the OpenVPN profile.
 

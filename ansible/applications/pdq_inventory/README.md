@@ -24,15 +24,20 @@ SHA-256 before use, and the in-memory service-account password is rejected if it
 
 ## Domain, credentials and directory sync
 
-The host is domain-joined, but the background service stays under a **local** account — the one
-`service_account` names, `.\svc-pdq` by default, shared with `pdq_deploy`. `credentials` is the
-complete list of rows Inventory holds, each naming the account, carrying the password that opens
-it, and — for exactly one — claiming `is_default`. The flag is stated because the product marks
-whichever row was written last as its default; a list that said nothing would never settle.
+The Background Service User is the domain account declared by
+`background_service_user.username` as `DOMAIN\name`, used verbatim and shared with `pdq_deploy`.
+There is no default username: the caller must name the account whose password is being enforced.
+Before any change, the host confirms that the name resolves to a user in the server's own
+domain. A GPO for the PDQ server OU adds that account directly to local Administrators and denies
+console and RDP logon; this role grants Log On as a Service. The GPO, not this role, owns those
+membership and deny settings.
+
+`credentials` is the complete list of rows Inventory holds, each naming the account, carrying the
+password that opens it, and — when any are declared — exactly one claiming `is_default`.
 Inventory holds one domain class account per managed OU. Each container binds as its class account
-and gives computers added from that OU the same row as their scan user. The local service account
-is also a credential and is the default fallback outside those OUs and for the console itself.
-Deploy takes a target's scan credential from this store.
+and gives computers added from that OU the same row as their scan user. The Background Service
+User is also the default fallback outside those OUs and for the console itself. Deploy takes a
+target's scan credential from this store.
 
 The list is authoritative: a row it does not name is removed. An empty list on a populated console
 removes every Inventory credential it scans with.
@@ -64,10 +69,11 @@ time; it is not run directly from this repository. The shipped `ansible/playbook
 composes `windows_disk_manager`, `pdq_deploy`, and `pdq_inventory` onto one host.
 
 `windows_disk_manager` plus `pdq_inventory` alone is a supported composition: it produces a
-complete Inventory Central Server without `pdq_deploy`. Both application roles share ONE Background
-Service User (`svc-pdq`), so each ensures it idempotently and neither strips the other's work. The
-Windows service password cannot be read back, so each role reasserts that credential on every
-converge and honestly reports one expected change.
+complete Inventory Central Server without `pdq_deploy`. Both application roles use the same
+declared domain Background Service User. The Windows service password cannot be read back, so
+each role reasserts that credential on every converge and honestly reports one expected change.
+The product's own stored credential is re-recorded when the username or the directory account's
+`pwdLastSet` changes.
 
 The target must be Windows Server with the `ansible.windows` and `community.windows` modules the
 role uses. The controller's Ansible environment needs the `amazon.aws` collection with supported
@@ -78,11 +84,11 @@ role uses. The controller's Ansible environment needs the `amazon.aws` collectio
 Required deployment-specific inputs carry an account id or change with every version and every
 site, so the playbook states them where a reader can see them: the installer (bucket, four-part
 version, digest), the licence (bucket, object, digest, and the email it was issued to), the
-service-account password (bucket and object), each credential the product authenticates with
+domain Background Service User and its password, each credential the product authenticates with
 (account, password, and which one is the default), the directory sync (realm, the bind account's
 name, and the containers), and the database drive letter. The caller may also replace the default
-all-addresses listener with explicit addresses. `tasks/validate.yml` enforces
-these inputs on the controller before anything touches the guest.
+all-addresses listener with explicit addresses. `tasks/validate.yml` enforces these inputs on the
+controller before any guest change.
 
 ## Configuration
 
@@ -105,8 +111,9 @@ reported change rather than silent drift.
 - **All-in-one Central Server only.** PDQ Deploy and Inventory integrate only co-located, in the
   same operating mode, under one service account; the mode is written literally, never offered.
 - **No package repository.** Inventory scans; it does not deploy, so it publishes no share.
-- **A local service, authoritative credentials.** The service logs on as a local account, which may
-  also be Inventory's default fallback credential; every directory bind is a name into the list.
+- **A domain service, authoritative credentials.** The service logs on as the declared domain
+  Background Service User, which may also be Inventory's default fallback credential; every
+  directory bind is a name into the list.
 - The console port defaults to the product's own **7337**.
 
 ## First-class PowerShell

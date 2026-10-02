@@ -32,17 +32,53 @@
 ---
 #region ------ [ Begin: Install PDQ Inventory on Windows ] ------------------------------------ #
 
-# The service account is declared as the account it logs on as, '.\name'. Windows wants a bare
-# name in some places and the qualified form in others, so the bare one is taken from it once,
-# here, and added alongside. no_log because the declaration carries the secret.
+#region ------ [ Begin: Prove The Background Service User Is A Domain Account ] --------------- #
 
-- name: 'BEGIN | Read The Service Account Declaration'
-  no_log: true
-  ansible.builtin.set_fact:
-    pdq_inventory_running: >-
-      {{ pdq_inventory_running | combine({'service_account': pdq_inventory_running.service_account
-           | combine({'name': pdq_inventory_running.service_account.username
-                              | default('', true) | regex_replace('^\.\\', '')})}) }}
+# The controller can validate only the DOMAIN\name form. This host check must run as SYSTEM:
+# the connection logon has no credentials the directory accepts, so the check reads it as the
+# computer account before any change and in check mode.
+- name: 'BEGIN | Prove The Background Service User Is A Domain Account'
+  become: true
+  become_method: 'ansible.builtin.runas'
+  become_user: 'SYSTEM'
+  changed_when: false
+  check_mode: false
+  register: '__pdq_inventory_background_user__'
+
+  ansible.windows.win_powershell:
+    depth: 2
+    error_action: 'stop'
+    parameters:
+      Username: "{{ pdq_inventory_running.background_service_user.username }}"
+    script: |
+      [CmdletBinding()]
+      param ([Parameter(Mandatory = $true)] [String] $Username)
+      $ErrorActionPreference = 'Stop'
+      $Named = "background_service_user.username '$Username'"
+      try {
+        $Sid = ([System.Security.Principal.NTAccount] $Username).Translate(
+          [System.Security.Principal.SecurityIdentifier])
+      } catch {
+        throw "$Named does not resolve to an account this server can see."
+      }
+      $MachineDomain = (
+        Get-CimInstance -ClassName Win32_UserAccount -Filter 'LocalAccount = True' |
+          Select-Object -First 1
+      ).SID -replace '-\d+$', ''
+      if ($null -eq $Sid.AccountDomainSid -or $Sid.AccountDomainSid.Value -eq $MachineDomain) {
+        throw "$Named ($($Sid.Value)) is not a domain account."
+      }
+      $Found = ([adsisearcher](
+          '(&(objectCategory=person)(objectClass=user)(objectSid={0}))' -f $Sid.Value)).FindOne()
+      if ($null -eq $Found) {
+        throw "$Named is not a user in this server's domain."
+      }
+      $Ansible.Result = @{
+        sid = $Sid.Value
+        password_last_set = [Int64]$Found.Properties['pwdlastset'][0]
+      }
+
+#endregion --- [ Begin: Prove The Background Service User Is A Domain Account ] --------------- #
 
 - name: 'BEGIN | Read The Machine And Decide One Action'
 
@@ -91,30 +127,6 @@
   # Begin The 'Process' Block
   block:
 
-    #region ------ [ Process: Ensure The Background Service User ] ---------------------------- #
-    # One Background Service User is shared by Deploy and Inventory, so this role ensures it
-    # rather than owning it. Membership is enforced EXACTLY: replace adds every listed group and
-    # removes the account from all others, so a membership widened by hand is pulled back to the
-    # single group the vendor requires instead of persisting unnoticed. Both roles name the same
-    # one group, so neither strips the other's work. update_password always enforces the password
-    # to match the secret, but win_user validates the current one first (a logon attempt), so an
-    # unchanged password reports no change and a genuine rotation is reported honestly, not hidden.
-
-    - name: 'PROCESS | Ensure The Background Service User'
-      no_log: true
-
-      ansible.windows.win_user:
-        groups: [ 'Administrators' ]
-        groups_action: 'replace'
-        name: "{{ pdq_inventory_running.service_account.name }}"
-        password: "{{ pdq_inventory_running.service_account.password }}"
-        password_never_expires: false
-        state: 'present'
-        update_password: 'always'
-        user_cannot_change_password: false
-
-    #endregion --- [ Process: Ensure The Background Service User ] ---------------------------- #
-
     #region ------ [ Process: Grant Log On As A Service ] ------------------------------------- #
     # A service account that cannot log on as a service fails at service start with an error that
     # names neither the right nor the account. action adds rather than sets, so other holders of
@@ -124,34 +136,9 @@
       ansible.windows.win_user_right:
         action: 'add'
         name: 'SeServiceLogonRight'
-        users: [ ".\\{{ pdq_inventory_running.service_account.name }}" ]
+        users: [ "{{ pdq_inventory_running.background_service_user.username }}" ]
 
     #endregion --- [ Process: Grant Log On As A Service ] ------------------------------------- #
-
-    #region ------ [ Process: Deny Interactive Logon To The Service Account ] ----------------- #
-    # STIG: a service account must not be usable to sign in at the console. Denying the right
-    # outright beats relying on nobody knowing the password, and a service logon is unaffected
-    # because it is a different right. action adds, so other denied principals keep their entry.
-
-    - name: 'PROCESS | Deny Interactive Logon To The Service Account'
-      ansible.windows.win_user_right:
-        action: 'add'
-        name: 'SeDenyInteractiveLogonRight'
-        users: [ ".\\{{ pdq_inventory_running.service_account.name }}" ]
-
-    #endregion --- [ Process: Deny Interactive Logon To The Service Account ] ----------------- #
-
-    #region ------ [ Process: Deny Remote Interactive Logon To The Service Account ] ---------- #
-    # The same rule for the remote desktop path, which is a separate right: denying console logon
-    # alone would still leave the account able to sign in over RDP.
-
-    - name: 'PROCESS | Deny Remote Interactive Logon To The Service Account'
-      ansible.windows.win_user_right:
-        action: 'add'
-        name: 'SeDenyRemoteInteractiveLogonRight'
-        users: [ ".\\{{ pdq_inventory_running.service_account.name }}" ]
-
-    #endregion --- [ Process: Deny Remote Interactive Logon To The Service Account ] ---------- #
 
     #region ------ [ Process: Create The Controller Staging Directory ] ----------------------- #
 
@@ -506,20 +493,18 @@
     #endregion --- [ Process: Open The Firewall For Client Consoles ] ------------------------- #
 
     #region ------ [ Process: Run The Background Service As The Service Account ] ------------- #
-    # The product is installed and licensed by this point, so the service it registered exists
-    # and can be pointed at the account the previous regions built. The vendor requires an
-    # administrator on the console machine and the SeServiceLogonRight, both of which are already
-    # in place. A local account carries the '.\' prefix -- the same convention the product's own
-    # console uses when the domain field is left blank. The silent installer leaves the service
-    # DISABLED and never started, so the start mode
-    # and running state are set here as well, or nothing downstream can restart it and the
-    # product never reaches a working state. DELAYED auto-start, not plain auto, because that is
-    # what the product's own SetServiceCredentials silently configures (via
-    # sc qc; WMI hides the distinction): declaring anything else made every credential recording
-    # poison the next converge's comparison, which then "corrected" the mode back and bounced the
-    # service once per fresh build. update_password is on_create so a settled
-    # host reports ok rather than rewriting the credential every converge; the module sets the
-    # password regardless whenever the account itself changes, so the first converge is complete.
+    # The product is installed and licensed by this point, so the service it registered exists.
+    # Group Policy grants the declared domain user local administration and denies interactive
+    # logon; this role grants SeServiceLogonRight. The silent installer leaves the service
+    # DISABLED and never started, so the start mode and running state are set here as well, or
+    # nothing downstream can restart it and the product never reaches a working state. DELAYED
+    # auto-start, not plain auto, because that is what the product's own SetServiceCredentials
+    # silently configures (via sc qc; WMI hides the distinction): declaring anything else made
+    # every credential recording poison the next converge's comparison, which then "corrected"
+    # the mode back and bounced the service once per fresh build. update_password is on_create so
+    # a settled host reports ok rather than rewriting the credential every converge; the module
+    # sets the password regardless whenever the account itself changes, so the first converge is
+    # complete.
 
     - name: 'PROCESS | Run The Background Service As The Service Account'
       no_log: true
@@ -530,11 +515,11 @@
         desktop_interact: false
         force_dependent_services: false
         name: "{{ pdq_inventory_running.service_name }}"
-        password: "{{ pdq_inventory_running.service_account.password }}"
+        password: "{{ pdq_inventory_running.background_service_user.password }}"
         start_mode: 'delayed'
         state: 'started'
         update_password: 'on_create'
-        username: ".\\{{ pdq_inventory_running.service_account.name }}"
+        username: "{{ pdq_inventory_running.background_service_user.username }}"
 
     # ----------------------------------------------------------------------------------------- #
 
@@ -549,19 +534,29 @@
         desktop_interact: false
         force_dependent_services: false
         name: "{{ pdq_inventory_running.service_name }}"
-        password: "{{ pdq_inventory_running.service_account.password }}"
+        password: "{{ pdq_inventory_running.background_service_user.password }}"
         update_password: 'always'
-        username: ".\\{{ pdq_inventory_running.service_account.name }}"
+        username: "{{ pdq_inventory_running.background_service_user.username }}"
 
     #endregion --- [ Process: Run The Background Service As The Service Account ] ------------- #
+
+    #region ------ [ Process: Read When The Recorded Password Was Set ] ----------------------- #
+
+    - name: 'PROCESS | Read When The Recorded Password Was Set'
+      register: '__pdq_inventory_recorded_password_set__'
+
+      ansible.windows.win_reg_stat:
+        name: 'Background Service Password Last Set'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory'
+
+    #endregion --- [ Process: Read When The Recorded Password Was Set ] ----------------------- #
 
     #region ------ [ Process: Record The Service Credential With The Product ] ---------------- #
     # Setting the account on the Windows service is not enough: the product keeps its OWN record
     # of that credential, and a console finding it absent runs its initialisation wizard even
     # though everything else is configured. On a host built entirely by this
-    # role -- the service ran as svc-pdq and the product still had no idea. Only the vendor's
-    # command can write it: the value is an encrypted blob, and this is the command whose job
-    # that is.
+    # role, the service ran under the declared account and the product still had no idea. Only
+    # the product's command can write it: the value is an encrypted blob, and this is its job.
     #
     # The password is fed on STDIN and never appears in an argument. That matters more than it
     # looks: this image audits process creation WITH command lines, so a password passed as
@@ -570,8 +565,8 @@
     # -SecurePassword reads the console directly and fails when input is redirected, so stdin is
     # the only headless path that keeps the secret out of both the process table and the log.
     #
-    # -NoRestart because restarting is the next region's job, not this one's; written only when
-    # the recorded account differs, because the command always writes and always reports success.
+    # -NoRestart because restarting is the next region's job. The command always writes the
+    # service account, so it runs only when the username or directory password timestamp differs.
 
     - name: 'PROCESS | Read The Credential The Product Has Recorded'
       no_log: true
@@ -587,17 +582,19 @@
       no_log: true
       notify: 'pdq-inventory-restart-required'
       when: >-
-        __pdq_inventory_recorded_account__.value | default('') | lower | split('\\') | last
-        != pdq_inventory_running.service_account.name | lower
+        __pdq_inventory_recorded_account__.value | default('') | lower
+        != pdq_inventory_running.background_service_user.username | lower
+        or __pdq_inventory_recorded_password_set__.value | default(0, true) | int
+        != __pdq_inventory_background_user__.result.password_last_set | int
 
       ansible.windows.win_command:
         argv:
           - "{{ pdq_inventory_running.cli_path }}"
           - 'SetServiceCredentials'
           - '-Username'
-          - ".\\{{ pdq_inventory_running.service_account.name }}"
+          - "{{ pdq_inventory_running.background_service_user.username }}"
           - '-NoRestart'
-        stdin: "{{ pdq_inventory_running.service_account.password }}"
+        stdin: "{{ pdq_inventory_running.background_service_user.password }}"
 
     #endregion --- [ Process: Record The Service Credential With The Product ] ---------------- #
 
@@ -612,6 +609,21 @@
 
     #endregion --- [ Process: Apply Any Pending Restart ] ------------------------------------- #
 
+    #region ------ [ Process: Remember When The Recorded Password Was Set ] ------------------- #
+
+    # Only an accepted product credential and its completed service restart may advance the
+    # marker; a failure leaves the old value so the next converge retries.
+    - name: 'PROCESS | Remember When The Recorded Password Was Set'
+
+      ansible.windows.win_regedit:
+        data: "{{ __pdq_inventory_background_user__.result.password_last_set }}"
+        name: 'Background Service Password Last Set'
+        path: 'HKLM:\SOFTWARE\Admin Arsenal\PDQ Inventory'
+        state: 'present'
+        type: 'qword'
+
+    #endregion --- [ Process: Remember When The Recorded Password Was Set ] ------------------- #
+
     #region ------ [ Process: Authorize The Console Users ] ----------------------------------- #
     # Who may open the console. A silent install authorises no one, and RBAC being off leaves it
     # that way -- the product requires each account or group to be an explicit Console User, not
@@ -624,11 +636,11 @@
     - name: 'PROCESS | Authorize The Console Users'
       become: true
       become_method: 'ansible.builtin.runas'
-      become_user: "{{ pdq_inventory_running.service_account.name }}"
+      become_user: "{{ pdq_inventory_running.background_service_user.username }}"
       no_log: true
       vars:
         ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
+        ansible_become_password: "{{ pdq_inventory_running.background_service_user.password }}"
 
       block:
         - name: 'PROCESS | Read The Authorized Console Users'
@@ -681,11 +693,11 @@
     - name: 'PROCESS | Apply The Product Settings'
       become: true
       become_method: 'ansible.builtin.runas'
-      become_user: "{{ pdq_inventory_running.service_account.name }}"
+      become_user: "{{ pdq_inventory_running.background_service_user.username }}"
       no_log: true
       vars:
         ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
+        ansible_become_password: "{{ pdq_inventory_running.background_service_user.password }}"
 
       ansible.windows.win_powershell:
         depth: 3
@@ -718,12 +730,13 @@
         - name: 'PROCESS | Make The Declared Credentials The Complete Set'
           become: true
           become_method: 'ansible.builtin.runas'
-          become_user: "{{ pdq_inventory_running.service_account.name }}"
+          become_user: "{{ pdq_inventory_running.background_service_user.username }}"
           no_log: true
           register: '__pdq_inventory_credential__'
           vars:
             ansible_become_flags: 'logon_type=batch'
-            ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
+            ansible_become_password: >-
+              {{ pdq_inventory_running.background_service_user.password }}
 
           ansible.windows.win_powershell:
             depth: 3
@@ -745,7 +758,7 @@
                    | default({})).message | default('', true))
                  | default(ansible_failed_result.msg | default('the credential task failed', true), true) }}
             __secrets__: >-
-              {{ ([pdq_inventory_running.service_account.password]
+              {{ ([pdq_inventory_running.background_service_user.password]
                   + (pdq_inventory_running.credentials | default([], true)
                      | map(attribute='password') | select('defined') | list))
                  | reject('equalto', '') | list | unique(case_sensitive=true) }}
@@ -781,12 +794,13 @@
         - name: 'PROCESS | Give The Product Its Directory Sync Containers'
           become: true
           become_method: 'ansible.builtin.runas'
-          become_user: "{{ pdq_inventory_running.service_account.name }}"
+          become_user: "{{ pdq_inventory_running.background_service_user.username }}"
           no_log: true
           register: '__pdq_inventory_sync__'
           vars:
             ansible_become_flags: 'logon_type=batch'
-            ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
+            ansible_become_password: >-
+              {{ pdq_inventory_running.background_service_user.password }}
 
           ansible.windows.win_powershell:
             depth: 4
@@ -854,11 +868,11 @@
     - name: 'PROCESS | Make The Pinned Variables Authoritative'
       become: true
       become_method: 'ansible.builtin.runas'
-      become_user: "{{ pdq_inventory_running.service_account.name }}"
+      become_user: "{{ pdq_inventory_running.background_service_user.username }}"
       no_log: true
       vars:
         ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
+        ansible_become_password: "{{ pdq_inventory_running.background_service_user.password }}"
 
       ansible.windows.win_powershell:
         depth: 3
@@ -893,11 +907,11 @@
     - name: 'PROCESS | Make The Declared Collections Authoritative'
       become: true
       become_method: 'ansible.builtin.runas'
-      become_user: "{{ pdq_inventory_running.service_account.name }}"
+      become_user: "{{ pdq_inventory_running.background_service_user.username }}"
       no_log: true
       vars:
         ansible_become_flags: 'logon_type=batch'
-        ansible_become_password: "{{ pdq_inventory_running.service_account.password }}"
+        ansible_become_password: "{{ pdq_inventory_running.background_service_user.password }}"
 
       ansible.windows.win_powershell:
         depth: 3
@@ -1157,22 +1171,21 @@
     #region ------ [ End: Prove The Service Runs As The Service Account ] --------------------- #
     # Existing is not enough: the identity is what reads the licence and what runs the scans,
     # so a service left on its installation default is both unlicensed and unable to scan
-    # while looking perfectly healthy. SCM reports the account in resolved form, MACHINE\name,
-    # so the machine half is dropped and the account compared -- that is the half this role
-    # sets, and it is what separates svc-pdq from the SYSTEM the installer chose.
+    # while looking perfectly healthy. SCM reports the complete logon account, so the proof
+    # compares that value with the declared domain account.
 
     - name: 'END | Prove The Background Service Runs As The Service Account'
       ansible.builtin.assert:
         fail_msg: >-
           '{{ pdq_inventory_running.service_name }}' is running as
           '{{ __pdq_inventory_service__.services[0].username }}', not
-          '{{ pdq_inventory_running.service_account.name }}'. The service picks up a new logon
-          account only when it restarts, so either the restart was skipped or the account was
-          rejected at start.
+          '{{ pdq_inventory_running.background_service_user.username }}'. The service picks up
+          a new logon account only when it restarts, so either the restart was skipped or the
+          account was rejected at start.
         quiet: true
         that:
-          - __pdq_inventory_service__.services[0].username | lower | split('\\') | last
-            == pdq_inventory_running.service_account.name | lower
+          - __pdq_inventory_service__.services[0].username | lower
+            == pdq_inventory_running.background_service_user.username | lower
 
     #endregion --- [ End: Prove The Service Runs As The Service Account ] --------------------- #
 

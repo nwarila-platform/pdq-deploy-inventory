@@ -3,11 +3,11 @@
 # --- [ Description ] ----------------------------------------------------------------------- #
 #
 # Validates load-bearing PDQ Inventory configuration after the v3 loader merge, on the CONTROLLER,
-# before anything touches the guest. The artifact inputs are supplied by the playbook rather than
+# before any guest change. The artifact inputs are supplied by the playbook rather than
 # defaulted, so this is where a missing or malformed one is caught — in a second, rather than
 # mid-converge at the cost of an instance.
 #
-# meta/main.yml describes these inputs; this file is what enforces them.
+# defaults/main.yml describes these inputs; this file is what enforces them.
 #
 # =========================================================================================== #
 ---
@@ -20,8 +20,28 @@
     fail_msg: >-
       Refusing to continue: arp.display_name, a four-part installer.version, and an absolute,
       drive-letter-rooted Windows install.staging_dir are required for every state. See
-      meta/main.yml.
+      defaults/main.yml.
     quiet: true
+
+# check: safety-critical
+- name: 'VALIDATE | Require A Domain Background Service User'
+  when: (state | default('present') | string | lower | trim) == 'present'
+
+  ansible.builtin.assert:
+    fail_msg: >-
+      Refusing to deploy: background_service_user.username
+      '{{ pdq_inventory_running.background_service_user.username | default('') }}' must name a
+      domain account as DOMAIN\name, and its password must be a non-empty string. The host
+      confirms that the name resolves to a domain user before making changes. service_account
+      was renamed background_service_user.
+    quiet: true
+    that:
+      - pdq_inventory_running.service_account is not defined
+      - pdq_inventory_running.background_service_user is mapping
+      - pdq_inventory_running.background_service_user.username is string
+      - pdq_inventory_running.background_service_user.username is match('^[^\\\\]+\\\\[^\\\\]+$')
+      - pdq_inventory_running.background_service_user.password is string
+      - pdq_inventory_running.background_service_user.password | length > 0
 
 - name: 'VALIDATE | Require The Artifact Source And Deployment Inputs'
   when: (state | default('present') | string | lower | trim) == 'present'
@@ -30,22 +50,14 @@
       - pdq_inventory_running.installer.bucket | default('') | length > 0
       - pdq_inventory_running.installer.path | default('') | length > 0
       - pdq_inventory_running.installer.sha256 | default('') is match('^[0-9a-f]{64}$')
-      # The service account logs on as '.\name' -- Windows' own spelling for a local account --
-      # and its password cannot be empty, because the role sets it on every converge.
-      - pdq_inventory_running.service_account.username | default('') is match('^\.\\\\[^\\\\]+$')
-      - pdq_inventory_running.service_account.password | default('') | length > 0
-      # The previous contract spelled these differently, and the merge keeps an old key beside
-      # the new default rather than replacing it -- so a declaration in the old shape would pass
-      # and be silently ignored. Refused by name instead.
-      - pdq_inventory_running.service_account.name is not defined
       - pdq_inventory_running.credential is not defined
       - pdq_inventory_running.database.drive | default('') is match('^[A-Za-z]$')
     fail_msg: >-
       Refusing to deploy: a required input is missing or malformed. The playbook must supply the
-      installer (bucket, path, four-part version, lowercase 64-char sha256); the service-account
-      name; and one drive letter for the database. Secret values are resolved and validated by the
-      controller lookup before the role runs. The installer is verified against its pinned digest
-      before use. See meta/main.yml.
+      installer (bucket, path, four-part version, lowercase 64-char sha256) and one drive letter
+      for the database. Secret values are resolved and validated by the controller lookup before
+      the role runs. The installer is verified against its pinned digest before use. See
+      defaults/main.yml.
     quiet: true
 
 - name: 'VALIDATE | Require The Product Identity Probes'
@@ -86,7 +98,7 @@
       the database directory name, and the server port must all be present and well formed.
       Preferences must be a map of pages; its logging-severity and per-user seed booleans must hold
       the shapes the role writes; the pinned variables must be a map of string values; and
-      console_users must be a list of names. See meta/main.yml.
+      console_users must be a list of names. See defaults/main.yml.
     quiet: true
 
 - name: 'VALIDATE | Require Credentials The Product Can Settle On'

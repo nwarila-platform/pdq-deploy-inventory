@@ -1,8 +1,8 @@
 # `pdq_deploy` role
 
 Installs PDQ Deploy at a pinned version and brings it up as an all-in-one **Central Server** on
-Windows. In one converge it installs the product, applies the licence, ensures the shared PDQ
-service account and reconciles the complete credential store, places the
+Windows. In one converge it installs the product, applies the licence, runs the background
+service as the declared domain account and reconciles the complete credential store, places the
 database on its dedicated drive, creates the package repository on a second drive and enforces its
 directory permissions, publishes it as an encrypted read-only network share, fills it from the
 application repository bucket, sets Central Server mode and the console port, applies the product
@@ -18,15 +18,19 @@ empty.
 
 ## Domain and credentials
 
-The host is domain-joined, but the background service stays under a **local** account — the one
-`service_account` names, `.\svc-pdq` by default, shared with `pdq_inventory`. `credentials` is the
-complete list of rows Deploy itself holds, each naming the account, carrying the password that
-opens it, and — when any are declared — exactly one claiming `is_default`. The flag is stated
-because the product marks whichever row was written last as its default; a list that said nothing
-would never settle. Each product keeps its own credential store, but Deploy may hold none and take
-a target's scan credential from Inventory at deployment time. Every credential declared here is
-also admitted to the repository share, since a deployment fetches its installer over UNC as that
-account.
+The Background Service User is the domain account declared by
+`background_service_user.username` as `DOMAIN\name`, used verbatim and shared with
+`pdq_inventory`. There is no default username: the caller must name the account whose password is
+being enforced. Before any change, the host confirms that the name resolves to a user in the
+server's own domain. A GPO for the PDQ server OU adds that account directly to local
+Administrators and denies console and RDP logon; this role grants Log On as a Service. The GPO
+owns those membership and deny settings.
+
+`credentials` is the complete list of rows Deploy itself holds, each naming the account, carrying
+the password that opens it, and — when any are declared — exactly one claiming `is_default`. Each
+product keeps its own credential store, but Deploy may hold none and take a target's scan
+credential from Inventory at deployment time. Every credential declared here is also admitted to
+the repository share, since a deployment fetches its installer over UNC as that account.
 
 The list is authoritative: a row it does not name is removed. An empty list on a populated console
 removes every Deploy credential. Nothing in this role names a directory, an account or a cloud
@@ -39,10 +43,11 @@ time; it is not run directly from this repository. The shipped `ansible/playbook
 composes `windows_disk_manager`, `pdq_deploy`, and `pdq_inventory` onto one host.
 
 `windows_disk_manager` plus `pdq_deploy` alone is a supported composition: it produces a complete
-Deploy Central Server without `pdq_inventory`. Both application roles share ONE Background Service
-User (`svc-pdq`), so each ensures it idempotently and neither strips the other's work. The Windows
-service password cannot be read back, so each role reasserts that credential on every converge and
-honestly reports one expected change.
+Deploy Central Server without `pdq_inventory`. Both application roles use the same declared
+domain Background Service User. The Windows service password cannot be read back, so each role
+reasserts that credential on every converge and honestly reports one expected change. The
+product's own stored credential is re-recorded when the username or the directory account's
+`pwdLastSet` changes.
 
 The target must be Windows Server with the `ansible.windows` and `community.windows` modules the
 role uses. The controller's Ansible environment needs the `amazon.aws` collection with supported
@@ -53,11 +58,11 @@ role uses. The controller's Ansible environment needs the `amazon.aws` collectio
 Required deployment-specific inputs carry an account id or change with every version and every
 site, so the playbook states them where a reader can see them: the installer (bucket, four-part
 version, digest), the licence (bucket, object, digest, and the email it was issued to), the
-service-account password (bucket and object), each credential the product authenticates to a
+domain Background Service User and its password, each credential the product authenticates to a
 target with (account, password, and which one is the default), one drive letter each for the
 database and repository, and the repository's own bucket and region. The caller may also replace the
 default all-addresses listener with explicit addresses.
-`tasks/validate.yml` enforces these inputs on the controller before anything touches the guest.
+`tasks/validate.yml` enforces these inputs on the controller before any guest change.
 
 ## Configuration
 
@@ -181,8 +186,9 @@ profile that step runs in `scan_profiles:`.
 - **Materialized ACL rights.** Windows reads a declared `ReadAndExecute` grant back as
   `ReadAndExecute, Synchronize`; verification expects that materialized form without widening the
   declared right.
-- **A local service, authoritative credentials.** The service logs on as a local account; Deploy's
-  own credential list may be empty when deployments use Inventory scan credentials.
+- **A domain service, authoritative credentials.** The service logs on as the declared domain
+  Background Service User; Deploy's credential list may be empty when deployments use Inventory
+  scan credentials.
 - **Cleanup is tidiness, not recovery.** An unrescued PROCESS failure aborts before END, so END's
   `always` cleanup is not reached. The accepted residue is controller temporary directories and the
   guest installer; the ephemeral proof bed is rebuilt and destroyed after every run. Cleanup keeps

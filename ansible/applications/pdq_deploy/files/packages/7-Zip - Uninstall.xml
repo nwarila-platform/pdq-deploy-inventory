@@ -36,13 +36,13 @@
           <Files>$(Repository)\~resources\Start-Uninstaller.ps1</Files>
           <Script>Try {
   &amp; ".\Start-Uninstaller.ps1" `
-  -DebugLevel '103' `
-  -DisplayNamePattern '7-Zip*' `
-  -LogLevel '002223' `
-  -Property @('DisplayName', 'ParentKey', 'QuietUninstallString', 'UninstallString', 'AppArch') `
+  -DebugLevel:'103' `
+  -Family:@{ Method = 'Simple'; Query = '7-Zip*' } `
+  -LogLevel:'002223' `
+  -MaxRemovals:3 `
   -RemoveConforming `
-  -SilentSwitch '/S' `
-  -SuccessExitCode @(0, 1641, 3010)
+  -SilentSwitch:'/S' `
+  -SuccessExitCode:@(0, 1641, 3010)
 } Catch {
   Write-Error -Message:('Start-Uninstaller.ps1 failed: {0}' -f $PSItem.Exception.Message) -ErrorAction:'Continue'
   Exit 3
